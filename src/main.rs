@@ -1,11 +1,12 @@
 use cube444::cube::{format_moves, parse_moves, Cube};
 use cube444::solver::{Params, Solver};
+use rayon::prelude::*;
 use std::io::Write;
 use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cube444 solve <moves...>          solve a scramble given as moves\n  cube444 solve --state <96 facelets> solve a cube given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N]"
+        "usage:\n  cube444 solve <moves...> [search flags]   solve a scramble given as moves\n  cube444 solve --state <96 facelets> [search flags]   solve a cube given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]"
     );
     std::process::exit(2)
 }
@@ -27,7 +28,8 @@ fn solve(args: &[String]) {
             None => usage(),
         }
     } else {
-        match parse_moves(&args.join(" ")) {
+        let moves: Vec<&str> = args.iter().map(String::as_str).take_while(|a| !a.starts_with("--")).collect();
+        match parse_moves(&moves.join(" ")) {
             Ok(m) => Cube::from_moves(&m),
             Err(e) => fail(&e),
         }
@@ -35,7 +37,7 @@ fn solve(args: &[String]) {
     let t0 = Instant::now();
     let solver = Solver::new();
     let t1 = Instant::now();
-    match solver.solve(&cube, &Params::default()) {
+    match solver.solve(&cube, &params(args)) {
         Ok(sol) => {
             println!("{}", format_moves(&sol.moves));
             eprintln!(
@@ -53,6 +55,33 @@ fn solve(args: &[String]) {
 fn fail(msg: &str) -> ! {
     eprintln!("error: {}", msg);
     std::process::exit(1)
+}
+
+fn params(args: &[String]) -> Params {
+    let mut p = Params::default();
+    let num = |name: &str| opt(args, name).map(|s| s.parse::<usize>().unwrap_or_else(|_| usage()));
+    if let Some(v) = num("--n1") {
+        p.n1 = v;
+    }
+    if let Some(v) = num("--k1") {
+        p.k1 = v;
+    }
+    if let Some(v) = num("--n2") {
+        p.n2 = v;
+    }
+    if let Some(v) = num("--k3") {
+        p.k3 = v;
+    }
+    if let Some(v) = num("--n3") {
+        p.n3 = v;
+    }
+    if let Some(v) = num("--extra3") {
+        p.extra3 = v as u8;
+    }
+    if let Some(v) = num("--probes") {
+        p.probes333 = v as u64;
+    }
+    p
 }
 
 fn opt<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -79,12 +108,13 @@ fn bench(args: &[String]) {
     let t0 = Instant::now();
     let solver = Solver::new();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
-    let params = Params::default();
+    let params = params(args);
+    eprintln!("{:?}", params);
     let mut sums = [0usize; 5];
     let mut hist = std::collections::BTreeMap::new();
     let mut times = Vec::new();
     let mut tpr_total = 0usize;
-    for (i, scr) in scrambles.iter().enumerate() {
+    let run = |(i, scr): (usize, &&str)| {
         let moves = parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let cube = Cube::from_moves(&moves);
         if let Some(t) = &tpr {
@@ -97,12 +127,23 @@ fn bench(args: &[String]) {
             if !c.is_solved() {
                 fail(&format!("scramble {}: TPR's solution does not solve our model", i));
             }
-            tpr_total += row[5].parse::<usize>().unwrap();
         }
         let t = Instant::now();
         let sol = solver.solve(&cube, &params).unwrap_or_else(|e| fail(&format!("scramble {}: {}", i, e)));
-        let us = t.elapsed().as_micros();
-        times.push(us as f64 / 1e3);
+        (cube, sol, t.elapsed().as_micros())
+    };
+    // --parallel solves several cubes at once: right for length statistics, wrong for timings.
+    let parallel = args.iter().any(|a| a == "--parallel");
+    let results: Vec<_> = if parallel {
+        scrambles.par_iter().enumerate().map(run).collect()
+    } else {
+        scrambles.iter().enumerate().map(run).collect()
+    };
+    for (i, (cube, sol, us)) in results.iter().enumerate() {
+        if let Some(t) = &tpr {
+            tpr_total += t[i][5].parse::<usize>().unwrap();
+        }
+        times.push(*us as f64 / 1e3);
         for k in 0..4 {
             sums[k] += sol.lens[k];
         }
@@ -137,7 +178,8 @@ fn bench(args: &[String]) {
         sums[3] as f64 / n
     );
     println!(
-        "time per solve: mean {:.1} ms, median {:.1} ms, max {:.1} ms",
+        "time per solve{}: mean {:.1} ms, median {:.1} ms, max {:.1} ms",
+        if parallel { " (several cubes at once, not a timing)" } else { "" },
         times.iter().sum::<f64>() / n,
         times[times.len() / 2],
         times[times.len() - 1]

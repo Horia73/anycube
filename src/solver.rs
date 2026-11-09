@@ -5,9 +5,11 @@
 //! axis) pair is a "variant": the same physical cube re-expressed so that the
 //! fixed phase definitions apply. Solutions are mapped back at the end.
 
-use crate::c3::{C3, T3};
+use crate::c3::{C3, T3, UNBOUNDED};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 use crate::tables::*;
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 #[derive(Clone, Debug)]
 pub struct Params {
@@ -21,11 +23,15 @@ pub struct Params {
     pub k3: usize,
     /// Minimum phase-2 probes of the 3x3x3 solver.
     pub probes333: u64,
+    /// Reductions to collect; the one with the shortest total wins.
+    pub n3: usize,
+    /// How many moves past the shortest reduction to keep collecting.
+    pub extra3: u8,
 }
 
 impl Default for Params {
     fn default() -> Params {
-        Params { n1: 10_000, k1: 500, n2: 100, k3: 100, probes333: 500 }
+        Params { n1: 10_000, k1: 500, n2: 100, k3: 100, probes333: 3000, n3: 2000, extra3: 1 }
     }
 }
 
@@ -180,13 +186,17 @@ impl Solver {
         }
         found.sort_by_key(|c| c.value);
 
-        // Phase 3: first solution by increasing total length.
+        // Phase 3: collect reductions by increasing length of phases 1 + 2 + 3.
         let k = found.len().min(p.k3);
         let mut cap = 13u8;
         let max_len12 = found[..k].iter().map(|c| c.len12).max().unwrap();
-        let mut hit: Option<(usize, Vec<u8>)> = None;
+        let mut reds: Vec<(usize, Vec<u8>)> = Vec::new();
+        let mut first_len: Option<u8> = None;
         'p3: loop {
             for len123 in found[0].value..=max_len12 + cap {
+                if first_len.is_some_and(|f| len123 > f + p.extra3) {
+                    break 'p3;
+                }
                 for (i, c) in found[..k].iter().enumerate() {
                     if c.value > len123 {
                         break;
@@ -199,27 +209,64 @@ impl Solver {
                     let mask = ct3_mask(&c.cube);
                     let par = ct3_parity(&c.cube);
                     let last = c.moves.last().or(cands[c.c1].moves.last()).copied().unwrap_or(255);
-                    if self.dfs3(&sg, mask, par, d3 as usize, last, 0, &mut path) {
-                        hit = Some((i, path[..d3 as usize].to_vec()));
+                    if self.dfs3(&sg, mask, par, d3 as usize, last, 0, &mut path, i, &mut reds, p.n3) {
                         break 'p3;
                     }
                 }
+                if first_len.is_none() && !reds.is_empty() {
+                    first_len = Some(len123);
+                }
             }
-            if cap >= 24 {
+            if first_len.is_some() || cap >= 24 {
                 break;
             }
             cap += 1;
         }
-        let (i, moves3) = hit.ok_or("phase 3 found nothing")?;
-        let c2 = &found[i];
-        let c1 = &cands[c2.c1];
+        if reds.is_empty() {
+            return Err("phase 3 found nothing".into());
+        }
 
-        // 3x3x3 stage.
-        let mut reduced = c2.cube;
-        reduced.apply_seq(&moves3);
-        let home = reduced.with_home_centres().ok_or("centres are not solved after phase 3")?;
-        let c3 = C3::from_cube(&home).ok_or("dedges are not paired after phase 3")?;
-        let moves333 = self.t3.solve(&c3, p.probes333);
+        // 3x3x3 stage: solve every distinct reduced cube, keep the shortest total.
+        struct Item {
+            red: usize,
+            len123: usize,
+            c3: C3,
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut items = Vec::new();
+        for (ri, (i, moves3)) in reds.iter().enumerate() {
+            let c2 = &found[*i];
+            let mut reduced = c2.cube;
+            reduced.apply_seq(moves3);
+            let home = reduced.with_home_centres().ok_or("centres are not solved after phase 3")?;
+            let c3 = C3::from_cube(&home).ok_or("dedges are not paired after phase 3")?;
+            if seen.insert(c3) {
+                items.push(Item { red: ri, len123: c2.len12 as usize + moves3.len(), c3 });
+            }
+        }
+        let first = self.t3.solve(&items[0].c3, p.probes333);
+        let best_total = AtomicUsize::new(items[0].len123 + first.len());
+        let mut best = (items[0].len123 + first.len(), 0usize, first);
+        let others: Vec<(usize, usize, Vec<u8>)> = items[1..]
+            .par_iter()
+            .enumerate()
+            .filter_map(|(k, it)| {
+                let bound = best_total.load(Relaxed).checked_sub(it.len123 + 1)?;
+                let sol = self.t3.solve_bounded(&it.c3, bound.min(UNBOUNDED - 1), p.probes333)?;
+                let total = it.len123 + sol.len();
+                best_total.fetch_min(total, Relaxed);
+                Some((total, k + 1, sol))
+            })
+            .collect();
+        for o in others {
+            if (o.0, o.1) < (best.0, best.1) {
+                best = o;
+            }
+        }
+        let (_, item, moves333) = best;
+        let (i, moves3) = &reds[items[item].red];
+        let c2 = &found[*i];
+        let c1 = &cands[c2.c1];
 
         let frame = variants[c1.variant].frame;
         let moves: Vec<u8> = c1
@@ -329,6 +376,7 @@ impl Solver {
         false
     }
 
+    /// Enumerates phase-3 solutions of exactly `rem` more moves. Returns true when `limit` is reached.
     #[allow(clippy::too_many_arguments)]
     fn dfs3(
         &self,
@@ -339,10 +387,17 @@ impl Solver {
         last: u8,
         depth: usize,
         path: &mut [u8; 64],
+        cand: usize,
+        out: &mut Vec<(usize, Vec<u8>)>,
+        limit: usize,
     ) -> bool {
         let tabs = &self.tabs;
         if rem == 0 {
-            return tabs.sigma[sigma_rank(sg)] == 0 && tabs.ct3[tabs.ct3_index(mask, parity)] == 0;
+            if tabs.sigma[sigma_rank(sg)] == 0 && tabs.ct3[tabs.ct3_index(mask, parity)] == 0 {
+                out.push((cand, path[..depth].to_vec()));
+                return out.len() >= limit;
+            }
+            return false;
         }
         for (k, &m) in P3_MOVES.iter().enumerate() {
             if last != 255 && skip_move(last, m) {
@@ -358,7 +413,7 @@ impl Solver {
                 continue;
             }
             path[depth] = m;
-            if self.dfs3(&s, x, q, rem - 1, m, depth + 1, path) {
+            if self.dfs3(&s, x, q, rem - 1, m, depth + 1, path, cand, out, limit) {
                 return true;
             }
         }

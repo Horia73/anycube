@@ -15,8 +15,9 @@ const N_SPERM: usize = 24;
 const G1_MOVES: [u8; 10] = [0, 1, 2, 9, 10, 11, 4, 13, 7, 16];
 const SLICE_GOAL_MASK: usize = 0xF00;
 const UNREACHED: u8 = 255;
+pub const UNBOUNDED: usize = 30;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct C3 {
     pub cp: [u8; 8],
     pub co: [u8; 8],
@@ -130,7 +131,6 @@ pub struct T3 {
     p_tf: Vec<u8>,
     p_cs: Vec<u8>,
     p_us: Vec<u8>,
-    slice_goal: usize,
     /// Frames used to retry the search along the three axes.
     frames: Vec<(usize, C3, C3)>,
 }
@@ -290,7 +290,6 @@ impl T3 {
             p_tf,
             p_cs,
             p_us,
-            slice_goal,
             frames,
         }
     }
@@ -308,6 +307,12 @@ impl T3 {
     /// Finds a short solution (outer moves, 0..18). `probes` is the minimum
     /// number of phase-2 attempts before the best solution so far is returned.
     pub fn solve(&self, cube: &C3, probes: u64) -> Vec<u8> {
+        self.solve_bounded(cube, UNBOUNDED, probes).expect("3x3x3 state must be solvable")
+    }
+
+    /// Like `solve`, but only accepts solutions of at most `max_len` moves and
+    /// gives up after `probes` phase-2 attempts without one.
+    pub fn solve_bounded(&self, cube: &C3, max_len: usize, probes: u64) -> Option<Vec<u8>> {
         let ct = cube_tables();
         let mut variants = Vec::new();
         for (r, rinv, rot) in &self.frames {
@@ -320,7 +325,9 @@ impl T3 {
             start: C3::identity(),
             path: [0; 40],
             best: None,
-            best_len: 99,
+            best_len: max_len + 1,
+            bounded: max_len < UNBOUNDED,
+            found: false,
             probes: 0,
             min_probes: probes,
             stop: false,
@@ -352,7 +359,7 @@ impl T3 {
                 }
             }
         }
-        result.expect("3x3x3 state must be solvable")
+        result
     }
 }
 
@@ -362,6 +369,8 @@ struct Search<'a> {
     path: [u8; 40],
     best: Option<Vec<u8>>,
     best_len: usize,
+    bounded: bool,
+    found: bool,
     probes: u64,
     min_probes: u64,
     stop: bool,
@@ -425,10 +434,11 @@ impl Search<'_> {
             if self.phase2(cp, up, sp, d2, last, d1) {
                 self.best_len = d1 + d2;
                 self.best = Some(self.path[..d1 + d2].to_vec());
+                self.found = true;
                 break;
             }
         }
-        if self.probes >= self.min_probes && self.best_len < 99 {
+        if self.probes >= self.min_probes && (self.found || self.bounded) {
             self.stop = true;
         }
     }
