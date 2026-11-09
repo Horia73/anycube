@@ -6,7 +6,7 @@
 //! sequences that really stage the centres in the given number of moves are
 //! followed. The other conditions are tested at the end.
 
-use crate::ctab::{GOAL_RL, GOAL_UD};
+use crate::ctab::NEAR;
 use crate::cube::{skip_move, Cube};
 use crate::solver::{P2Cand, Params, Solver, Variant};
 use crate::tables::*;
@@ -23,7 +23,11 @@ struct Node {
     parity: u8,
     /// Exact number of moves to stage the centres.
     d: u8,
+    /// Moves that bring the centres one step closer, when known.
+    closer: u32,
 }
+
+const UNKNOWN: u32 = u32::MAX;
 
 struct Shared<'a> {
     count: AtomicUsize,
@@ -56,7 +60,7 @@ impl Solver {
             }
         }
         let d = self.ctab.exact(&self.tabs.bp, &self.tabs.ranks, m[2], m[0]);
-        Node { rl: m[2], ud: m[0], r, parity: cube.wing_parity(), d }
+        Node { rl: m[2], ud: m[0], r, parity: cube.wing_parity(), d, closer: UNKNOWN }
     }
 
     /// The node after move `m`, if the centres can still be staged in `rem` more moves.
@@ -64,11 +68,12 @@ impl Solver {
     fn joint_step(&self, n: &Node, m: u8, rem: usize) -> Option<Node> {
         let bp = &self.tabs.bp;
         let (rl, ud) = (bp.apply(m, n.rl), bp.apply(m, n.ud));
-        let d = if rem == 0 {
-            if rl != GOAL_RL || ud != GOAL_UD {
-                return None;
+        let (d, closer) = if rem <= NEAR {
+            // Close to the goal the small in-cache table answers exactly.
+            match self.near.get(rl, ud) {
+                Some((d, closer)) if d as usize <= rem => (d, closer),
+                _ => return None,
             }
-            0
         } else {
             // The neighbour is at distance d-1, d or d+1; the table says which, modulo 3.
             let v = self.ctab.get(self.ctab.index(&self.tabs.ranks, rl, ud));
@@ -76,9 +81,9 @@ impl Solver {
             if d as usize > rem {
                 return None;
             }
-            d
+            (d, UNKNOWN)
         };
-        Some(Node { rl, ud, r: bp.apply(m, n.r), parity: n.parity ^ p2_flips_parity(m) as u8, d })
+        Some(Node { rl, ud, r: bp.apply(m, n.r), parity: n.parity ^ p2_flips_parity(m) as u8, d, closer })
     }
 
     /// Endpoints of the joint phase, by increasing length, until `p.n2` are found
@@ -170,8 +175,10 @@ impl Ctx<'_> {
                 return;
             }
         }
+        // With no move to spare, only the moves that bring the centres closer can work.
+        let allowed = if n.d as usize == rem { n.closer } else { UNKNOWN };
         for &m in &P1_MOVES {
-            if last != 255 && skip_move(last, m) {
+            if (allowed >> m) & 1 == 0 || (last != 255 && skip_move(last, m)) {
                 continue;
             }
             if let Some(next) = self.solver.joint_step(n, m, rem - 1) {

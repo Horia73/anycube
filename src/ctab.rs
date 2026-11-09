@@ -322,3 +322,94 @@ impl Ctab {
         d
     }
 }
+
+/// Exact staging distance of every centre state within `NEAR` moves of the
+/// goal, in a small hash table that stays in cache, together with the moves
+/// that bring the state one step closer. The deep end of the search, where
+/// almost all nodes are, never touches the big table and never tries a move
+/// that cannot work.
+pub struct Near {
+    /// `key << 8 | distance`, or `EMPTY`.
+    slots: Vec<u64>,
+    /// Bit `m` set: move `m` decreases the distance.
+    closer: Vec<u32>,
+    mask: usize,
+}
+
+pub const NEAR: usize = 5;
+const EMPTY: u64 = u64::MAX;
+
+impl Near {
+    pub fn new(bp: &BitPerm) -> Near {
+        let size = 1 << 19;
+        let mut near = Near { slots: vec![EMPTY; size], closer: vec![0; size], mask: size - 1 };
+        near.insert(GOAL_RL, GOAL_UD, 0);
+        let mut all = vec![(GOAL_RL, GOAL_UD)];
+        let mut start = 0;
+        for depth in 0..NEAR {
+            let end = all.len();
+            for i in start..end {
+                let (rl, ud) = all[i];
+                for &m in &P1_MOVES {
+                    let (a, b) = (bp.apply(m, rl), bp.apply(m, ud));
+                    if near.get(a, b).is_none() {
+                        near.insert(a, b, depth as u8 + 1);
+                        all.push((a, b));
+                    }
+                }
+            }
+            start = end;
+        }
+        assert_eq!(all.len(), 131_491);
+        for &(rl, ud) in &all {
+            let (d, _) = near.get(rl, ud).unwrap();
+            let mut bits = 0u32;
+            for &m in &P1_MOVES {
+                if let Some((e, _)) = near.get(bp.apply(m, rl), bp.apply(m, ud)) {
+                    if e + 1 == d {
+                        bits |= 1 << m;
+                    }
+                }
+            }
+            let i = near.find(rl, ud).unwrap();
+            near.closer[i] = bits;
+        }
+        near
+    }
+
+    #[inline(always)]
+    fn slot(&self, key: u64) -> usize {
+        (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) as usize & self.mask
+    }
+
+    fn insert(&mut self, rl: u32, ud: u32, d: u8) {
+        let key = (rl as u64) << 24 | ud as u64;
+        let mut i = self.slot(key);
+        while self.slots[i] != EMPTY {
+            i = (i + 1) & self.mask;
+        }
+        self.slots[i] = key << 8 | d as u64;
+    }
+
+    #[inline(always)]
+    fn find(&self, rl: u32, ud: u32) -> Option<usize> {
+        let key = (rl as u64) << 24 | ud as u64;
+        let mut i = self.slot(key);
+        loop {
+            let s = self.slots[i];
+            if s == EMPTY {
+                return None;
+            }
+            if s >> 8 == key {
+                return Some(i);
+            }
+            i = (i + 1) & self.mask;
+        }
+    }
+
+    /// The exact distance if it is at most `NEAR`, and the moves that decrease it.
+    #[inline(always)]
+    pub fn get(&self, rl: u32, ud: u32) -> Option<(u8, u32)> {
+        self.find(rl, ud).map(|i| (self.slots[i] as u8, self.closer[i]))
+    }
+}

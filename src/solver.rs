@@ -6,7 +6,7 @@
 //! fixed phase definitions apply. Solutions are mapped back at the end.
 
 use crate::big1::Big1;
-use crate::ctab::Ctab;
+use crate::ctab::{Ctab, Near};
 use crate::c3::{C3, T3};
 use crate::opt3::{Opt3, Outcome, Root};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
@@ -46,15 +46,15 @@ impl Default for Params {
         Params {
             n1: 10_000,
             k1: 500,
-            n2: 1000,
-            k3: 1000,
+            n2: 3000,
+            k3: 3000,
             probes333: 3000,
             n3: 2000,
             extra3: 1,
             exact_nodes: 0,
             exact_cap: 15,
             joint: true,
-            joint_nodes: 30_000_000,
+            joint_nodes: 300_000_000,
         }
     }
 }
@@ -71,6 +71,7 @@ pub struct Solver {
     pub t3: T3,
     pub big: Big1,
     pub ctab: Ctab,
+    pub(crate) near: Near,
     /// R-vs-L patterns on the R and L faces that phase 3 can finish.
     pub(crate) rl_ok: [bool; 256],
     /// Rotation indices of the three frames and six orientation classes.
@@ -128,7 +129,8 @@ impl Solver {
         for (pat, ok) in rl_ok.iter_mut().enumerate() {
             *ok = pat.count_ones() == 4 && tabs.p2[tabs.p2_index(0x00FF | (pat as u32) << 16, 0)] == 0;
         }
-        Solver { tabs, t3, big, ctab, rl_ok, frames, classes }
+        let near = Near::new(&tabs.bp);
+        Solver { tabs, t3, big, ctab, near, rl_ok, frames, classes }
     }
 
     /// The 18 variants of a cube: (re-expressed cube, frame rotation).
@@ -167,6 +169,8 @@ impl Solver {
             }
         }
 
+        let debug = std::env::var_os("CUBE444_DEBUG").is_some();
+        let t_start = std::time::Instant::now();
         let mut found: Vec<P2Cand> = if p.joint {
             self.joint_endpoints(&variants, p)?
         } else {
@@ -252,6 +256,7 @@ impl Solver {
             return Err("phases 1 and 2 found nothing".into());
         }
         found.sort_by_key(|c| c.value);
+        let t_12 = t_start.elapsed();
         if std::env::var_os("CUBE444_DEBUG").is_some() {
             let mut by_len = std::collections::BTreeMap::new();
             for c in &found {
@@ -308,6 +313,7 @@ impl Solver {
             return Err("phase 3 found nothing".into());
         }
 
+        let t_123 = t_start.elapsed();
         // 3x3x3 stage: solve every distinct reduced cube, keep the shortest total.
         struct Item {
             red: usize,
@@ -414,6 +420,14 @@ impl Solver {
                     best = h;
                 }
             }
+        }
+        if debug {
+            eprintln!(
+                "debug: time phases 1+2 {:.0} ms, phase 3 {:.0} ms, 3x3x3 {:.0} ms",
+                t_12.as_secs_f64() * 1e3,
+                (t_123 - t_12).as_secs_f64() * 1e3,
+                (t_start.elapsed() - t_123).as_secs_f64() * 1e3
+            );
         }
         let (_, item, moves333) = best;
         let (i, moves3) = &reds[items[item].red];
