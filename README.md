@@ -72,8 +72,9 @@ mirrors TPR's search.
 | `--extra3` | moves past the shortest reduction to keep collecting | 1 |
 | `--probes` | 3x3x3 search effort per reduction | 3000 |
 
-Every solution is applied to an independent cube model and checked before it
-is returned.
+Every solution is applied to the full cube model and checked before it is
+returned. The model itself is cross-checked against TPR in the benchmark: same
+facelets for every scramble, and TPR's solutions solve the cube in this model.
 
 ## Credits
 
