@@ -89,6 +89,12 @@ fn params(args: &[String]) -> Params {
     if let Some(v) = num("--joint-nodes") {
         p.joint_nodes = v as i64 * 1_000_000;
     }
+    if let Some(v) = num("--time") {
+        p.time_limit_ms = v as u64;
+    }
+    if let Some(v) = num("--refine") {
+        p.refine = v as u64;
+    }
     if let Some(v) = num("--exact-cap") {
         p.exact_cap = v;
     }

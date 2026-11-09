@@ -39,6 +39,12 @@ pub struct Params {
     pub joint: bool,
     /// Node budget of the joint phase once it has found an endpoint.
     pub joint_nodes: i64,
+    /// The best sixteenth of the reductions get this many times the 3x3x3 effort (1 = off).
+    pub refine: u64,
+    /// Soft time limit per cube in milliseconds: once a stage has something to
+    /// show it stops at its share of the limit. The first results of each
+    /// stage are always awaited, so a solve can run somewhat over.
+    pub time_limit_ms: u64,
 }
 
 impl Default for Params {
@@ -46,15 +52,17 @@ impl Default for Params {
         Params {
             n1: 10_000,
             k1: 500,
-            n2: 3000,
-            k3: 3000,
+            n2: 10_000,
+            k3: 10_000,
             probes333: 3000,
             n3: 2000,
             extra3: 1,
             exact_nodes: 0,
             exact_cap: 15,
             joint: true,
-            joint_nodes: 300_000_000,
+            joint_nodes: 1_000_000_000,
+            refine: 16,
+            time_limit_ms: 8000,
         }
     }
 }
@@ -171,8 +179,9 @@ impl Solver {
 
         let debug = std::env::var_os("CUBE444_DEBUG").is_some();
         let t_start = std::time::Instant::now();
+        let limit = std::time::Duration::from_millis(p.time_limit_ms);
         let mut found: Vec<P2Cand> = if p.joint {
-            self.joint_endpoints(&variants, p)?
+            self.joint_endpoints(&variants, p, t_start + limit.mul_f64(0.4))?
         } else {
         // Phase 1: enumerate solutions by increasing length.
         let mut cands: Vec<P1Cand> = Vec::new();
@@ -273,7 +282,9 @@ impl Solver {
         let mut first_len: Option<u8> = None;
         'p3: loop {
             for len123 in found[0].value..=max_len12 + cap {
-                if first_len.is_some_and(|f| len123 > f + p.extra3) {
+                if first_len.is_some_and(|f| len123 > f + p.extra3)
+                    || (!reds.is_empty() && t_start.elapsed() > limit.mul_f64(0.6))
+                {
                     break 'p3;
                 }
                 let jobs: Vec<(usize, &P2Cand, u8)> = found[..k]
@@ -347,7 +358,30 @@ impl Solver {
             );
         }
         // Pass 1: two-phase search on every reduction.
-        let two: Vec<Vec<u8>> = items.par_iter().map(|it| self.t3.solve(&it.c3, p.probes333)).collect();
+        // Past its share of the time limit it only takes the first solution it finds.
+        let pass1_end = t_start + limit.mul_f64(0.8);
+        let mut two: Vec<Vec<u8>> = items
+            .par_iter()
+            .map(|it| {
+                let probes = if std::time::Instant::now() > pass1_end { 1 } else { p.probes333 };
+                self.t3.solve(&it.c3, probes)
+            })
+            .collect();
+        // Then a much deeper search on the reductions that came out best.
+        if p.refine > 1 && t_start.elapsed() < limit.mul_f64(0.8) {
+            let mut order: Vec<usize> = (0..items.len()).collect();
+            order.sort_by_key(|&k| (items[k].len123 + two[k].len(), k));
+            order.truncate((items.len() / 16).max(24).min(items.len()));
+            let deeper: Vec<(usize, Vec<u8>)> = order
+                .par_iter()
+                .map(|&k| (k, self.t3.solve(&items[k].c3, p.probes333 * p.refine)))
+                .collect();
+            for (k, sol) in deeper {
+                if sol.len() < two[k].len() {
+                    two[k] = sol;
+                }
+            }
+        }
         let mut best = (usize::MAX, 0usize, Vec::new());
         for (k, sol) in two.iter().enumerate() {
             let total = items[k].len123 + sol.len();
