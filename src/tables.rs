@@ -482,11 +482,11 @@ fn gen_sigma(pl: &[[u8; 12]; 17], phinv: &[[u8; 12]; 17]) -> Vec<u8> {
     unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
 }
 
-fn table_dir() -> PathBuf {
+pub(crate) fn table_dir() -> PathBuf {
     std::env::var_os("CUBE444_TABLES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("tables"))
 }
 
-fn load_or_gen(path: &Path, len: usize, gen: impl FnOnce() -> Vec<u8>) -> Bytes {
+pub(crate) fn load_or_gen(path: &Path, len: usize, gen: impl FnOnce() -> Vec<u8>) -> Bytes {
     if let Ok(f) = fs::File::open(path) {
         if f.metadata().map(|m| m.len() as usize == len).unwrap_or(false) {
             // Read-only private mapping of a file this program wrote.

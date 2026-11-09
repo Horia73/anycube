@@ -5,11 +5,14 @@
 //! axis) pair is a "variant": the same physical cube re-expressed so that the
 //! fixed phase definitions apply. Solutions are mapped back at the end.
 
-use crate::c3::{C3, T3, UNBOUNDED};
+use crate::big1::Big1;
+use crate::c3::{C3, T3};
+use crate::opt3::{Opt3, Outcome, Root};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 use crate::tables::*;
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed};
+use std::sync::Mutex;
 
 #[derive(Clone, Debug)]
 pub struct Params {
@@ -27,11 +30,25 @@ pub struct Params {
     pub n3: usize,
     /// How many moves past the shortest reduction to keep collecting.
     pub extra3: u8,
+    /// Node budget of the exact 3x3x3 search over the collected reductions (0 = off).
+    pub exact_nodes: i64,
+    /// Longest 3x3x3 solution the exact search looks for.
+    pub exact_cap: usize,
 }
 
 impl Default for Params {
     fn default() -> Params {
-        Params { n1: 10_000, k1: 500, n2: 100, k3: 100, probes333: 3000, n3: 2000, extra3: 1 }
+        Params {
+            n1: 10_000,
+            k1: 500,
+            n2: 1000,
+            k3: 1000,
+            probes333: 3000,
+            n3: 2000,
+            extra3: 1,
+            exact_nodes: 0,
+            exact_cap: 15,
+        }
     }
 }
 
@@ -45,6 +62,7 @@ pub struct Solution {
 pub struct Solver {
     pub tabs: Tabs,
     pub t3: T3,
+    pub big: Big1,
     /// Rotation indices of the three frames and six orientation classes.
     frames: [usize; 3],
     classes: [usize; 6],
@@ -87,7 +105,9 @@ impl Solver {
             ct.rot_index(&c1),
             ct.rot_index(&c2),
         ];
-        Solver { tabs: Tabs::load(), t3: T3::new(), frames, classes }
+        let t3 = T3::new();
+        let big = Big1::load(&t3);
+        Solver { tabs: Tabs::load(), t3, big, frames, classes }
     }
 
     pub fn solve(&self, cube: &Cube, p: &Params) -> Result<Solution, String> {
@@ -160,20 +180,28 @@ impl Solver {
         let mut cap = 9u8;
         'p2: loop {
             for len12 in vmin..=max_len1 + cap {
-                for (i, c) in cands.iter().enumerate() {
-                    if c.value > len12 {
-                        break;
-                    }
-                    let d2 = len12 - c.moves.len() as u8;
+                // Every eligible phase-1 endpoint is searched at this length, in parallel.
+                let jobs: Vec<(usize, &P1Cand, u8)> = cands
+                    .iter()
+                    .enumerate()
+                    .take_while(|(_, c)| c.value <= len12)
+                    .map(|(i, c)| (i, c, len12 - c.moves.len() as u8))
                     // After the first round only the newly allowed depth is searched.
-                    if d2 > cap || (cap > 9 && d2 != cap) {
-                        continue;
-                    }
-                    let last = c.moves.last().copied().unwrap_or(255);
-                    self.dfs2(c.mask, c.parity, d2 as usize, last, 0, &mut path, i, c, &mut found, p.n2);
-                    if found.len() >= p.n2 {
-                        break 'p2;
-                    }
+                    .filter(|&(_, _, d2)| d2 <= cap && (cap == 9 || d2 == cap))
+                    .collect();
+                let parts: Vec<Vec<P2Cand>> = jobs
+                    .par_iter()
+                    .map(|&(i, c, d2)| {
+                        let mut path = [0u8; 64];
+                        let mut out = Vec::new();
+                        let last = c.moves.last().copied().unwrap_or(255);
+                        self.dfs2(c.mask, c.parity, d2 as usize, last, 0, &mut path, i, c, &mut out, p.n2);
+                        out
+                    })
+                    .collect();
+                found.extend(parts.into_iter().flatten());
+                if found.len() >= p.n2 {
+                    break 'p2;
                 }
             }
             if cap >= 20 {
@@ -197,21 +225,29 @@ impl Solver {
                 if first_len.is_some_and(|f| len123 > f + p.extra3) {
                     break 'p3;
                 }
-                for (i, c) in found[..k].iter().enumerate() {
-                    if c.value > len123 {
-                        break;
-                    }
-                    let d3 = len123 - c.len12;
-                    if d3 > cap || (cap > 13 && d3 != cap) {
-                        continue;
-                    }
-                    let sg = sigma_of(&c.cube);
-                    let mask = ct3_mask(&c.cube);
-                    let par = ct3_parity(&c.cube);
-                    let last = c.moves.last().or(cands[c.c1].moves.last()).copied().unwrap_or(255);
-                    if self.dfs3(&sg, mask, par, d3 as usize, last, 0, &mut path, i, &mut reds, p.n3) {
-                        break 'p3;
-                    }
+                let jobs: Vec<(usize, &P2Cand, u8)> = found[..k]
+                    .iter()
+                    .enumerate()
+                    .take_while(|(_, c)| c.value <= len123)
+                    .map(|(i, c)| (i, c, len123 - c.len12))
+                    .filter(|&(_, _, d3)| d3 <= cap && (cap == 13 || d3 == cap))
+                    .collect();
+                let parts: Vec<Vec<(usize, Vec<u8>)>> = jobs
+                    .par_iter()
+                    .map(|&(i, c, d3)| {
+                        let mut path = [0u8; 64];
+                        let mut out = Vec::new();
+                        let sg = sigma_of(&c.cube);
+                        let mask = ct3_mask(&c.cube);
+                        let par = ct3_parity(&c.cube);
+                        let last = c.moves.last().or(cands[c.c1].moves.last()).copied().unwrap_or(255);
+                        self.dfs3(&sg, mask, par, d3 as usize, last, 0, &mut path, i, &mut out, p.n3);
+                        out
+                    })
+                    .collect();
+                reds.extend(parts.into_iter().flatten());
+                if reds.len() >= p.n3 {
+                    break 'p3;
                 }
                 if first_len.is_none() && !reds.is_empty() {
                     first_len = Some(len123);
@@ -244,23 +280,93 @@ impl Solver {
                 items.push(Item { red: ri, len123: c2.len12 as usize + moves3.len(), c3 });
             }
         }
-        let first = self.t3.solve(&items[0].c3, p.probes333);
-        let best_total = AtomicUsize::new(items[0].len123 + first.len());
-        let mut best = (items[0].len123 + first.len(), 0usize, first);
-        let others: Vec<(usize, usize, Vec<u8>)> = items[1..]
-            .par_iter()
-            .enumerate()
-            .filter_map(|(k, it)| {
-                let bound = best_total.load(Relaxed).checked_sub(it.len123 + 1)?;
-                let sol = self.t3.solve_bounded(&it.c3, bound.min(UNBOUNDED - 1), p.probes333)?;
-                let total = it.len123 + sol.len();
-                best_total.fetch_min(total, Relaxed);
-                Some((total, k + 1, sol))
-            })
-            .collect();
-        for o in others {
-            if (o.0, o.1) < (best.0, best.1) {
-                best = o;
+        if std::env::var_os("CUBE444_DEBUG").is_some() {
+            let mut by_len = std::collections::BTreeMap::new();
+            for it in &items {
+                *by_len.entry(it.len123).or_insert(0usize) += 1;
+            }
+            let ends: std::collections::HashSet<usize> = reds.iter().map(|r| r.0).collect();
+            eprintln!(
+                "debug: {} reductions, {} distinct reduced cubes by length {:?}, from {} phase-2 endpoints",
+                reds.len(),
+                items.len(),
+                by_len,
+                ends.len()
+            );
+        }
+        // Pass 1: two-phase search on every reduction.
+        let two: Vec<Vec<u8>> = items.par_iter().map(|it| self.t3.solve(&it.c3, p.probes333)).collect();
+        let mut best = (usize::MAX, 0usize, Vec::new());
+        for (k, sol) in two.iter().enumerate() {
+            let total = items[k].len123 + sol.len();
+            if total < best.0 {
+                best = (total, k, sol.clone());
+            }
+        }
+        // Pass 2: exact search. Scan every reduction for very short 3x3x3 solutions first
+        // (cheap), then raise the limit one move at a time while the node budget lasts.
+        if p.exact_nodes > 0 {
+            let opt = Opt3::new(&self.t3, &self.big);
+            let roots: Vec<Root> = items.par_iter().map(|it| opt.prepare(&it.c3)).collect();
+            let mut order: Vec<usize> = (0..items.len()).collect();
+            order.sort_by_key(|&k| (items[k].len123, two[k].len()));
+            let best_total = AtomicUsize::new(best.0);
+            let budget = AtomicI64::new(p.exact_nodes);
+            // Per reduction: the longest length already shown to have no solution.
+            let proven: Vec<AtomicUsize> = roots.iter().map(|r| AtomicUsize::new(r.lower_bound().saturating_sub(1))).collect();
+            let hits: Mutex<Vec<(usize, usize, Vec<u8>)>> = Mutex::new(Vec::new());
+            for cap in 12.min(p.exact_cap)..=p.exact_cap {
+                let next = AtomicUsize::new(0);
+                (0..rayon::current_num_threads()).into_par_iter().for_each(|_| loop {
+                    let j = next.fetch_add(1, Relaxed);
+                    if j >= order.len() || budget.load(Relaxed) < 0 {
+                        break;
+                    }
+                    let k = order[j];
+                    let Some(room) = best_total.load(Relaxed).checked_sub(items[k].len123 + 1) else {
+                        continue;
+                    };
+                    let bound = room.min(cap);
+                    let known = proven[k].load(Relaxed);
+                    if bound <= known {
+                        continue;
+                    }
+                    match opt.solve(&roots[k], known + 1, bound, &budget) {
+                        Outcome::Solved(sol) => {
+                            let total = items[k].len123 + sol.len();
+                            best_total.fetch_min(total, Relaxed);
+                            // The solution is optimal: nothing shorter is left to find here.
+                            proven[k].store(usize::MAX, Relaxed);
+                            hits.lock().unwrap().push((total, k, sol));
+                        }
+                        Outcome::None => proven[k].store(bound, Relaxed),
+                        Outcome::Aborted => {}
+                    }
+                });
+                if budget.load(Relaxed) < 0 {
+                    break;
+                }
+            }
+            if std::env::var_os("CUBE444_DEBUG").is_some() {
+                let mut opt_hist = std::collections::BTreeMap::new();
+                for h in hits.lock().unwrap().iter() {
+                    *opt_hist.entry(h.2.len()).or_insert(0usize) += 1;
+                }
+                let mut two_hist = std::collections::BTreeMap::new();
+                for t in &two {
+                    *two_hist.entry(t.len()).or_insert(0usize) += 1;
+                }
+                eprintln!(
+                    "debug: two-phase lengths {:?}, exact hits by length {:?}, {} M nodes used",
+                    two_hist,
+                    opt_hist,
+                    (p.exact_nodes - budget.load(Relaxed)) / 1_000_000
+                );
+            }
+            for h in hits.into_inner().unwrap() {
+                if (h.0, h.1) < (best.0, best.1) {
+                    best = h;
+                }
             }
         }
         let (_, item, moves333) = best;

@@ -16,6 +16,7 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("solve") => solve(&args[1..]),
         Some("bench") => bench(&args[1..]),
+        Some("probe333") => probe333(&args[1..]),
         _ => usage(),
     }
 }
@@ -77,6 +78,12 @@ fn params(args: &[String]) -> Params {
     }
     if let Some(v) = num("--extra3") {
         p.extra3 = v as u8;
+    }
+    if let Some(v) = num("--exact") {
+        p.exact_nodes = v as i64 * 1_000_000;
+    }
+    if let Some(v) = num("--exact-cap") {
+        p.exact_cap = v;
     }
     if let Some(v) = num("--probes") {
         p.probes333 = v as u64;
@@ -187,5 +194,47 @@ fn bench(args: &[String]) {
     println!("length histogram: {:?}", hist);
     if tpr.is_some() {
         println!("TPR on the same cubes: mean length {:.3} (facelets and solutions cross-checked)", tpr_total as f64 / n);
+    }
+}
+
+/// Development aid: speed of the exact 3x3x3 search on random outer-move scrambles.
+fn probe333(args: &[String]) {
+    use cube444::big1::Big1;
+    use cube444::c3::{C3, T3};
+    use cube444::opt3::{Opt3, Outcome};
+    use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
+    let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(10);
+    let max_len: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(15);
+    let t = T3::new();
+    let big = Big1::load(&t);
+    let o = Opt3::new(&t, &big);
+    let mut seed = 12345u64;
+    let mut rnd = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize
+    };
+    for i in 0..n {
+        let moves: Vec<u8> = (0..40).map(|_| (rnd() % 18) as u8).collect();
+        let c3 = C3::from_cube(&Cube::from_moves(&moves)).unwrap();
+        let two = t.solve(&c3, 500).len();
+        let budget = AtomicI64::new(i64::MAX);
+        let t0 = Instant::now();
+        let root = o.prepare(&c3);
+        let res = o.solve(&root, 0, max_len, &budget);
+        let nodes = i64::MAX - budget.load(Relaxed);
+        let what = match res {
+            Outcome::Solved(s) => format!("solved in {}", s.len()),
+            Outcome::None => format!("none within {}", max_len),
+            Outcome::Aborted => "aborted".to_string(),
+        };
+        println!(
+            "{:3}  two-phase {}  lower bound {}  {}  {} nodes  {:.1} ms",
+            i,
+            two,
+            root.lower_bound(),
+            what,
+            nodes,
+            t0.elapsed().as_secs_f64() * 1e3
+        );
     }
 }

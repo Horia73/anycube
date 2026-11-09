@@ -6,9 +6,9 @@
 
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 
-const N_TWIST: usize = 2187;
-const N_FLIP: usize = 2048;
-const N_SLICE: usize = 495;
+pub const N_TWIST: usize = 2187;
+pub const N_FLIP: usize = 2048;
+pub const N_SLICE: usize = 495;
 const N_PERM: usize = 40320;
 const N_SPERM: usize = 24;
 /// U U2 U' D D2 D' R2 L2 F2 B2
@@ -118,11 +118,12 @@ fn perm_unrank(mut r: usize, out: &mut [u8]) {
 }
 
 pub struct T3 {
-    moves: [C3; 18],
-    twist_mv: Vec<[u16; 18]>,
-    flip_mv: Vec<[u16; 18]>,
-    slice_mv: Vec<[u16; 18]>,
-    slice_rank: Vec<u16>,
+    pub(crate) moves: [C3; 18],
+    pub(crate) twist_mv: Vec<[u16; 18]>,
+    pub(crate) flip_mv: Vec<[u16; 18]>,
+    pub(crate) slice_mv: Vec<[u16; 18]>,
+    pub(crate) slice_rank: Vec<u16>,
+    slice_goal: usize,
     cperm_mv: Vec<[u16; 10]>,
     uperm_mv: Vec<[u16; 10]>,
     sperm_mv: Vec<[u8; 10]>,
@@ -132,7 +133,7 @@ pub struct T3 {
     p_cs: Vec<u8>,
     p_us: Vec<u8>,
     /// Frames used to retry the search along the three axes.
-    frames: Vec<(usize, C3, C3)>,
+    pub(crate) frames: Vec<(usize, C3, C3)>,
 }
 
 fn bfs2<const M: usize>(
@@ -290,12 +291,23 @@ impl T3 {
             p_tf,
             p_cs,
             p_us,
+            slice_goal,
             frames,
         }
     }
 
+    /// Slice coordinate of the solved cube; also the index of the goal in the exact table.
+    pub(crate) fn slice_goal(&self) -> usize {
+        self.slice_goal
+    }
+
+    pub(crate) fn coords(&self, c: &C3) -> (usize, usize, usize) {
+        (c.twist(), c.flip(), self.slice_rank[c.slice_mask()] as usize)
+    }
+
+    /// Lower bound on the distance to the domino subgroup, from three small tables.
     #[inline(always)]
-    fn h1(&self, t: usize, f: usize, s: usize) -> u8 {
+    pub(crate) fn h1(&self, t: usize, f: usize, s: usize) -> u8 {
         self.p_ts[t * N_SLICE + s].max(self.p_fs[f * N_SLICE + s]).max(self.p_tf[t * N_FLIP + f])
     }
 

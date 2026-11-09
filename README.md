@@ -56,21 +56,28 @@ cargo build --release
 ./target/release/cube444 bench bench/scrambles-1000.txt --tpr bench/tpr-results.tsv
 ```
 
-The first run generates `tables/pairing.bin` (240 MB, about 20 s on 8 cores).
+The first run generates `tables/pairing.bin` (240 MB) and
+`tables/phase1-exact.bin` (554 MB), about 20 s each on 8 cores.
 Set `CUBE444_TABLES` to keep the tables somewhere else.
 
-Search effort is set with flags. `--n3 1 --probes 500` gives the fast mode that
-mirrors TPR's search.
+Search effort is set with flags. `--n2 100 --k3 100 --n3 1 --probes 500` gives
+the fast mode that mirrors TPR's search.
 
 | Flag | Meaning | Default |
 |---|---|---|
 | `--n1` | phase-1 solutions enumerated | 10000 |
 | `--k1` | phase-1 endpoints kept | 500 |
-| `--n2` | phase-2 endpoints collected | 100 |
-| `--k3` | phase-2 endpoints tried in phase 3 | 100 |
+| `--n2` | phase-2 endpoints collected | 1000 |
+| `--k3` | phase-2 endpoints tried in phase 3 | 1000 |
 | `--n3` | reductions compared by total length | 2000 |
 | `--extra3` | moves past the shortest reduction to keep collecting | 1 |
-| `--probes` | 3x3x3 search effort per reduction | 3000 |
+| `--probes` | 3x3x3 two-phase effort per reduction | 3000 |
+| `--exact` | node budget (millions) of the exact 3x3x3 search | 0 (off) |
+| `--exact-cap` | longest 3x3x3 solution the exact search looks for | 15 |
+
+The exact 3x3x3 search (`src/opt3.rs`) uses a 554 MB table of exact distances
+to the domino subgroup, generated on first use in about 20 s. It is off by
+default: at about 1 s per 15-move query it costs more than it gains.
 
 Every solution is applied to the full cube model and checked before it is
 returned. The model itself is cross-checked against TPR in the benchmark: same
