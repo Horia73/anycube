@@ -89,6 +89,12 @@ fn params(args: &[String]) -> Params {
     if let Some(v) = num("--joint-nodes") {
         p.joint_nodes = v as i64 * 1_000_000;
     }
+    if let Some(v) = num("--far-g") {
+        p.far_g = v as u8;
+    }
+    if let Some(v) = num("--far-k") {
+        p.far_k = v;
+    }
     if let Some(v) = num("--time") {
         p.time_limit_ms = v as u64;
     }

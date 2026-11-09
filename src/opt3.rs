@@ -58,6 +58,24 @@ impl<'a> Opt3<'a> {
         Root { cube: *cube, st, d }
     }
 
+    /// Smallest exact distance to a domino subgroup over the three axes, or
+    /// `None` if it is above `cap` on every axis.
+    pub fn domino_distance(&self, cube: &C3, cap: u8) -> Option<u8> {
+        let mut best = None;
+        for (_, rinv, rot) in &self.t.frames {
+            let (tw, fl, sl) = self.t.coords(&rinv.mul(cube).mul(rot));
+            // The small tables give a lower bound without touching the big one.
+            if self.t.h1(tw, fl, sl) > cap {
+                continue;
+            }
+            let d = self.big.exact(self.t, tw, fl, sl);
+            if d <= cap && best.is_none_or(|b| d < b) {
+                best = Some(d);
+            }
+        }
+        best
+    }
+
     /// Shortest solution with `min_len..=max_len` moves, assuming none is shorter than `min_len`.
     /// `budget` is a shared node allowance; the search aborts when it is used up.
     pub fn solve(&self, root: &Root, min_len: usize, max_len: usize, budget: &AtomicI64) -> Outcome {

@@ -45,6 +45,13 @@ pub struct Params {
     /// show it stops at its share of the limit. The first results of each
     /// stage are always awaited, so a solve can run somewhat over.
     pub time_limit_ms: u64,
+    /// One level past `extra3`, keep reductions whose 3x3x3 is within this many
+    /// moves of a domino subgroup (0 = off) ...
+    pub far_g: u8,
+    /// ... from this many of the best phase-2 endpoints ...
+    pub far_k: usize,
+    /// ... looking at up to this many reductions per endpoint.
+    pub far_n: usize,
 }
 
 impl Default for Params {
@@ -63,6 +70,9 @@ impl Default for Params {
             joint_nodes: 1_000_000_000,
             refine: 16,
             time_limit_ms: 8000,
+            far_g: 0,
+            far_k: 300,
+            far_n: 20_000,
         }
     }
 }
@@ -322,6 +332,41 @@ impl Solver {
         }
         if reds.is_empty() {
             return Err("phase 3 found nothing".into());
+        }
+        // One level further out, reductions are ten times as many and one move longer.
+        // Keep only those from which the 3x3x3 is close to a domino subgroup: its
+        // two-phase search then starts with a short first phase.
+        if let (Some(first), true) = (first_len, p.far_g > 0 && t_start.elapsed() < limit.mul_f64(0.5)) {
+            let level = first + p.extra3 + 1;
+            let opt = Opt3::new(&self.t3, &self.big);
+            let jobs: Vec<(usize, &P2Cand, u8)> = found[..k.min(p.far_k)]
+                .iter()
+                .enumerate()
+                .filter(|(_, c)| c.value <= level && level - c.len12 <= cap)
+                .map(|(i, c)| (i, c, level - c.len12))
+                .collect();
+            let far: Vec<(usize, Vec<u8>)> = jobs
+                .par_iter()
+                .flat_map_iter(|&(i, c, d3)| {
+                    let mut path = [0u8; 64];
+                    let mut out = Vec::new();
+                    let last = c.moves.last().copied().unwrap_or(255);
+                    self.dfs3(&sigma_of(&c.cube), ct3_mask(&c.cube), ct3_parity(&c.cube), d3 as usize, last, 0, &mut path, i, &mut out, p.far_n);
+                    out.retain(|(_, moves3)| {
+                        let mut reduced = c.cube;
+                        reduced.apply_seq(moves3);
+                        reduced
+                            .with_home_centres()
+                            .and_then(|h| C3::from_cube(&h))
+                            .is_some_and(|c3| opt.domino_distance(&c3, p.far_g).is_some())
+                    });
+                    out
+                })
+                .collect();
+            if debug {
+                eprintln!("debug: {} far reductions kept at length {}", far.len(), level);
+            }
+            reds.extend(far);
         }
 
         let t_123 = t_start.elapsed();
