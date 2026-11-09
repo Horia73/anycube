@@ -17,6 +17,7 @@ fn main() {
         Some("solve") => solve(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
+        Some("gen-centres") => gen_centres(),
         _ => usage(),
     }
 }
@@ -81,6 +82,12 @@ fn params(args: &[String]) -> Params {
     }
     if let Some(v) = num("--exact") {
         p.exact_nodes = v as i64 * 1_000_000;
+    }
+    if args.iter().any(|a| a == "--split") {
+        p.joint = false;
+    }
+    if let Some(v) = num("--joint-nodes") {
+        p.joint_nodes = v as i64 * 1_000_000;
     }
     if let Some(v) = num("--exact-cap") {
         p.exact_cap = v;
@@ -236,5 +243,21 @@ fn probe333(args: &[String]) {
             nodes,
             t0.elapsed().as_secs_f64() * 1e3
         );
+    }
+}
+
+/// Generates the exact centre table (2.37 GB) and checks a few lookups.
+fn gen_centres() {
+    use cube444::ctab::{Ctab, GOAL_RL, GOAL_UD};
+    use cube444::tables::{axis_masks, Tabs};
+    let tabs = Tabs::load();
+    let t0 = Instant::now();
+    let ctab = Ctab::load(&tabs.bp, &tabs.ranks);
+    eprintln!("centre table ready in {:.1} s", t0.elapsed().as_secs_f64());
+    assert_eq!(ctab.exact(&tabs.bp, &tabs.ranks, GOAL_RL, GOAL_UD), 0);
+    for scr in ["Uw", "Uw Rw", "Rw U Fw' D2 Uw", "Fw R Uw2 B Rw' D Fw2 L Uw R2 Fw"] {
+        let c = Cube::from_moves(&parse_moves(scr).unwrap());
+        let m = axis_masks(&c);
+        println!("{:40} distance {}", scr, ctab.exact(&tabs.bp, &tabs.ranks, m[2], m[0]));
     }
 }

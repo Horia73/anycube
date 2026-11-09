@@ -119,6 +119,8 @@ pub struct Tabs {
     pub ranks: Ranks,
     /// Phase 1 distance, indexed by the 24-bit mask of R/L-coloured centres.
     pub p1: Vec<u8>,
+    /// The same for the U/D colours onto U/D and the F/B colours onto F/B.
+    pub stage: [Vec<u8>; 2],
     /// Phase 2 distance over (U/D-vs-F/B pattern, R-vs-L pattern, wing parity).
     pub p2: Vec<u8>,
     /// Phase 3 centre distance over (U, F, R patterns, parity).
@@ -142,10 +144,20 @@ pub fn p1_mask(c: &Cube) -> u32 {
     m
 }
 
-fn gen_p1(bp: &BitPerm) -> Vec<u8> {
+/// Masks of the U/D-, F/B- and R/L-coloured centres.
+pub fn axis_masks(c: &Cube) -> [u32; 3] {
+    let mut m = [0u32; 3];
+    for i in 0..24 {
+        m[[0, 2, 1][(c.ct[i] % 3) as usize]] |= 1 << i;
+    }
+    m
+}
+
+/// Distance to bring the eight centres of one colour pair onto the face pair `goal`.
+fn gen_p1(bp: &BitPerm, goal: u32) -> Vec<u8> {
     let mut dist = vec![UNREACHED; 1 << 24];
-    dist[P1_GOAL as usize] = 0;
-    let mut frontier = vec![P1_GOAL];
+    dist[goal as usize] = 0;
+    let mut frontier = vec![goal];
     let mut depth = 0u8;
     let mut total = 1usize;
     while !frontier.is_empty() {
@@ -513,12 +525,13 @@ impl Tabs {
     pub fn load() -> Tabs {
         let bp = BitPerm::new();
         let ranks = Ranks::new();
-        let p1 = gen_p1(&bp);
+        let p1 = gen_p1(&bp, P1_GOAL);
+        let stage = [gen_p1(&bp, 0x0000FF), gen_p1(&bp, 0x00FF00)];
         let ct3 = gen_ct3(&bp, &ranks);
         let p2 = gen_p2(&bp, &ranks, &ct3);
         let (pl, phinv) = sigma_perms();
         let sigma = load_or_gen(&table_dir().join("pairing.bin"), N_SIGMA, || gen_sigma(&pl, &phinv));
-        Tabs { bp, ranks, p1, p2, ct3, sigma, pl, phinv }
+        Tabs { bp, ranks, p1, stage, p2, ct3, sigma, pl, phinv }
     }
 }
 

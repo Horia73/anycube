@@ -6,6 +6,7 @@
 //! fixed phase definitions apply. Solutions are mapped back at the end.
 
 use crate::big1::Big1;
+use crate::ctab::Ctab;
 use crate::c3::{C3, T3};
 use crate::opt3::{Opt3, Outcome, Root};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
@@ -34,6 +35,10 @@ pub struct Params {
     pub exact_nodes: i64,
     /// Longest 3x3x3 solution the exact search looks for.
     pub exact_cap: usize,
+    /// Search phases 1 and 2 as one phase (needs the 2.37 GB centre table).
+    pub joint: bool,
+    /// Node budget of the joint phase once it has found an endpoint.
+    pub joint_nodes: i64,
 }
 
 impl Default for Params {
@@ -48,6 +53,8 @@ impl Default for Params {
             extra3: 1,
             exact_nodes: 0,
             exact_cap: 15,
+            joint: true,
+            joint_nodes: 30_000_000,
         }
     }
 }
@@ -63,14 +70,17 @@ pub struct Solver {
     pub tabs: Tabs,
     pub t3: T3,
     pub big: Big1,
+    pub ctab: Ctab,
+    /// R-vs-L patterns on the R and L faces that phase 3 can finish.
+    pub(crate) rl_ok: [bool; 256],
     /// Rotation indices of the three frames and six orientation classes.
     frames: [usize; 3],
     classes: [usize; 6],
 }
 
-struct Variant {
-    cube: Cube,
-    frame: usize,
+pub(crate) struct Variant {
+    pub cube: Cube,
+    pub frame: usize,
 }
 
 struct P1Cand {
@@ -82,12 +92,17 @@ struct P1Cand {
     value: u8,
 }
 
-struct P2Cand {
-    c1: usize,
-    moves: Vec<u8>,
-    cube: Cube,
-    len12: u8,
-    value: u8,
+/// A state from which phase 3 can start.
+pub(crate) struct P2Cand {
+    pub variant: usize,
+    /// Length of phase 1 alone (the whole prefix when phases 1 and 2 are searched as one).
+    pub len1: u8,
+    /// Moves of phases 1 and 2.
+    pub moves: Vec<u8>,
+    pub cube: Cube,
+    pub len12: u8,
+    /// Lower bound on the length of phases 1 to 3.
+    pub value: u8,
 }
 
 impl Solver {
@@ -107,7 +122,27 @@ impl Solver {
         ];
         let t3 = T3::new();
         let big = Big1::load(&t3);
-        Solver { tabs: Tabs::load(), t3, big, frames, classes }
+        let tabs = Tabs::load();
+        let ctab = Ctab::load(&tabs.bp, &tabs.ranks);
+        let mut rl_ok = [false; 256];
+        for (pat, ok) in rl_ok.iter_mut().enumerate() {
+            *ok = pat.count_ones() == 4 && tabs.p2[tabs.p2_index(0x00FF | (pat as u32) << 16, 0)] == 0;
+        }
+        Solver { tabs, t3, big, ctab, rl_ok, frames, classes }
+    }
+
+    /// The 18 variants of a cube: (re-expressed cube, frame rotation).
+    pub fn variant_cubes(&self, cube: &Cube) -> Vec<(Cube, usize)> {
+        let ct = cube_tables();
+        let mut out = Vec::new();
+        for &b in &self.frames {
+            for &l in &self.classes {
+                let mut v = cube.after_rotation(&ct.rots[l].state);
+                v.apply_seq(&ct.rots[b].seq);
+                out.push((v, b));
+            }
+        }
+        out
     }
 
     pub fn solve(&self, cube: &Cube, p: &Params) -> Result<Solution, String> {
@@ -132,6 +167,9 @@ impl Solver {
             }
         }
 
+        let mut found: Vec<P2Cand> = if p.joint {
+            self.joint_endpoints(&variants, p)?
+        } else {
         // Phase 1: enumerate solutions by increasing length.
         let mut cands: Vec<P1Cand> = Vec::new();
         let dmin = groups.iter().map(|g| tabs.p1[g.1 as usize]).min().unwrap();
@@ -181,21 +219,20 @@ impl Solver {
         'p2: loop {
             for len12 in vmin..=max_len1 + cap {
                 // Every eligible phase-1 endpoint is searched at this length, in parallel.
-                let jobs: Vec<(usize, &P1Cand, u8)> = cands
+                let jobs: Vec<(&P1Cand, u8)> = cands
                     .iter()
-                    .enumerate()
-                    .take_while(|(_, c)| c.value <= len12)
-                    .map(|(i, c)| (i, c, len12 - c.moves.len() as u8))
+                    .take_while(|c| c.value <= len12)
+                    .map(|c| (c, len12 - c.moves.len() as u8))
                     // After the first round only the newly allowed depth is searched.
-                    .filter(|&(_, _, d2)| d2 <= cap && (cap == 9 || d2 == cap))
+                    .filter(|&(_, d2)| d2 <= cap && (cap == 9 || d2 == cap))
                     .collect();
                 let parts: Vec<Vec<P2Cand>> = jobs
                     .par_iter()
-                    .map(|&(i, c, d2)| {
+                    .map(|&(c, d2)| {
                         let mut path = [0u8; 64];
                         let mut out = Vec::new();
                         let last = c.moves.last().copied().unwrap_or(255);
-                        self.dfs2(c.mask, c.parity, d2 as usize, last, 0, &mut path, i, c, &mut out, p.n2);
+                        self.dfs2(c.mask, c.parity, d2 as usize, last, 0, &mut path, c, &mut out, p.n2);
                         out
                     })
                     .collect();
@@ -209,10 +246,19 @@ impl Solver {
             }
             cap += 1;
         }
+        found
+        };
         if found.is_empty() {
-            return Err("phase 2 found nothing".into());
+            return Err("phases 1 and 2 found nothing".into());
         }
         found.sort_by_key(|c| c.value);
+        if std::env::var_os("CUBE444_DEBUG").is_some() {
+            let mut by_len = std::collections::BTreeMap::new();
+            for c in &found {
+                *by_len.entry(c.len12).or_insert(0usize) += 1;
+            }
+            eprintln!("debug: phase-2 endpoints by length of phases 1+2: {:?}", by_len);
+        }
 
         // Phase 3: collect reductions by increasing length of phases 1 + 2 + 3.
         let k = found.len().min(p.k3);
@@ -240,7 +286,7 @@ impl Solver {
                         let sg = sigma_of(&c.cube);
                         let mask = ct3_mask(&c.cube);
                         let par = ct3_parity(&c.cube);
-                        let last = c.moves.last().or(cands[c.c1].moves.last()).copied().unwrap_or(255);
+                        let last = c.moves.last().copied().unwrap_or(255);
                         self.dfs3(&sg, mask, par, d3 as usize, last, 0, &mut path, i, &mut out, p.n3);
                         out
                     })
@@ -372,13 +418,11 @@ impl Solver {
         let (_, item, moves333) = best;
         let (i, moves3) = &reds[items[item].red];
         let c2 = &found[*i];
-        let c1 = &cands[c2.c1];
 
-        let frame = variants[c1.variant].frame;
-        let moves: Vec<u8> = c1
+        let frame = variants[c2.variant].frame;
+        let moves: Vec<u8> = c2
             .moves
             .iter()
-            .chain(c2.moves.iter())
             .chain(moves3.iter())
             .chain(moves333.iter())
             .map(|&m| ct.relabel[frame][m as usize])
@@ -388,7 +432,8 @@ impl Solver {
         if !check.is_solved() {
             return Err("internal error: solution does not solve the cube".into());
         }
-        Ok(Solution { moves, lens: [c1.moves.len(), c2.moves.len(), moves3.len(), moves333.len()] })
+        let len1 = c2.len1 as usize;
+        Ok(Solution { moves, lens: [len1, c2.moves.len() - len1, moves3.len(), moves333.len()] })
     }
 
     /// Enumerates phase-1 solutions of exactly `rem` more moves. Returns true when `limit` is reached.
@@ -441,7 +486,6 @@ impl Solver {
         last: u8,
         depth: usize,
         path: &mut [u8; 64],
-        c1: usize,
         cand: &P1Cand,
         out: &mut Vec<P2Cand>,
         limit: usize,
@@ -462,7 +506,16 @@ impl Solver {
             }
             let ds = tabs.sigma[sigma_rank(&sigma_of(&cube))];
             let len12 = (cand.moves.len() + depth) as u8;
-            out.push(P2Cand { c1, moves: path[..depth].to_vec(), cube, len12, value: len12 + dc.max(ds) });
+            let mut moves = cand.moves.clone();
+            moves.extend_from_slice(&path[..depth]);
+            out.push(P2Cand {
+                variant: cand.variant,
+                len1: cand.moves.len() as u8,
+                moves,
+                cube,
+                len12,
+                value: len12 + dc.max(ds),
+            });
             return out.len() >= limit;
         }
         for &m in &P2_MOVES {
@@ -475,7 +528,7 @@ impl Solver {
                 continue;
             }
             path[depth] = m;
-            if self.dfs2(x, q, rem - 1, m, depth + 1, path, c1, cand, out, limit) {
+            if self.dfs2(x, q, rem - 1, m, depth + 1, path, cand, out, limit) {
                 return true;
             }
         }
