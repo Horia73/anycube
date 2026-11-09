@@ -44,3 +44,43 @@ does: the reductions in the pool are closely related, and the simple two-phase
 ```bash
 cargo run --release -- bench bench/scrambles-1000.txt --tpr bench/tpr-results.tsv --parallel
 ```
+
+## Joint phase 1+2 (2026-11-10)
+
+Phases 1 and 2 searched as one phase with the exact centre table.
+
+How early the first endpoint of phases 1+2 appears (first 8 cubes):
+
+| Search | Mean length of the first endpoint |
+|---|---|
+| Split phases 1 and 2 | 12.4 |
+| Joint phase | 11.1 |
+
+Whole solver, cubes solved one at a time:
+
+| Configuration | Cubes | Mean length | Mean time | Max time |
+|---|---|---|---|---|
+| Split phases, 1,000 endpoints | first 24 | 42.17 | 1.8 s | 7.7 s |
+| Joint, 1,000 endpoints | first 24 | 41.33 | 1.6 s | 4.5 s |
+| Joint, 3,000 endpoints | first 100 | 41.05 | 2.0 s | 5.1 s |
+| + best reductions get 16x the 3x3x3 effort | first 30 | 40.73 | 3.1 s | 7.6 s |
+| + shared across frames, 3,000 endpoints | first 30 | 40.77 | 2.7 s | 7.4 s |
+| + 10,000 endpoints, 8 s limit (default) | first 30 | 40.67 | 3.9 s | 6.9 s |
+| same, `--time 4000` | first 30 | 40.80 | 2.9 s | 4.2 s |
+
+TPR on the first 100 cubes: 44.50.
+
+Phase lengths of the default on the first 30 cubes: joint phase 12.87,
+phase 3 10.77, 3x3x3 17.03.
+
+Options tried and left off (first 30 cubes, against 40.67–40.97 without them):
+
+| Option | Mean length | Mean time |
+|---|---|---|
+| `--probes 30000` (10x the 3x3x3 effort on everything) | 40.73 | 7.7 s |
+| `--extra3 2 --n3 20000 --probes 1000` (one more level of reductions) | 40.80 | 7.9 s |
+| `--far-g 7` (longer reductions close to a domino subgroup) | 40.60 | 4.0 s |
+| `--exact 400 --exact-cap 15` (exact 3x3x3 search, split phases, 20 cubes) | 41.85 against 42.15 | 12 s |
+
+Runs differ by a few hundredths from one to the next: the parallel searches
+stop at a count or a deadline, so which candidates they collect varies.

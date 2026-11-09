@@ -7,36 +7,40 @@ Move counts are in OBTM: any face turn or wide turn counts as one move.
 
 ## Status
 
-Work in progress. On the fixed set of 1,000 scrambles in
-`bench/scrambles-1000.txt` (Apple M1 Pro):
+Work in progress. Measured on the fixed scrambles in
+`bench/scrambles-1000.txt` (Apple M1 Pro); details in `bench/RESULTS.md`.
 
-| Solver | Mean length | Mean time |
-|---|---|---|
-| TPR (Java) | 44.57 | 146 ms |
-| cube444, fast mode | 44.84 | 121 ms |
-| cube444, default | 42.92 | 0.95 s |
-
-Details are in `bench/RESULTS.md`.
+| Solver | Mean length | Mean time | Cubes |
+|---|---|---|---|
+| TPR (Java) | 44.57 | 146 ms | 1,000 |
+| cube444, phases as in TPR, fast | 44.84 | 121 ms | 1,000 |
+| cube444, phases as in TPR, many reductions compared | 42.92 | 0.95 s | 1,000 |
+| cube444, default | 40.67 | 3.9 s | first 30 |
 
 ## How it works
 
-The phase structure follows Chen Shuang's
+The phase structure started from Chen Shuang's
 [TPR solver](https://github.com/cs0x7f/TPR-4x4x4-Solver) (itself based on
-Tsai's 8-step method):
+Tsai's 8-step method) and now has three stages:
 
-1. Bring the R/L-coloured centres onto the R and L faces (all moves).
-2. Separate the U/D centres from the F/B centres, bring the R/L centres into a
-   finishable pattern and make the wing permutation even.
-3. Pair the 12 dedges and solve the centres.
-4. Solve the reduced cube as a 3x3x3 (Kociemba's two-phase algorithm).
+1. **Joint phase** (all moves): stage every centre on a face of its own axis,
+   bring the R/L centres into a pattern the next phase can finish, make the
+   wing permutation even and the dedges pairable. This replaces TPR's phases
+   1 and 2. An exact table over all 9.47 billion centre states makes the centre
+   part of the search perfect; the other conditions are tested at the end.
+2. **Phase 3** (`U D F B R2 L2 Uw2 Rw2 Fw2`): pair the 12 dedges and solve the
+   centres, as in TPR, with an exact table of the pairing permutation.
+3. **3x3x3**: Kociemba's two-phase algorithm on the reduced cube.
 
-Where it differs from TPR:
+What makes the solutions shorter than TPR's:
 
-- Phase 3 does not stop at its first solution. It collects many reductions and
-  the 3x3x3 stage picks the one with the shortest total.
-- The 24 target orientations and 3 axes are handled as explicit variants of
-  the cube instead of symmetry-reduced coordinates.
-- The dedge pairing table is stored unreduced (240 MB) with exact distances.
+- Phases 1 and 2 are searched as one phase (about 1.2 moves).
+- The solver collects thousands of joint-phase endpoints and many reductions,
+  and the 3x3x3 stage picks the reduction with the shortest total (about 2
+  moves). The most promising reductions get a much deeper 3x3x3 search.
+- The cube has no fixed centres, so it may end in any of 24 orientations and
+  the phases may run along any of 3 axes. All 18 distinct combinations are
+  tried; one search serves the three axes.
 
 ## Usage
 
@@ -56,34 +60,49 @@ cargo build --release
 ./target/release/cube444 bench bench/scrambles-1000.txt --tpr bench/tpr-results.tsv
 ```
 
-The first run generates `tables/pairing.bin` (240 MB) and
-`tables/phase1-exact.bin` (554 MB), about 20 s each on 8 cores.
-Set `CUBE444_TABLES` to keep the tables somewhere else.
+### Tables
 
-Search effort is set with flags. `--n2 100 --k3 100 --n3 1 --probes 500` gives
-the fast mode that mirrors TPR's search.
+Generated on first use into `tables/` (set `CUBE444_TABLES` to move them):
+
+| File | Size | Time on 8 cores | Contents |
+|---|---|---|---|
+| `centres-exact.bin` | 2.37 GB | 105 s | moves to stage all centres, every centre state |
+| `pairing.bin` | 240 MB | 20 s | moves to pair the dedges in phase 3 |
+| `phase1-exact.bin` | 554 MB | 20 s | 3x3x3 distance to the domino subgroup |
+
+### Search flags
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `--n1` | phase-1 solutions enumerated | 10000 |
-| `--k1` | phase-1 endpoints kept | 500 |
-| `--n2` | phase-2 endpoints collected | 1000 |
-| `--k3` | phase-2 endpoints tried in phase 3 | 1000 |
+| `--time` | soft time limit per cube, in ms | 8000 |
+| `--n2` | joint-phase endpoints collected | 10000 |
+| `--joint-nodes` | node budget of the joint phase, in millions | 1000 |
+| `--k3` | endpoints tried in phase 3 | 10000 |
 | `--n3` | reductions compared by total length | 2000 |
 | `--extra3` | moves past the shortest reduction to keep collecting | 1 |
 | `--probes` | 3x3x3 two-phase effort per reduction | 3000 |
+| `--refine` | effort multiplier for the best sixteenth of the reductions | 16 |
+| `--split` | search phases 1 and 2 separately, as TPR does | off |
+| `--n1`, `--k1` | with `--split`: phase-1 solutions enumerated and kept | 10000, 500 |
 | `--exact` | node budget (millions) of the exact 3x3x3 search | 0 (off) |
 | `--exact-cap` | longest 3x3x3 solution the exact search looks for | 15 |
+| `--far-g` | also keep longer reductions this close to a domino subgroup | 0 (off) |
 
-The exact 3x3x3 search (`src/opt3.rs`) uses a 554 MB table of exact distances
-to the domino subgroup, generated on first use in about 20 s. It is off by
-default: at about 1 s per 15-move query it costs more than it gains.
+`--split --n2 100 --k3 100 --n3 1 --probes 500 --refine 1` mirrors TPR's search.
+
+Two options are off because they did not pay for themselves in testing: the
+exact 3x3x3 search (`src/opt3.rs`, about 1 s per 15-move query) and the "far"
+level of longer reductions.
+
+## Verification
 
 Every solution is applied to the full cube model and checked before it is
 returned. The model itself is cross-checked against TPR in the benchmark: same
 facelets for every scramble, and TPR's solutions solve the cube in this model.
+The 3x3x3 table reproduces Kociemba's published distance distribution, and the
+shared joint search finds the same endpoints as an unshared one.
 
 ## Credits
 
-Piece numbering, move definitions and the phase design come from TPR by Chen
-Shuang (MIT licence).
+Piece numbering, move definitions and the design of phase 3 come from TPR by
+Chen Shuang (MIT licence).
