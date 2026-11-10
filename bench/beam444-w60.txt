@@ -1,0 +1,9 @@
+ball [1, 9, 162, 3168, 61764, 1198247, 23572977] and tables ready in 3.9 s
+cube  0: known 60, beam None, solver Some(22), 87.9 M cubes, 10.1 s
+cube  1: known 60, beam None, solver Some(21), 89.4 M cubes, 11.1 s
+cube  2: known 60, beam None, solver Some(23), 87.9 M cubes, 17.8 s
+cube  3: known 60, beam None, solver Some(22), 88.0 M cubes, 16.1 s
+cube  4: known 60, beam Some(23), solver Some(24), 87.6 M cubes, 25.4 s
+cube  5: known 60, beam Some(24), solver Some(24), 88.0 M cubes, 24.5 s
+6 cubes, 60 moves from a reduced cube, width 300000: beam found a reduction on 2, at most 60 moves on 2
+on those 2: beam 23.50, solver 24.00; mean time 17.5 s

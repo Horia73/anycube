@@ -1,0 +1,33 @@
+ball [1, 9, 162, 3168, 61764, 1198247, 23572977] and tables ready in 9.7 s
+cube  0: known 14, beam Some(12), solver Some(12), 36.5 M cubes, 13.4 s
+cube  1: known 14, beam None, solver Some(14), 48.9 M cubes, 12.7 s
+cube  2: known 14, beam Some(14), solver Some(14), 48.6 M cubes, 14.3 s
+cube  3: known 14, beam Some(14), solver Some(20), 48.6 M cubes, 12.5 s
+cube  4: known 14, beam Some(18), solver Some(23), 50.3 M cubes, 13.4 s
+cube  5: known 14, beam Some(17), solver Some(15), 50.5 M cubes, 10.7 s
+cube  6: known 14, beam Some(13), solver Some(13), 42.6 M cubes, 12.5 s
+cube  7: known 14, beam Some(14), solver Some(14), 48.6 M cubes, 11.2 s
+cube  8: known 14, beam Some(14), solver Some(14), 48.5 M cubes, 7.9 s
+cube  9: known 14, beam None, solver Some(20), 48.7 M cubes, 9.1 s
+cube 10: known 14, beam Some(14), solver Some(18), 49.6 M cubes, 8.4 s
+cube 11: known 14, beam None, solver Some(14), 49.5 M cubes, 8.1 s
+cube 12: known 14, beam None, solver Some(22), 49.0 M cubes, 10.6 s
+cube 13: known 14, beam None, solver Some(22), 48.9 M cubes, 12.5 s
+cube 14: known 14, beam None, solver Some(23), 49.6 M cubes, 13.6 s
+cube 15: known 14, beam None, solver Some(14), 49.6 M cubes, 10.8 s
+cube 16: known 14, beam None, solver Some(24), 49.0 M cubes, 13.9 s
+cube 17: known 14, beam None, solver Some(24), 49.0 M cubes, 10.6 s
+cube 18: known 14, beam None, solver Some(14), 48.3 M cubes, 7.9 s
+cube 19: known 14, beam Some(14), solver Some(17), 49.9 M cubes, 7.1 s
+cube 20: known 14, beam Some(14), solver Some(21), 49.6 M cubes, 7.9 s
+cube 21: known 14, beam Some(13), solver Some(13), 43.0 M cubes, 6.5 s
+cube 22: known 14, beam Some(14), solver Some(14), 48.7 M cubes, 7.0 s
+cube 23: known 14, beam None, solver Some(21), 48.9 M cubes, 7.5 s
+cube 24: known 14, beam None, solver Some(23), 49.1 M cubes, 7.2 s
+cube 25: known 14, beam Some(14), solver Some(16), 48.3 M cubes, 6.9 s
+cube 26: known 14, beam None, solver Some(22), 48.7 M cubes, 8.3 s
+cube 27: known 14, beam None, solver Some(23), 48.8 M cubes, 7.2 s
+cube 28: known 14, beam Some(14), solver Some(14), 49.1 M cubes, 6.6 s
+cube 29: known 14, beam None, solver Some(22), 49.3 M cubes, 11.1 s
+30 cubes, 14 moves from a reduced cube, width 300000: beam found a reduction on 15, at most 14 moves on 13
+on those 15: beam 14.20, solver 15.87; mean time 9.9 s

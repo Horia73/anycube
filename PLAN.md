@@ -33,6 +33,11 @@ Am verificat ideea prin numărarea stărilor, înainte să scriu cod. O fază cu
   liberă și totalul ar ieși mai lung, nu mai scurt.
 - Singura cale de a recupera cele 2,4 mutări e ca reducerea să fie o singură
   fază liberă, iar pentru ea nu există un prag de căutare suficient de bun.
+- Corectare (2026-11-11, măsurat cu `free3`): faza 3 nu pierde nimic din
+  stările de la care pornește. Cea mai scurtă reducere cu toate mutările are
+  aceeași lungime ca faza 3 pe toate cele 32 de cuburi cu faza 3 de cel mult
+  12 mutări. Pierderea vine din obligația de a trece printr-o stare cu centrele
+  așezate, nu din mutările restrânse ale fazei 3.
 
 ## Ce am încercat după 40,67
 
@@ -84,6 +89,41 @@ din toate cele 36, deci există o reducere de cel mult K mutări. Cifrele sunt
   potrivește cu fazele.
 - Bancul e măsura pentru orice căutare liberă a reducerii: o idee nouă
   trebuie să găsească ≤ K aici înainte să fie încercată pe cuburi aleatoare.
+
+## Căutare liberă a reducerii (2026-11-11)
+
+Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
+
+- **Clasa unui cub** (`key`): cuburile care diferă doar prin mutări de față și
+  rotații făcute înainte au aceleași reduceri. Cheia e formată din centre,
+  perechile de poziții care țin aceeași muchie și două parități.
+- **Tabelul din jurul țintei** (`Ball`): toate clasele la cel mult 6 mutări de
+  un cub redus, 24,8 milioane, generat în 5 s. Numărul lor crește de ~19,6 ori
+  pe mutare, nu de 22. Cu asta, cea mai scurtă reducere liberă a unui cub
+  aleator iese ~21 de mutări, nu 20,5; solverul găsește 23,1.
+- **Faza 3 e deja optimă** pentru stările ei (vezi corectarea de mai sus).
+- **Beam search cu toate mutările**, ghidat de distanța exactă de așezare a
+  centrelor și de numărul de muchii împerecheate, lățime 300.000, ~10–17 s pe
+  cub pe o mașină încărcată:
+
+| K | Cuburi | Beam ≤ K | Solver ≤ K | Beam mai scurt decât solverul |
+|---|---|---|---|---|
+| 14 | 30 | 13 | 12 | 6 |
+| 16 | 20 | 2 | 3 | 0 |
+| 18 | 12 | 3 | 2 | 3 |
+| 20 | 12 | 0 | 0 | 1 |
+| aleatoare | 6 | | | 1 |
+
+- La 14 mutări beam-ul găsește reducerea cunoscută pe alte cuburi decât
+  solverul, deci se completează. De la 16 în sus nu mai găsește nimic pe
+  majoritatea cuburilor, iar pe cuburi aleatoare e mai slab decât solverul.
+- Cauza: semnalele se sting. La 14 mutări de un cub redus, distanța de
+  așezare a centrelor e 7,8 față de 9,1 la un cub aleator, iar muchiile
+  împerecheate 1,4 față de 0,5. O căutare liberă are nevoie de un semnal
+  care să vadă la 15 mutări distanță; semnalele făcute de mână nu văd.
+- Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
+  cunoscută; bancul și tabelul dau etichete exacte până la 12 mutări). Câștigul
+  maxim pe cuburi aleatoare e ~2 mutări, iar reușita nu e sigură.
 
 ## Viteză
 

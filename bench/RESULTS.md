@@ -357,3 +357,85 @@ Found minus known, cube by cube:
 The machine was busy during these runs (load average 25 to 32 on 8 cores).
 The time limit was raised to 30 s so that the endpoint counts, not the clock,
 end each stage; solves took 3 to 4.5 s on average.
+
+## 4x4x4: reductions with all moves (2026-11-11)
+
+Code in `src/free.rs`. Two cubes have the same reductions when one is the
+other preceded by face turns and whole-cube rotations; `key` names that class
+(centres, which positions hold the halves of the same dedge, two parities).
+The key was checked on 2,000 random cubes: it does not change under face turns
+and rotations done first, and it equals the key of the solved cube exactly
+when the cube is reduced.
+
+Classes by distance from a reduced cube, with the 27 moves that matter (face
+turns, Uw, Rw, Fw), generated in 5 s:
+
+| Moves | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| Classes | 1 | 9 | 162 | 3,168 | 61,764 | 1,198,247 | 23,572,977 |
+
+The count grows about 19.6 times per move. With 4.1×10^27 classes in all, a
+random cube should have its shortest reduction at about 21 moves.
+
+### Phase 3 against the shortest reduction with any move
+
+`cubenxnxn free3 --walk W --forward F --ball 6`: a reduced cube gets W random
+phase-3 moves; the shortest phase-3 solution is compared with the shortest
+reduction with all moves, which is exact up to F + 6 moves (every sequence of
+F moves is tried against the table above).
+
+| Run | Cubes | Phase 3 at most F + 6 | Same length with all moves | Shorter with all moves |
+|---|---|---|---|---|
+| `--walk 16 --forward 4` (exact to 10) | 40 | 25 | 25 | 0 |
+| `--walk 24 --forward 6` (exact to 12) | 24 | 7 | 7 | 0 |
+
+In the second run one cube with a 13-move phase 3 has a 12-move reduction with
+all moves; the other 16 cubes with phase 3 of 13 or 14 moves have none of 12
+or fewer. So phase 3 is as short as any reduction from the states it starts
+from, at least up to 12 moves: what the three-phase reduction loses, it loses
+by having to pass through a state with staged centres.
+
+### What a cube K moves from a reduced cube looks like
+
+`cubenxnxn free-features`, 200 cubes per K: exact staging distance of the
+centres (best of the six ways of giving the colour pairs an axis) and dedges
+already paired.
+
+| K | Staging distance | Share at most 6 | Dedges paired |
+|---|---|---|---|
+| 8 | 5.31 | 0.65 | 2.83 |
+| 10 | 6.33 | 0.44 | 2.38 |
+| 12 | 7.20 | 0.29 | 1.82 |
+| 14 | 7.84 | 0.18 | 1.36 |
+| 16 | 8.12 | 0.15 | 1.17 |
+| 18 | 8.61 | 0.10 | 0.99 |
+| 20 | 8.52 | 0.09 | 1.01 |
+| 60 (random) | 9.09 | 0.00 | 0.48 |
+
+### Beam search with all moves on the known-reduction cubes
+
+`cubenxnxn free-beam --walk K --depth K-2 --solver bench/known444-wK.tsv`:
+each level keeps the 300,000 cubes with the lowest 2 × staging distance −
+dedges paired, and a path ends as soon as it is within 6 moves of a reduced
+cube. It can find reductions of up to K + 4 moves (24 for the random cubes).
+Same cubes as the `known` runs above; "solver" is the shortest reduction the
+three-phase search came across. Every reduction was checked. Logs:
+`beam444-wK.txt`.
+
+| K | Cubes | Beam found any | Beam at most K | Solver at most K | Either at most K | Beam shorter than solver | Solver mean | Best of both | Beam time |
+|---|---|---|---|---|---|---|---|---|---|
+| 14 | 30 | 15 | 13 | 12 | 17 | 6 | 18.00 | 17.10 | 9.9 s |
+| 16 | 20 | 3 | 2 | 3 | 3 | 0 | 21.35 | 21.35 | 13.0 s |
+| 18 | 12 | 5 | 3 | 2 | 4 | 3 | 21.67 | 20.67 | 16.5 s |
+| 20 | 12 | 3 | 0 | 0 | 0 | 1 | 22.83 | 22.75 | 14.2 s |
+| 60 (random) | 6 | 2 | | | | 1 | 22.67 | 22.50 | 17.5 s |
+
+- At 14 moves the beam finds the known reduction about as often as the solver
+  and on different cubes. From 16 on it finds nothing on most cubes, and on
+  random cubes it is worse than the solver at four times the time.
+- The signals fade: 14 moves from a reduced cube the staging distance is 7.8
+  against 9.1 on a random cube. Nothing in this score tells the beam which
+  cubes are 15 moves away rather than 21.
+
+The machine was very busy during these runs (load average 50 to 95 on 8
+cores), so the times are upper estimates.
