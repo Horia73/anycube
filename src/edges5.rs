@@ -7,14 +7,19 @@
 //! Phase C (face turns and wide half turns) makes the edges ready to be
 //! paired by moves that never mix the halves: every class gets one wing in
 //! each half, and its low wing agrees with the flip of its middle edge.
-//! Phase D completes four edges in the middle slice, phase E the other eight.
+//! Phase P (F and B freely, half turns elsewhere) builds four whole edges in
+//! the middle slice, phase E (U and D freely) the other eight.
+//!
+//! Every phase starts from many cubes at once and keeps the continuations
+//! that are shortest in total, so a longer step is taken where it pays later.
 
 use crate::c3::{perm_rank, perm_unrank, T3};
 use crate::c5::{tables5, Cube5};
 use crate::cube::{skip_move, tables as cube_tables};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
+use std::time::Instant;
 
 /// Face turns and wide half turns: everything that keeps the centres staged.
 pub const H_MOVES: [u8; 24] =
@@ -221,12 +226,17 @@ pub const G_MOVES: [u8; 20] = [0, 1, 2, 6, 7, 8, 9, 10, 11, 15, 16, 17, 4, 13, 1
 /// The first 14 never touch the pairing of the middle-slice edges.
 pub const E_MOVES: [u8; 16] = [0, 1, 2, 9, 10, 11, 4, 7, 13, 16, 22, 25, 31, 34, 19, 28];
 
-const N_SET: usize = 495; // 4 slots out of 12
-const N_D: usize = N_SET * N_SET * N_SET;
+/// Phase P: F and B freely, the other face half turns, the six wide half turns.
+/// Pieces of the slice between F and B stay in it; the other eight edges
+/// (`OUTER_P`) are where four whole edges get built, in the middle slice.
+pub const P_MOVES: [u8; 16] = [6, 7, 8, 15, 16, 17, 1, 10, 4, 13, 19, 22, 25, 28, 31, 34];
+const OUTER_P: [usize; 8] = [0, 2, 4, 6, 8, 9, 10, 11];
+/// Middle edges of four classes with their low (or high) wings.
+const N_MW: usize = 70 * 1680;
+const N_Q: usize = N_MW * 1680;
+
 const N_P8: usize = 40320;
 const N_E: usize = N_P8 * N_P8;
-const N_IN: usize = 24 * 24;
-const MIDDLE: usize = 0xF00;
 /// Centres as they are when solved: bit set where a centre shows U, F or R.
 const SOLVED_CENTRES: u32 = 0x0F0F0F;
 const FAR: u8 = 255;
@@ -251,63 +261,114 @@ pub struct Edges5 {
     /// Phase C centres: moves until the R-vs-L patterns on the R and L faces
     /// are ones the later phases can finish, by (x pattern, t pattern).
     c_centres: Vec<u8>,
-    /// Phase D: moves until the middle slice holds the middle edges, low wings
-    /// and high wings of the same four classes, by the three sets of slots.
-    set_mv: [Vec<[u16; 20]>; 3],
-    d: Bytes,
-    /// Phase D centres: moves until each orbit is in a pattern phase E accepts.
-    d_x: Vec<u8>,
-    d_t: Vec<u8>,
     /// Phase E, outer edges: pairing permutations, their moves, and the exact
     /// pairing table (modulo 3).
     out_low_mv: Vec<[u16; 14]>,
     out_high_mv: Vec<[u16; 14]>,
     e: Bytes,
-    /// Phase E, middle slice and centres: pairing permutations of the four
-    /// middle edges with their moves, centre patterns with theirs, and the
-    /// exact table of the two together.
-    in_low_mv: Vec<[u8; 16]>,
-    in_high_mv: Vec<[u8; 16]>,
     /// Centres of the U and D faces (x pattern, t pattern) and their moves.
     ud_mv: Vec<[u16; 16]>,
     /// Centres of the four side faces: the patterns phase E can reach, numbered.
     side_id: std::collections::HashMap<u32, u32>,
-    side_mv: Vec<[u32; 16]>,
-    /// Phase D2: exact moves until the middle slice is paired and the side
-    /// centres are in one of the patterns the last phase can finish.
-    d2: Bytes,
-    /// Those side patterns, numbered, with their moves under the last phase.
+    /// Phase P: slot moves among the eight outer edges, ordered 4-tuples of
+    /// them, the exact table for building four edges in the middle slice,
+    /// and the centre table (F/B pattern, R/L pattern).
+    outer_index: [u8; 12],
+    rank1680: Vec<u16>,
+    ml_mv: Vec<[u32; 16]>,
+    mh_mv: Vec<[u32; 16]>,
+    pq: Bytes,
+    fb_mv: Vec<[u16; 16]>,
+    rl_mv: Vec<[u16; 16]>,
+    p_centres: Bytes,
+    /// Phase P, edges against centres: middle edges with low (0) or high (1)
+    /// wings, with the F/B pattern and with the R/L pattern (numbered by `rl_id`).
+    p_fb: [Bytes; 2],
+    p_rl: [Bytes; 2],
+    rl_id: Vec<u16>,
+    n_rl: usize,
+    /// Phase E, edges against centres: low (0) or high (1) pairing with the
+    /// U/D pattern and with the side pattern.
+    e_ud: [Bytes; 2],
+    e_side: [Vec<u8>; 2],
+    /// The side patterns phase E can finish, numbered, with their moves in it.
     side_last: Vec<u8>,
     last_mv: Vec<[u8; 14]>,
     /// Phase E centres: exact moves to solve (U/D pattern, side pattern).
     e_centres: Vec<u8>,
 }
 
-/// A cube ready for phase E.
-pub struct Candidate {
-    /// Moves of phases C and D.
-    pub moves: Vec<u8>,
-    pub len_c: usize,
-    pub cube: Cube5,
-    /// Lower bound on the length of phases C, D and E together.
-    pub bound: usize,
+/// Coordinates of four classes among the eight outer edges, whose middle
+/// edges, low wings and high wings sit at positions `m[i]`, `l[i]`, `h[i]`:
+/// (middle edges with low wings, middle edges with high wings), each below
+/// `N_MW`. The classes are unordered, so they are sorted by the middle
+/// edge's position.
+#[inline(always)]
+fn q_parts(rank8: &[u8; 256], rank1680: &[u16], m: &[u8; 4], l: &[u8; 4], h: &[u8; 4]) -> (usize, usize) {
+    let mut order = [0usize, 1, 2, 3];
+    order.sort_unstable_by_key(|&i| m[i]);
+    let mask = (1usize << m[0]) | (1 << m[1]) | (1 << m[2]) | (1 << m[3]);
+    let code = |t: &[u8; 4]| {
+        t[order[0]] as usize | (t[order[1]] as usize) << 3 | (t[order[2]] as usize) << 6 | (t[order[3]] as usize) << 9
+    };
+    let set = rank8[mask] as usize * 1680;
+    (set + rank1680[code(l)] as usize, set + rank1680[code(h)] as usize)
 }
 
-/// A reduction found by the edge phases.
-pub struct Reduction {
-    /// Moves of phases C, D and E.
-    pub moves: Vec<u8>,
-    pub lens: [usize; 3],
-    pub cube: Cube5,
+/// Index into the exact phase-P edge table.
+#[inline(always)]
+fn q_index(rank8: &[u8; 256], rank1680: &[u16], m: &[u8; 4], l: &[u8; 4], h: &[u8; 4]) -> usize {
+    let (ml, mh) = q_parts(rank8, rank1680, m, l, h);
+    ml * 1680 + mh % 1680
 }
 
-fn centre_index(rank8: &[u8; 256], mask: u32) -> usize {
-    let (a, b, c) = (
-        rank8[(mask & 255) as usize] as usize,
-        rank8[((mask >> 8) & 255) as usize] as usize,
-        rank8[(mask >> 16) as usize] as usize,
-    );
-    (a * 70 + b) * 70 + c
+/// Exact distances to a set of goals for a pair of coordinates, as nibbles;
+/// 15 stands for 15 moves or more, or unreachable. `next_a(a, k)` and
+/// `next_b(b, k)` are the coordinates after move `k`; the moves must be
+/// closed under inversion.
+fn gen_pair(
+    name: &str,
+    (na, nb, moves): (usize, usize, usize),
+    next_a: impl Fn(usize, usize) -> usize + Sync,
+    next_b: impl Fn(usize, usize) -> usize + Sync,
+    goals: &[(usize, usize)],
+) -> Vec<u8> {
+    let bytes: Vec<AtomicU8> = (0..(na * nb).div_ceil(2)).into_par_iter().map(|_| AtomicU8::new(0xFF)).collect();
+    for &(a, b) in goals {
+        nib_set(&bytes, a * nb + b, 0);
+    }
+    let mut done = goals.len() as u64;
+    for depth in 0..14u8 {
+        let n: u64 = (0..na)
+            .into_par_iter()
+            .map(|a| {
+                let mut new = 0;
+                for b in 0..nb {
+                    if nib(&bytes, a * nb + b) == depth {
+                        for k in 0..moves {
+                            if nib_set(&bytes, next_a(a, k) * nb + next_b(b, k), depth + 1) {
+                                new += 1;
+                            }
+                        }
+                    }
+                }
+                new
+            })
+            .sum();
+        done += n;
+        if n == 0 {
+            break;
+        }
+    }
+    eprintln!("  5x5x5 {} table: {} of {} states within 14 moves", name, done, na * nb);
+    let mut v = std::mem::ManuallyDrop::new(bytes);
+    // AtomicU8 has the same layout as u8.
+    unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
+}
+
+#[inline(always)]
+fn nibble(bytes: &[u8], idx: usize) -> u8 {
+    (bytes[idx >> 1] >> ((idx & 1) * 4)) & 15
 }
 
 /// Bit set where a centre shows the first colour of its axis (U, F or R).
@@ -346,7 +407,6 @@ impl Edges5 {
             }
             sm
         };
-        let g_slots: Vec<SlotMove> = G_MOVES.iter().map(|&m| slot_move(m)).collect();
         let e_slots: Vec<SlotMove> = E_MOVES.iter().map(|&m| slot_move(m)).collect();
         for sm in &e_slots {
             for s in 0..12 {
@@ -437,80 +497,6 @@ impl Edges5 {
         }
         let n_side = sides.len();
         assert_eq!(n_side, 186_624);
-        // Phase D centres: per orbit, G moves until the side faces show a pattern phase E accepts.
-        let orbit_table = |bp: &BitPerm, pick: &dyn Fn(&(u32, u32)) -> u32| -> Vec<u8> {
-            let accepted: std::collections::HashSet<u32> = sides.iter().map(|st| pick(st) >> 8).collect();
-            let mut dist = vec![FAR; 343_000];
-            let mut frontier = Vec::new();
-            for &side in &accepted {
-                for &ud in &unrank8 {
-                    let m = side << 8 | ud;
-                    dist[centre_index(&rank8, m)] = 0;
-                    frontier.push(m);
-                }
-            }
-            let mut depth = 0;
-            while !frontier.is_empty() {
-                let mut next = Vec::new();
-                for &x in &frontier {
-                    for &m in &G_MOVES {
-                        let y = bp.apply(m, x);
-                        if dist[centre_index(&rank8, y)] == FAR {
-                            dist[centre_index(&rank8, y)] = depth + 1;
-                            next.push(y);
-                        }
-                    }
-                }
-                frontier = next;
-                depth += 1;
-            }
-            dist
-        };
-        let d_x = orbit_table(&bx, &|st| st.0);
-        let d_t = orbit_table(&bt, &|st| st.1);
-
-        // Phase D: sets of four slots.
-        let set_table = |kind: usize| -> Vec<[u16; 20]> {
-            (0..N_SET)
-                .map(|r| {
-                    let mask = t3.slice_unrank[r];
-                    let mut row = [0u16; 20];
-                    for (k, sm) in g_slots.iter().enumerate() {
-                        let p = [&sm.mid, &sm.low, &sm.high][kind];
-                        let out = (0..12).filter(|s| (mask >> s) & 1 == 1).fold(0usize, |a, s| a | 1 << p[s]);
-                        row[k] = t3.slice_rank[out];
-                    }
-                    row
-                })
-                .collect()
-        };
-        let set_mv = [set_table(0), set_table(1), set_table(2)];
-        let d = load_or_gen(&dir.join("phase4-555.bin"), N_D, || {
-            let goal = t3.slice_rank[MIDDLE] as usize;
-            let mut dist = vec![FAR; N_D];
-            let start = (goal * N_SET + goal) * N_SET + goal;
-            dist[start] = 0;
-            let mut frontier = vec![start as u32];
-            let mut depth = 0u8;
-            while !frontier.is_empty() {
-                let mut next = Vec::new();
-                for &x in &frontier {
-                    let (a, b, c) = (x as usize / (N_SET * N_SET), x as usize / N_SET % N_SET, x as usize % N_SET);
-                    for k in 0..20 {
-                        let y = (set_mv[0][a][k] as usize * N_SET + set_mv[1][b][k] as usize) * N_SET
-                            + set_mv[2][c][k] as usize;
-                        if dist[y] == FAR {
-                            dist[y] = depth + 1;
-                            next.push(y as u32);
-                        }
-                    }
-                }
-                frontier = next;
-                depth += 1;
-            }
-            dist
-        });
-
         // Phase E, outer edges.
         let perm_table = |high: bool| -> Vec<[u16; 14]> {
             (0..N_P8)
@@ -534,27 +520,6 @@ impl Edges5 {
         let out_low_mv = perm_table(false);
         let out_high_mv = perm_table(true);
         let e = load_or_gen(&dir.join("phase5-555.bin"), N_E.div_ceil(4), || gen_e(&out_low_mv, &out_high_mv));
-        // Phase E, middle slice.
-        let inner_table = |high: bool| -> Vec<[u8; 16]> {
-            (0..24)
-                .map(|r| {
-                    let mut sigma = [0u8; 4];
-                    perm_unrank(r, &mut sigma);
-                    let mut row = [0u8; 16];
-                    for (k, sm) in e_slots.iter().enumerate() {
-                        let wing = if high { &sm.high } else { &sm.low };
-                        let mut out = [0u8; 4];
-                        for s in 0..4 {
-                            out[wing[s + 8] as usize - 8] = sm.mid[sigma[s] as usize + 8] - 8;
-                        }
-                        row[k] = perm_rank(&out) as u8;
-                    }
-                    row
-                })
-                .collect()
-        };
-        let in_low_mv = inner_table(false);
-        let in_high_mv = inner_table(true);
         // The side patterns the 14 moves of the last phase reach from solved.
         let mut side_last = vec![FAR; n_side];
         let mut last_ids = vec![0usize];
@@ -582,32 +547,6 @@ impl Edges5 {
                 row
             })
             .collect();
-        // Phase D2: middle-slice pairing with the side centres, to any of those patterns.
-        let d2 = load_or_gen(&dir.join("phase4b-555.bin"), N_IN * n_side, || {
-            let mut dist = vec![FAR; N_IN * n_side];
-            let mut frontier: Vec<u32> = last_ids.iter().map(|&id| id as u32).collect();
-            for &x in &frontier {
-                dist[x as usize] = 0;
-            }
-            let mut depth = 0u8;
-            while !frontier.is_empty() {
-                let mut next = Vec::new();
-                for &x in &frontier {
-                    let (pair, c) = (x as usize / n_side, x as usize % n_side);
-                    for k in 0..16 {
-                        let y = (in_low_mv[pair / 24][k] as usize * 24 + in_high_mv[pair % 24][k] as usize) * n_side
-                            + side_mv[c][k] as usize;
-                        if dist[y] == FAR {
-                            dist[y] = depth + 1;
-                            next.push(y as u32);
-                        }
-                    }
-                }
-                frontier = next;
-                depth += 1;
-            }
-            dist
-        });
         // Phase E centres: (U/D pattern, side pattern) under the 14 moves.
         let ud_solved = rank8[0x0F] as usize * 70 + rank8[0x0F] as usize;
         let mut e_centres = vec![FAR; 4900 * n_last];
@@ -630,9 +569,215 @@ impl Edges5 {
             depth += 1;
         }
 
+        // Phase P.
+        let mut outer_index = [255u8; 12];
+        for (i, &s) in OUTER_P.iter().enumerate() {
+            outer_index[s] = i as u8;
+        }
+        let p_perm: Vec<[[u8; 8]; 3]> = P_MOVES
+            .iter()
+            .map(|&m| {
+                let sm = slot_move(m);
+                let mut row = [[0u8; 8]; 3];
+                for (i, &s) in OUTER_P.iter().enumerate() {
+                    row[0][i] = outer_index[sm.mid[s] as usize];
+                    row[1][i] = outer_index[sm.low[s] as usize];
+                    row[2][i] = outer_index[sm.high[s] as usize];
+                    assert!(row[0][i] < 8 && row[1][i] < 8 && row[2][i] < 8, "these moves keep the F/B slice apart");
+                }
+                row
+            })
+            .collect();
+        let mut rank1680 = vec![u16::MAX; 4096];
+        let mut unrank1680: Vec<[u8; 4]> = Vec::new();
+        for code in 0..4096usize {
+            let t = [(code & 7) as u8, (code >> 3 & 7) as u8, (code >> 6 & 7) as u8, (code >> 9) as u8];
+            if (0..4).all(|a| (0..a).all(|b| t[a] != t[b])) {
+                rank1680[code] = unrank1680.len() as u16;
+                unrank1680.push(t);
+            }
+        }
+        assert_eq!(unrank1680.len(), 1680);
+        let unrank70: Vec<[u8; 4]> = unrank8
+            .iter()
+            .map(|&mask| {
+                let mut t = [0u8; 4];
+                let mut n = 0;
+                for i in 0..8 {
+                    if (mask >> i) & 1 == 1 {
+                        t[n] = i as u8;
+                        n += 1;
+                    }
+                }
+                t
+            })
+            .collect();
+        let pq = load_or_gen(&dir.join("phase4-555-edges.bin"), N_Q, || {
+            let dist: Vec<AtomicU8> = (0..N_Q).into_par_iter().map(|_| AtomicU8::new(FAR)).collect();
+            let home = [4u8, 5, 6, 7];
+            dist[q_index(&rank8, &rank1680, &home, &home, &home)].store(0, Relaxed);
+            let mut depth = 0u8;
+            loop {
+                let n: u64 = (0..N_Q)
+                    .into_par_iter()
+                    .with_min_len(1 << 14)
+                    .map(|i| {
+                        if dist[i].load(Relaxed) != depth {
+                            return 0;
+                        }
+                        let (m, l, h) = (unrank70[i / (1680 * 1680)], unrank1680[i / 1680 % 1680], unrank1680[i % 1680]);
+                        let mut new = 0;
+                        for pm in &p_perm {
+                            let j = q_index(&rank8, &rank1680, &m.map(|x| pm[0][x as usize]), &l.map(|x| pm[1][x as usize]), &h.map(|x| pm[2][x as usize]));
+                            if dist[j].load(Relaxed) == FAR && dist[j].compare_exchange(FAR, depth + 1, Relaxed, Relaxed).is_ok() {
+                                new += 1;
+                            }
+                        }
+                        new
+                    })
+                    .sum();
+                if n == 0 {
+                    break;
+                }
+                depth += 1;
+                eprintln!("  5x5x5 phase P table: depth {:2}  {:>10} new", depth, n);
+            }
+            let mut v = std::mem::ManuallyDrop::new(dist);
+            // AtomicU8 has the same layout as u8.
+            unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
+        });
+        // Phase P centres: F/B faces and R/L faces, to a side pattern the last phase accepts.
+        let face_moves = |shift: u32| -> Vec<[u16; 16]> {
+            (0..4900)
+                .map(|i| {
+                    let mut row = [0u16; 16];
+                    for (k, &m) in P_MOVES.iter().enumerate() {
+                        let (a, b) = (bx.apply(m, unrank8[i / 70] << shift) >> shift, bt.apply(m, unrank8[i % 70] << shift) >> shift);
+                        assert!(a < 256 && b < 256, "these moves keep each face pair's centres");
+                        row[k] = rank8[a as usize] as u16 * 70 + rank8[b as usize] as u16;
+                    }
+                    row
+                })
+                .collect()
+        };
+        let fb_mv = face_moves(8);
+        let rl_mv = face_moves(16);
+        let p_centres = load_or_gen(&dir.join("phase4-555-centres.bin"), 4900 * 4900, || {
+            let mut dist = vec![FAR; 4900 * 4900];
+            let mut frontier = Vec::new();
+            for &id in &last_ids {
+                let (x, t) = sides[id];
+                let fb = rank8[(x >> 8 & 255) as usize] as usize * 70 + rank8[(t >> 8 & 255) as usize] as usize;
+                let rl = rank8[(x >> 16) as usize] as usize * 70 + rank8[(t >> 16) as usize] as usize;
+                dist[fb * 4900 + rl] = 0;
+                frontier.push((fb * 4900 + rl) as u32);
+            }
+            let mut depth = 0u8;
+            while !frontier.is_empty() {
+                let mut next = Vec::new();
+                for &x in &frontier {
+                    let (fb, rl) = (x as usize / 4900, x as usize % 4900);
+                    for k in 0..16 {
+                        let y = fb_mv[fb][k] as usize * 4900 + rl_mv[rl][k] as usize;
+                        if dist[y] == FAR {
+                            dist[y] = depth + 1;
+                            next.push(y as u32);
+                        }
+                    }
+                }
+                frontier = next;
+                depth += 1;
+            }
+            dist
+        });
+        // Phase P, edges against centres.
+        let wing_table = |kind: usize| -> Vec<[u32; 16]> {
+            (0..N_MW)
+                .into_par_iter()
+                .map(|i| {
+                    let (m, w) = (unrank70[i / 1680], unrank1680[i % 1680]);
+                    let mut row = [0u32; 16];
+                    for (k, pm) in p_perm.iter().enumerate() {
+                        let w = w.map(|x| pm[kind][x as usize]);
+                        row[k] = q_parts(&rank8, &rank1680, &m.map(|x| pm[0][x as usize]), &w, &w).0 as u32;
+                    }
+                    row
+                })
+                .collect()
+        };
+        let ml_mv = wing_table(1);
+        let mh_mv = wing_table(2);
+        let home = [4u8, 5, 6, 7];
+        let mw_home = q_parts(&rank8, &rank1680, &home, &home, &home).0;
+        // R/L patterns that occur, numbered.
+        let mut rl_id = vec![u16::MAX; 4900];
+        let mut rl_list = Vec::new();
+        for rl in 0..4900 {
+            if (0..4900).any(|fb| p_centres[fb * 4900 + rl] != FAR) {
+                rl_id[rl] = rl_list.len() as u16;
+                rl_list.push(rl);
+            }
+        }
+        let n_rl = rl_list.len();
+        let fb_goals: Vec<usize> = (0..4900).filter(|&fb| (0..4900).any(|rl| p_centres[fb * 4900 + rl] == 0)).collect();
+        let rl_goals: Vec<usize> = (0..4900).filter(|&rl| (0..4900).any(|fb| p_centres[fb * 4900 + rl] == 0)).collect();
+        let p_table = |name: &str, mv: &Vec<[u32; 16]>, fb: bool| {
+            let file = dir.join(format!("phase4-555-{}.bin", name));
+            if fb {
+                let goals: Vec<(usize, usize)> = fb_goals.iter().map(|&c| (mw_home, c)).collect();
+                load_or_gen(&file, (N_MW * 4900).div_ceil(2), || {
+                    gen_pair(name, (N_MW, 4900, 16), |a, k| mv[a][k] as usize, |b, k| fb_mv[b][k] as usize, &goals)
+                })
+            } else {
+                let goals: Vec<(usize, usize)> = rl_goals.iter().map(|&c| (mw_home, rl_id[c] as usize)).collect();
+                load_or_gen(&file, (N_MW * n_rl).div_ceil(2), || {
+                    gen_pair(
+                        name,
+                        (N_MW, n_rl, 16),
+                        |a, k| mv[a][k] as usize,
+                        |b, k| rl_id[rl_mv[rl_list[b]][k] as usize] as usize,
+                        &goals,
+                    )
+                })
+            }
+        };
+        let p_fb = [p_table("low-fb", &ml_mv, true), p_table("high-fb", &mh_mv, true)];
+        let p_rl = [p_table("low-rl", &ml_mv, false), p_table("high-rl", &mh_mv, false)];
+        // Phase E, edges against centres.
+        let e_table = |name: &str, mv: &Vec<[u16; 14]>| {
+            load_or_gen(&dir.join(format!("phase5-555-{}.bin", name)), (N_P8 * 4900).div_ceil(2), || {
+                gen_pair(name, (N_P8, 4900, 14), |a, k| mv[a][k] as usize, |b, k| ud_mv[b][k] as usize, &[(0, ud_solved)])
+            })
+        };
+        let e_ud = [e_table("low-ud", &out_low_mv), e_table("high-ud", &out_high_mv)];
+        let e_side_table = |mv: &Vec<[u16; 14]>| -> Vec<u8> {
+            let mut dist = vec![FAR; N_P8 * n_last];
+            dist[0] = 0;
+            let mut frontier = vec![0usize];
+            let mut depth = 0u8;
+            while !frontier.is_empty() {
+                let mut next = Vec::new();
+                for &x in &frontier {
+                    let (a, b) = (x / n_last, x % n_last);
+                    for k in 0..14 {
+                        let y = mv[a][k] as usize * n_last + last_mv[b][k] as usize;
+                        if dist[y] == FAR {
+                            dist[y] = depth + 1;
+                            next.push(y);
+                        }
+                    }
+                }
+                frontier = next;
+                depth += 1;
+            }
+            dist
+        };
+        let e_side = [e_side_table(&out_low_mv), e_side_table(&out_high_mv)];
+
         Edges5 {
-            t3, bw, bx, bt, rk, rank8, c, c_centres, set_mv, d, d_x, d_t, out_low_mv, out_high_mv, e,
-            in_low_mv, in_high_mv, ud_mv, side_id, side_mv, d2, side_last, last_mv, e_centres,
+            t3, bw, bx, bt, rk, rank8, c, c_centres, out_low_mv, out_high_mv, e, ud_mv, side_id,
+            side_last, last_mv, e_centres, outer_index, rank1680, ml_mv, mh_mv, pq, fb_mv, rl_mv, p_centres,
+            p_fb, p_rl, rl_id, n_rl, e_ud, e_side,
         }
     }
 
@@ -670,36 +815,88 @@ impl Edges5 {
     }
 }
 
-/// How wide the edge search goes.
-#[derive(Clone, Debug)]
-pub struct EdgeParams {
-    /// Labellings (final flip patterns) tried in phase C.
-    pub labellings: usize,
-    /// Phase-C solutions kept per labelling.
-    pub c_keep: usize,
-    /// Choices of the four middle-slice classes tried per phase-C solution.
-    pub subsets: usize,
-    /// Phase-D solutions kept per choice.
-    pub d_keep: usize,
-    /// How many moves past the shortest phase-D solution to keep collecting.
-    pub d_extra: usize,
-    /// Ways of pairing the middle slice kept per phase-D solution.
-    pub d2_keep: usize,
-    /// Candidates completed by phase E.
-    pub e_starts: usize,
+/// A cube part of the way through its solution. Every phase searches from
+/// many of these at once and returns the continuations that are shortest
+/// in total, whichever start they belong to.
+#[derive(Clone, Copy)]
+pub struct Start {
+    pub cube: Cube5,
+    /// Moves made so far.
+    pub cost: usize,
+    /// The last of them, 255 if none.
+    pub last: u8,
 }
 
-impl Default for EdgeParams {
-    fn default() -> EdgeParams {
-        EdgeParams { labellings: 2, c_keep: 10, subsets: 6, d_keep: 20, d_extra: 1, d2_keep: 3, e_starts: 60 }
-    }
+/// A phase solution: the start it continues, and its moves.
+pub struct Found {
+    pub start: usize,
+    pub moves: Vec<u8>,
+}
+
+/// How far one phase search goes.
+#[derive(Clone, Copy, Debug)]
+pub struct Limits {
+    /// Stop at the first total length at which this many solutions exist.
+    pub keep: usize,
+    /// Never collect more than this many.
+    pub cap: usize,
+    /// Solutions kept per start and length.
+    pub per_node: usize,
+    /// Past this moment, stop as soon as there is a solution.
+    pub deadline: Option<Instant>,
+}
+
+/// State shared by the searches of one phase.
+struct Run {
+    limits: Limits,
+    count: AtomicUsize,
+    stop: AtomicBool,
+}
+
+/// One start of a phase search: lower bound on the total, moves so far, payload.
+struct Node<N> {
+    est: usize,
+    cost: usize,
+    start: usize,
+    last: u8,
+    data: N,
 }
 
 struct Search<'a> {
     e5: &'a Edges5,
+    run: &'a Run,
     path: [u8; 40],
     out: Vec<Vec<u8>>,
-    limit: usize,
+    ticks: u32,
+}
+
+impl Search<'_> {
+    /// Records the path as a solution; true if this search should end.
+    fn found(&mut self, depth: usize) -> bool {
+        self.out.push(self.path[..depth].to_vec());
+        let n = self.run.count.fetch_add(1, Relaxed) + 1;
+        if n >= self.run.limits.cap {
+            self.run.stop.store(true, Relaxed);
+        }
+        self.out.len() >= self.run.limits.per_node || n >= self.run.limits.cap
+    }
+
+    /// True if the phase has been told to stop.
+    #[inline(always)]
+    fn tick(&mut self) -> bool {
+        self.ticks += 1;
+        if self.ticks & 1023 != 0 {
+            return false;
+        }
+        if self.run.stop.load(Relaxed) {
+            return true;
+        }
+        if self.run.count.load(Relaxed) > 0 && self.run.limits.deadline.is_some_and(|d| Instant::now() > d) {
+            self.run.stop.store(true, Relaxed);
+            return true;
+        }
+        false
+    }
 }
 
 /// True if every edge has its middle piece and both wings, the right way round,
@@ -724,8 +921,28 @@ fn slots_of(cube: &Cube5) -> ([u8; 12], [u8; 12], [u8; 12]) {
     (mid, low, high)
 }
 
-/// Start of phase E: pairing permutations of the outer and middle edges,
-/// the exact outer distance, and the centre pattern.
+/// Phase C state: where the low-labelled wings are, the flips of the middle
+/// edges against the labelling, and the centre patterns.
+#[derive(Clone, Copy)]
+struct CNode {
+    mask: u32,
+    flip: usize,
+    x: u32,
+    t: u32,
+}
+
+/// Phase P state: positions of the four classes' pieces among the outer
+/// edges, the centre patterns of the F/B and R/L faces, and the cube itself.
+#[derive(Clone, Copy)]
+struct PNode {
+    ml: usize,
+    mh: usize,
+    fb: usize,
+    rl: usize,
+}
+
+/// Phase E state: pairing permutations of the outer edges, their exact
+/// distance, and the centre patterns.
 #[derive(Clone, Copy)]
 struct ENode {
     lo: usize,
@@ -735,26 +952,45 @@ struct ENode {
     side: usize,
 }
 
-/// Phase D2 state: pairing permutations of the middle slice and the side centres.
-#[derive(Clone, Copy)]
-struct D2Node {
-    ilo: usize,
-    ihi: usize,
-    side: usize,
-}
-
-#[derive(Clone, Copy)]
-struct DNode {
-    m: usize,
-    l: usize,
-    h: usize,
-    x: u32,
-    t: u32,
-}
-
 impl Edges5 {
     fn rl_pattern(colours: &[u8; 24]) -> u32 {
         (16..24).fold(0, |m, i| m | ((colours[i] == 1) as u32) << i)
+    }
+
+    /// Searches every node to the same total length, shortest total first,
+    /// until enough solutions exist.
+    fn by_total<N: Sync>(
+        &self,
+        mut nodes: Vec<Node<N>>,
+        limits: &Limits,
+        search: impl Fn(&mut Search, &Node<N>, usize) + Sync,
+    ) -> Vec<Found> {
+        nodes.sort_by_key(|n| (n.est, n.cost));
+        let Some(first) = nodes.first().map(|n| n.est) else { return Vec::new() };
+        let run = Run { limits: *limits, count: AtomicUsize::new(0), stop: AtomicBool::new(false) };
+        let mut out = Vec::new();
+        for total in first..=first + 12 {
+            let live = nodes.partition_point(|n| n.est <= total);
+            let found: Vec<Found> = nodes[..live]
+                .par_iter()
+                .with_max_len(1)
+                .flat_map_iter(|n| {
+                    let mut s = Search { e5: self, run: &run, path: [0; 40], out: Vec::new(), ticks: 0 };
+                    if !run.stop.load(Relaxed) {
+                        search(&mut s, n, total - n.cost);
+                    }
+                    s.out.into_iter().map(move |moves| Found { start: n.start, moves })
+                })
+                .collect();
+            out.extend(found);
+            if out.len() >= limits.keep || run.stop.load(Relaxed) {
+                break;
+            }
+            if !out.is_empty() && limits.deadline.is_some_and(|d| Instant::now() > d) {
+                break;
+            }
+        }
+        out
     }
 
     /// The best labellings for phase C: (lower bound, labelling), best first.
@@ -794,8 +1030,7 @@ impl Edges5 {
         all
     }
 
-    /// Phase C for one labelling: all solutions of the shortest length (up to `limit`).
-    fn solve_c(&self, cube: &Cube5, lab: u16, last: u8, limit: usize) -> Vec<Vec<u8>> {
+    fn c_node(&self, cube: &Cube5, lab: u16) -> CNode {
         let (mut mask, mut eo) = (0u32, 0usize);
         for p in 0..24 {
             let piece = cube.c4.ep[p];
@@ -806,63 +1041,107 @@ impl Edges5 {
         for s in 0..12 {
             eo |= ((cube.mid.eo[s] as u16 ^ ((lab >> cube.mid.ep[s]) & 1)) as usize) << s;
         }
-        let (x, t) = (Self::rl_pattern(&cube.c4.ct), Self::rl_pattern(&cube.t));
-        let mut s = Search { e5: self, path: [0; 40], out: Vec::new(), limit };
-        let h = s.c_bound(mask, eo & 0x7FF, x, t);
-        for depth in h..=h + 6 {
-            s.dfs_c(mask, eo & 0x7FF, x, t, depth, last, 0);
-            if !s.out.is_empty() {
-                break;
-            }
-        }
-        s.out
+        CNode { mask, flip: eo & 0x7FF, x: Self::rl_pattern(&cube.c4.ct), t: Self::rl_pattern(&cube.t) }
     }
 
-    fn d_node(&self, cube: &Cube5, classes: u32) -> DNode {
-        let (mid, low, high) = slots_of(cube);
-        let set = |slots: &[u8; 12]| {
-            let mask = (0..12).filter(|c| (classes >> c) & 1 == 1).fold(0usize, |a, c| a | 1 << slots[c]);
-            self.t3.slice_rank[mask] as usize
-        };
-        DNode { m: set(&mid), l: set(&low), h: set(&high), x: primary(&cube.c4.ct), t: primary(&cube.t) }
+    #[inline(always)]
+    fn c_bound(&self, n: &CNode) -> usize {
+        let centres =
+            self.c_centres[self.rank8[(n.x >> 16) as usize] as usize * 70 + self.rank8[(n.t >> 16) as usize] as usize];
+        self.c_dist(n.mask, n.flip).max(centres) as usize
     }
 
-    fn d_bound(&self, n: &DNode) -> usize {
-        self.d[(n.m * N_SET + n.l) * N_SET + n.h]
-            .max(self.d_x[centre_index(&self.rank8, n.x)])
-            .max(self.d_t[centre_index(&self.rank8, n.t)]) as usize
-    }
-
-    /// The best choices of four classes for the middle slice: (lower bound, classes as a mask).
-    fn d_subsets(&self, cube: &Cube5, keep: usize) -> Vec<(usize, u32)> {
-        let mut all: Vec<(usize, u32)> = (0u32..4096)
-            .filter(|q| q.count_ones() == 4)
-            .map(|q| (self.d_bound(&self.d_node(cube, q)), q))
+    /// Phase C from many starts, each with its best `labellings` labellings.
+    pub fn phase_c(&self, starts: &[Start], labellings: usize, limits: &Limits) -> Vec<Found> {
+        let nodes: Vec<Node<CNode>> = starts
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(i, s)| {
+                self.c_labellings(&s.cube, labellings).into_iter().map(move |(bound, lab)| Node {
+                    est: s.cost + bound as usize,
+                    cost: s.cost,
+                    start: i,
+                    last: s.last,
+                    data: self.c_node(&s.cube, lab),
+                })
+            })
             .collect();
-        all.sort();
-        all.truncate(keep);
-        all
+        self.by_total(nodes, limits, |s, n, rem| {
+            s.dfs_c(&n.data, rem, n.last, 0);
+        })
     }
 
-    /// Phase D for one choice of classes: solutions of the shortest length (up to `limit`)
-    /// after which phase E can finish.
-    fn solve_d(&self, cube: &Cube5, classes: u32, last: u8, limit: usize, extra: usize) -> Vec<Vec<u8>> {
-        let node = self.d_node(cube, classes);
-        let mut s = Search { e5: self, path: [0; 40], out: Vec::new(), limit };
-        let h = self.d_bound(&node);
-        let mut first = None;
-        for depth in h..=h + 8 {
-            if first.is_some_and(|f| depth > f + extra) {
-                break;
-            }
-            if s.dfs_d(cube, &node, depth, last, 0) {
-                break;
-            }
-            if first.is_none() && !s.out.is_empty() {
-                first = Some(depth);
-            }
+    fn p_node(&self, cube: &Cube5, classes: &[u8; 4], slots: &([u8; 12], [u8; 12], [u8; 12])) -> PNode {
+        let at = |slots: &[u8; 12]| classes.map(|c| self.outer_index[slots[c as usize] as usize]);
+        let (x, t) = (primary(&cube.c4.ct), primary(&cube.t));
+        let id = |shift: u32| {
+            self.rank8[(x >> shift & 255) as usize] as usize * 70 + self.rank8[(t >> shift & 255) as usize] as usize
+        };
+        let (ml, mh) = q_parts(&self.rank8, &self.rank1680, &at(&slots.0), &at(&slots.1), &at(&slots.2));
+        PNode { ml, mh, fb: id(8), rl: id(16) }
+    }
+
+    /// Lower bound for phase P, or `over` as soon as one table exceeds `max`.
+    #[inline(always)]
+    fn p_bound(&self, n: &PNode, max: usize) -> usize {
+        let mut b = self.pq[n.ml * 1680 + n.mh % 1680].max(self.p_centres[n.fb * 4900 + n.rl]) as usize;
+        if b > max {
+            return b;
         }
-        s.out
+        b = b.max(nibble(&self.p_fb[0], n.ml * 4900 + n.fb) as usize);
+        if b > max {
+            return b;
+        }
+        b = b.max(nibble(&self.p_fb[1], n.mh * 4900 + n.fb) as usize);
+        if b > max {
+            return b;
+        }
+        let rl = self.rl_id[n.rl] as usize;
+        if rl >= self.n_rl {
+            return FAR as usize;
+        }
+        b.max(nibble(&self.p_rl[0], n.ml * self.n_rl + rl) as usize).max(nibble(&self.p_rl[1], n.mh * self.n_rl + rl) as usize)
+    }
+
+    /// Phase P from many starts: every choice of four classes with no piece
+    /// in the slice between F and B is a node of its own.
+    pub fn phase_p(&self, starts: &[Start], limits: &Limits) -> Vec<Found> {
+        let nodes: Vec<Node<(PNode, Cube5)>> = starts
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(i, s)| {
+                let slots = slots_of(&s.cube);
+                let free: Vec<u8> = (0..12u8)
+                    .filter(|&c| {
+                        [slots.0, slots.1, slots.2].iter().all(|k| self.outer_index[k[c as usize] as usize] != 255)
+                    })
+                    .collect();
+                let mut out = Vec::new();
+                for a in 0..free.len() {
+                    for b in a + 1..free.len() {
+                        for c in b + 1..free.len() {
+                            for d in c + 1..free.len() {
+                                let node = self.p_node(&s.cube, &[free[a], free[b], free[c], free[d]], &slots);
+                                let bound = self.p_bound(&node, usize::MAX);
+                                if bound != FAR as usize {
+                                    out.push(Node {
+                                        est: s.cost + bound,
+                                        cost: s.cost,
+                                        start: i,
+                                        last: s.last,
+                                        data: (node, s.cube),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                out
+            })
+            .collect();
+        self.by_total(nodes, limits, |s, n, rem| {
+            s.dfs_p(&n.data.1, &n.data.0, rem, n.last, 0);
+        })
     }
 
     /// Pairing permutations of the outer edges, if the middle slice holds four whole classes.
@@ -877,36 +1156,6 @@ impl Edges5 {
             }
         }
         Some((perm_rank(&lo), perm_rank(&hi)))
-    }
-
-    /// Phase-D2 start of a cube whose middle slice holds four whole classes,
-    /// or `None` if the later phases cannot finish it.
-    fn d2_node(&self, cube: &Cube5) -> Option<D2Node> {
-        let (lo, hi) = self.outer_perms(cube)?;
-        self.e_exact(lo, hi)?;
-        let (mid, _, _) = slots_of(cube);
-        let (mut ilo, mut ihi) = ([0u8; 4], [0u8; 4]);
-        for s in 0..4 {
-            ilo[s] = mid[(cube.c4.ep[s + 8] % 12) as usize].checked_sub(8)?;
-            ihi[s] = mid[(cube.c4.ep[s + 20] % 12) as usize].checked_sub(8)?;
-        }
-        let (x, t) = (primary(&cube.c4.ct), primary(&cube.t));
-        let side = *self.side_id.get(&((x >> 8) << 16 | (t >> 8)))? as usize;
-        let n = D2Node { ilo: perm_rank(&ilo), ihi: perm_rank(&ihi), side };
-        (self.d2_dist(&n) != FAR).then_some(n)
-    }
-
-    #[inline(always)]
-    fn d2_dist(&self, n: &D2Node) -> u8 {
-        self.d2[(n.ilo * 24 + n.ihi) * self.side_mv.len() + n.side]
-    }
-
-    /// Phase D2: every shortest solution, up to `limit`, by walking down the exact table.
-    fn solve_d2(&self, cube: &Cube5, last: u8, limit: usize) -> Vec<Vec<u8>> {
-        let Some(node) = self.d2_node(cube) else { return Vec::new() };
-        let mut s = Search { e5: self, path: [0; 40], out: Vec::new(), limit };
-        s.dfs_d2(&node, last, 0);
-        s.out
     }
 
     /// Phase-E start of a cube whose middle slice is complete, or `None`.
@@ -928,65 +1177,32 @@ impl Edges5 {
         self.e_centres[n.ud * 36 + n.side]
     }
 
+    /// What the edge-against-centre tables say about a phase-E state.
+    #[inline(always)]
+    fn e_joint(&self, n: &ENode) -> u8 {
+        nibble(&self.e_ud[0], n.lo * 4900 + n.ud)
+            .max(nibble(&self.e_ud[1], n.hi * 4900 + n.ud))
+            .max(self.e_side[0][n.lo * 36 + n.side])
+            .max(self.e_side[1][n.hi * 36 + n.side])
+    }
+
     fn e_bound(&self, n: &ENode) -> usize {
-        n.d.max(self.e_centre(n)) as usize
+        n.d.max(self.e_centre(n)).max(self.e_joint(n)) as usize
     }
 
-    /// Phase E: one shortest solution.
-    fn solve_e(&self, cube: &Cube5, last: u8) -> Option<Vec<u8>> {
-        let node = self.e_node(cube)?;
-        let mut s = Search { e5: self, path: [0; 40], out: Vec::new(), limit: 1 };
-        // A start whose parts are each solvable but not together would search for ever.
-        let bound = self.e_bound(&node);
-        for depth in bound..=bound + 8 {
-            if s.dfs_e(&node, depth, last, 0) {
-                return s.out.pop();
-            }
-        }
-        None
-    }
-
-    /// The best labellings for phase C, public for ranking staged cubes: (lower bound, labelling).
-    pub fn labellings(&self, cube: &Cube5, keep: usize) -> Vec<(u8, u16)> {
-        self.c_labellings(cube, keep)
-    }
-
-    /// Phases C and D from a cube with staged centres and one labelling:
-    /// cubes ready for phase E, each with a lower bound on its total edge length.
-    pub fn candidates(&self, cube: &Cube5, lab: u16, last: u8, p: &EdgeParams) -> Vec<Candidate> {
-        let mut out = Vec::new();
-        for mc in self.solve_c(cube, lab, last, p.c_keep) {
-            let mut cc = *cube;
-            cc.apply_seq(&mc);
-            let last = mc.last().copied().unwrap_or(last);
-            for (_, q) in self.d_subsets(&cc, p.subsets) {
-                for md in self.solve_d(&cc, q, last, p.d_keep, p.d_extra) {
-                    let mut c1 = cc;
-                    c1.apply_seq(&md);
-                    // Phase D2 pairs the middle slice; each way of doing it is a candidate.
-                    for m2 in self.solve_d2(&c1, md.last().copied().unwrap_or(last), p.d2_keep) {
-                        let mut c = c1;
-                        c.apply_seq(&m2);
-                        if let Some(n) = self.e_node(&c) {
-                            let moves: Vec<u8> = mc.iter().chain(md.iter()).chain(m2.iter()).copied().collect();
-                            out.push(Candidate { bound: moves.len() + self.e_bound(&n), len_c: mc.len(), moves, cube: c });
-                        }
-                    }
-                }
-            }
-        }
-        out
-    }
-
-    /// Phase E on a candidate.
-    pub fn finish(&self, cand: &Candidate) -> Option<Reduction> {
-        let me = self.solve_e(&cand.cube, cand.moves.last().copied().unwrap_or(255))?;
-        let mut c = cand.cube;
-        c.apply_seq(&me);
-        debug_assert!(is_reduced(&c));
-        let lens = [cand.len_c, cand.moves.len() - cand.len_c, me.len()];
-        let moves: Vec<u8> = cand.moves.iter().chain(me.iter()).copied().collect();
-        Some(Reduction { moves, lens, cube: c })
+    /// Phase E from many starts; the results are reduced cubes.
+    pub fn phase_e(&self, starts: &[Start], limits: &Limits) -> Vec<Found> {
+        let nodes: Vec<Node<ENode>> = starts
+            .par_iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                let node = self.e_node(&s.cube)?;
+                Some(Node { est: s.cost + self.e_bound(&node), cost: s.cost, start: i, last: s.last, data: node })
+            })
+            .collect();
+        self.by_total(nodes, limits, |s, n, rem| {
+            s.dfs_e(&n.data, rem, n.last, 0);
+        })
     }
 
     /// Development aid: scramble a solved cube inside each phase's own moves
@@ -997,136 +1213,91 @@ impl Edges5 {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             (seed >> 33) as usize % n
         };
+        let limits = Limits { keep: 1, cap: 1, per_node: 1, deadline: None };
         for round in 0..4 {
             let mut c = Cube5::solved();
             for _ in 0..40 {
                 c.apply(E_MOVES[rnd(14)]);
             }
-            let start = self.e_node(&c).map(|n| self.e_bound(&n));
-            let t = std::time::Instant::now();
-            let sol = self.solve_e(&c, 255);
-            eprintln!(
-                "E round {}: bound {:?}, solution {:?} moves, {:.0} ms",
-                round,
-                start,
-                sol.as_ref().map(|s| s.len()),
-                t.elapsed().as_secs_f64() * 1e3
-            );
-            if let Some(sol) = sol {
-                c.apply_seq(&sol);
-                assert!(is_reduced(&c));
-            }
+            let t = Instant::now();
+            let sols = self.phase_e(&[Start { cube: c, cost: 0, last: 255 }], &limits);
+            eprintln!("E round {}: {:?} moves, {:.0} ms", round, sols.first().map(|s| s.moves.len()), t.elapsed().as_secs_f64() * 1e3);
+            c.apply_seq(&sols[0].moves);
+            assert!(is_reduced(&c));
         }
         for round in 0..4 {
             let mut c = Cube5::solved();
             for _ in 0..40 {
-                c.apply(G_MOVES[rnd(20)]);
+                c.apply(P_MOVES[rnd(16)]);
             }
-            let subsets = self.d_subsets(&c, 3);
-            let t = std::time::Instant::now();
-            let sols = self.solve_d(&c, subsets[0].1, 255, 3, 0);
-            eprintln!(
-                "D round {}: bounds {:?}, {} solutions of length {:?}, {:.0} ms",
-                round,
-                subsets.iter().map(|x| x.0).collect::<Vec<_>>(),
-                sols.len(),
-                sols.first().map(|s| s.len()),
-                t.elapsed().as_secs_f64() * 1e3
-            );
+            let t = Instant::now();
+            let sols = self.phase_p(&[Start { cube: c, cost: 0, last: 255 }], &limits);
+            eprintln!("P round {}: {:?} moves, {:.0} ms", round, sols.first().map(|s| s.moves.len()), t.elapsed().as_secs_f64() * 1e3);
+            c.apply_seq(&sols[0].moves);
+            assert!(self.e_node(&c).is_some());
         }
     }
 }
 
 impl Search<'_> {
-    fn c_bound(&self, mask: u32, flip: usize, x: u32, t: u32) -> usize {
-        let e = self.e5;
-        let centres = e.c_centres[e.rank8[(x >> 16) as usize] as usize * 70 + e.rank8[(t >> 16) as usize] as usize];
-        e.c_dist(mask, flip).max(centres) as usize
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn dfs_c(&mut self, mask: u32, flip: usize, x: u32, t: u32, rem: usize, last: u8, depth: usize) -> bool {
+    fn dfs_c(&mut self, n: &CNode, rem: usize, last: u8, depth: usize) -> bool {
         if rem == 0 {
-            if mask == LOW_HALF && flip == 0 && self.c_bound(mask, flip, x, t) == 0 {
-                self.out.push(self.path[..depth].to_vec());
-                return self.out.len() >= self.limit;
-            }
-            return false;
+            return n.mask == LOW_HALF && n.flip == 0 && self.e5.c_bound(n) == 0 && self.found(depth);
+        }
+        if self.tick() {
+            return true;
         }
         let e = self.e5;
         for &m in &H_MOVES {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
-            let (a, b) = (e.bw.apply(m, mask), e.t3.flip_mv[flip][m as usize % 18] as usize);
-            let (c, d) = (e.bx.apply(m, x), e.bt.apply(m, t));
-            if self.c_bound(a, b, c, d) > rem - 1 {
-                continue;
-            }
-            self.path[depth] = m;
-            if self.dfs_c(a, b, c, d, rem - 1, m, depth + 1) {
-                return true;
-            }
-        }
-        false
-    }
-
-    fn dfs_d(&mut self, root: &Cube5, n: &DNode, rem: usize, last: u8, depth: usize) -> bool {
-        let e = self.e5;
-        if rem == 0 {
-            // The slice holds four whole classes; phase E must also accept the rest.
-            let mut c = *root;
-            c.apply_seq(&self.path[..depth]);
-            if e.d2_node(&c).is_some() {
-                self.out.push(self.path[..depth].to_vec());
-                return self.out.len() >= self.limit;
-            }
-            return false;
-        }
-        for (k, &m) in G_MOVES.iter().enumerate() {
-            if last != 255 && skip_move(last, m) {
-                continue;
-            }
-            let next = DNode {
-                m: e.set_mv[0][n.m][k] as usize,
-                l: e.set_mv[1][n.l][k] as usize,
-                h: e.set_mv[2][n.h][k] as usize,
+            let next = CNode {
+                mask: e.bw.apply(m, n.mask),
+                flip: e.t3.flip_mv[n.flip][m as usize % 18] as usize,
                 x: e.bx.apply(m, n.x),
                 t: e.bt.apply(m, n.t),
             };
-            if e.d_bound(&next) > rem - 1 {
+            let bound = e.c_bound(&next);
+            // A cube that is ready early was a shorter solution already.
+            if bound > rem - 1 || (bound == 0 && rem > 1) {
                 continue;
             }
             self.path[depth] = m;
-            if self.dfs_d(root, &next, rem - 1, m, depth + 1) {
+            if self.dfs_c(&next, rem - 1, m, depth + 1) {
                 return true;
             }
         }
         false
     }
 
-    /// Follows every move that brings the D2 table one step down.
-    fn dfs_d2(&mut self, n: &D2Node, last: u8, depth: usize) -> bool {
+    fn dfs_p(&mut self, root: &Cube5, n: &PNode, rem: usize, last: u8, depth: usize) -> bool {
         let e = self.e5;
-        let d = e.d2_dist(n);
-        if d == 0 {
-            self.out.push(self.path[..depth].to_vec());
-            return self.out.len() >= self.limit;
+        if rem == 0 {
+            // Four whole edges are in the middle slice; phase E must also accept the rest.
+            let mut c = *root;
+            c.apply_seq(&self.path[..depth]);
+            return e.e_node(&c).is_some() && self.found(depth);
         }
-        for (k, &m) in E_MOVES.iter().enumerate() {
+        if self.tick() {
+            return true;
+        }
+        for (k, &m) in P_MOVES.iter().enumerate() {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
-            let next = D2Node {
-                ilo: e.in_low_mv[n.ilo][k] as usize,
-                ihi: e.in_high_mv[n.ihi][k] as usize,
-                side: e.side_mv[n.side][k] as usize,
+            let next = PNode {
+                ml: e.ml_mv[n.ml][k] as usize,
+                mh: e.mh_mv[n.mh][k] as usize,
+                fb: e.fb_mv[n.fb][k] as usize,
+                rl: e.rl_mv[n.rl][k] as usize,
             };
-            if e.d2_dist(&next) + 1 != d {
+            let bound = e.p_bound(&next, rem - 1);
+            if bound > rem - 1 || (bound == 0 && rem > 1) {
                 continue;
             }
             self.path[depth] = m;
-            if self.dfs_d2(&next, m, depth + 1) {
+            if self.dfs_p(root, &next, rem - 1, m, depth + 1) {
                 return true;
             }
         }
@@ -1135,11 +1306,10 @@ impl Search<'_> {
 
     fn dfs_e(&mut self, n: &ENode, rem: usize, last: u8, depth: usize) -> bool {
         if rem == 0 {
-            if n.d == 0 && self.e5.e_centre(n) == 0 {
-                self.out.push(self.path[..depth].to_vec());
-                return true;
-            }
-            return false;
+            return n.d == 0 && self.e5.e_centre(n) == 0 && self.found(depth);
+        }
+        if self.tick() {
+            return true;
         }
         let e = self.e5;
         for (k, &m) in E_MOVES[..14].iter().enumerate() {
@@ -1154,7 +1324,8 @@ impl Search<'_> {
                 continue;
             }
             let next = ENode { lo, hi, d, ud: e.ud_mv[n.ud][k] as usize, side: e.last_mv[n.side][k] as usize };
-            if e.e_centre(&next) as usize > rem - 1 {
+            let centre = e.e_centre(&next) as usize;
+            if centre > rem - 1 || (d == 0 && centre == 0 && rem > 1) || e.e_joint(&next) as usize > rem - 1 {
                 continue;
             }
             self.path[depth] = m;
