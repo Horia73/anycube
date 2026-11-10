@@ -15,10 +15,12 @@ Work in progress. 4x4x4 results on the fixed scrambles in
 |---|---|---|---|
 | TPR (Java) | 44.57 | 146 ms | 1,000 |
 | cube444 `--mode fast` | 41.54 | 0.36 s | first 100 |
-| cube444, default | 40.64 | 2.6 s | first 100 |
+| cube444, default | 40.60 | 2.5 s | 1,000 |
 | cube444 `--mode full` | 40.00 | 15.9 s | first 30 |
 
-Start-up takes about 25 ms once the tables exist.
+With the defaults no solution is longer than TPR's for the same cube, the
+longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
+25 ms once the tables exist.
 
 | Size | What it does | Time |
 |---|---|---|

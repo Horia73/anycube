@@ -152,3 +152,21 @@ move larger (no gain).
 Other sizes: a 2x2x2 solve takes 1–3 ms including start-up and is always
 optimal. A 3x3x3 two-phase solve takes about 7 ms; an 18-move scramble with a
 17-move optimum was solved optimally in 7 s while another job was running.
+
+## New default on all 1,000 cubes (2026-11-10)
+
+File: `default-results.tsv` (replaces the earlier run). Cubes solved one at a time.
+
+| Solver | Joint phase | Phase 3 | 3x3x3 | Total | Min | Max |
+|---|---|---|---|---|---|---|
+| TPR (phases 1+2: 12.574) | | 12.362 | 19.638 | 44.574 | 40 | 48 |
+| cube444, previous default (8 s limit) | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
+| cube444, new default (4 s limit) | 12.802 | 10.809 | 16.986 | 40.597 | 37 | 44 |
+
+Length histogram: 37: 1, 38: 13, 39: 89, 40: 311, 41: 467, 42: 112, 43: 4, 44: 3.
+
+Against TPR on the same cube: 3.98 moves shorter on average, equal on 16
+cubes, longer on none.
+
+Time per solve: mean 2.47 s (was 3.67 s), median 2.32 s, 99th percentile
+3.84 s, max 5.32 s. 6 cubes took more than the 4 s soft limit, 1 more than 5 s.

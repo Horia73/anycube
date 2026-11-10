@@ -9,7 +9,7 @@ Cifrele măsurate sunt în `bench/RESULTS.md`.
 |---|---|---|---|
 | TPR (referință) | 44,57 | 0,15 s | 1.000 de cuburi |
 | `--mode fast` | 41,54 | 0,36 s | primele 100 |
-| implicit | 40,64 | 2,6 s | primele 100 |
+| implicit | 40,60 | 2,5 s | 1.000 de cuburi |
 | `--mode full` | 40,00 | 15,9 s | primele 30 |
 
 Alte mărimi: 2x2x2 se rezolvă optim în ~2 ms; 3x3x3 cu two-phase în ~10 ms sau
