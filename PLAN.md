@@ -159,9 +159,9 @@ la 15% din buget, faza C până la 40%, P până la 70%, E până la 90%; o faz�
 | Mod | Lungime medie | Timp mediu | Cuburi |
 |---|---|---|---|
 | cube555 | 70,58 | 1,1 s | 200 |
-| fast | 70,17 | 0,44 s | 200 |
-| normal | 68,98 | 2,2 s (max 4,9 s) | 200 |
-| full | 68,20 | 8,7 s | primele 40 |
+| fast | 70,16 | 0,34 s (max 0,74 s) | 200 |
+| normal | 68,82 | 1,4 s (max 3,5 s) | 200 |
+| full | 68,20 | 5,3 s | primele 40 |
 
 - Prima încercare (faze C, D în doi pași, E; fiecare fază pornită din câteva
   soluții) a dat 73,0, mai slab decât cube555.
@@ -173,25 +173,38 @@ la 15% din buget, faza C până la 40%, P până la 70%, E până la 90%; o faz�
     continuările cele mai scurte în total;
   - șase orientări pentru muchii (3 axe × 2 felii);
   - etapa 3x3x3 rezolvată pentru zeci sau sute de reduceri.
-- Pe faze, modul normal față de cube555: centre 18,53 față de 18,28; muchii
-  33,28 față de 33,05; 3x3x3 17,16 față de 19,23. Deci reducerea e la fel de
+- Pe faze, modul normal față de cube555: centre 18,44 față de 18,28; muchii
+  33,20 față de 33,05; 3x3x3 17,18 față de 19,23. Deci reducerea e la fel de
   lungă ca a lui; tot câștigul vine din etapa 3x3x3 aleasă din lot. Ținta de
   66 pe care o scrisesem aici nu e atinsă.
 - Lățimea căutării ajută puțin: de 20 de ori mai lat aduce 0,6 mutări.
 
-**Pași următori pentru 5x5x5, în ordinea câștigului estimat:**
+**Făcut după prima versiune completă (2026-11-10):**
 
-1. Centrele într-o singură fază (x și t împreună, cu tabelele exacte pe
-   orbită ca prag). Numărătoarea de stări spune ~16 mutări în loc de 18,5.
-   Căutarea e grea: pragul e maximul a două tabele, nu un tabel comun.
-2. Tabelul fazei C redus prin simetrie (2,77 GB → ~0,2 GB). Nu scurtează
-   soluțiile, dar scade memoria la jumătate și timpul primului solve; pe un
-   Mac ocupat, tabelul de acum e scos din memorie și faza C trece de la
-   50 ms la 1–2 s.
-3. Fazele P și E: soluțiile bune se găsesc la 2–4 mutări peste prag, deci
+- Tabelul fazei C redus prin cele 16 simetrii ale fazei: 2,77 GB → 175 MB,
+  generat în 17 s. Simetriile se găsesc din tabelele de mutări, nu din
+  geometrie (`src/sym.rs`). Verificat pe 20 de milioane de intrări față de
+  tabelul vechi. Tabelele de 5x5x5 au acum 2,1 GB în loc de 4,7 GB, iar
+  timpii au scăzut cu ~35% pe un Mac ocupat.
+- Centrele într-o singură fază (`src/centres5.rs`): tabele exacte pe fiecare
+  orbită (9,46 miliarde de colorări, 300 MB după simetrie; o orbită singură
+  cere cel mult 11–12 mutări, în medie ~9). Căutarea exactă cu pragul
+  „maximul celor două” a găsit 15 mutări în loc de 17 la cubul măsurat, dar
+  în 340 s pe 8 nuclee: pragul e ~9, răspunsul ~15. Tăierea după suma celor
+  două distanțe a pierdut soluțiile scurte (a găsit 17–19 în 20 s). Nu e
+  folosită în niciun mod; se pornește cu `--joint`.
+
+**Pași următori pentru 5x5x5:**
+
+1. Centre: un prag mai bun decât maximul pe orbite. Candidat: un tabel comun
+   pentru centrele unei singure axe din ambele orbite (problema fazei A),
+   care ar avea 34 de miliarde de intrări după simetrie, deci doar o parte
+   din el (stările apropiate de țintă) încape. Câștig posibil: până la 2
+   mutări, dacă soluțiile de 15–16 rămân bune și pentru fazele de muchii.
+2. Fazele P și E: soluțiile bune se găsesc la 2–4 mutări peste prag, deci
    tabele comune muchii+centre mai mari ar grăbi căutarea și ar permite un
    lot mai lat în același timp.
-4. Unirea fazelor E și 3x3x3 pentru ultimele mutări, ca la 4x4x4.
+3. Unirea fazelor E și 3x3x3 pentru ultimele mutări, ca la 4x4x4.
 
 ## Spre mărimi mai mari
 

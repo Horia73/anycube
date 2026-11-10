@@ -39,19 +39,21 @@ high side:
 | Solver | Mean length | Mean time | Longest | Cubes |
 |---|---|---|---|---|
 | cube555 (Java) with min2phase | 70.58 | 1.1 s | 75 | 200 |
-| cubenxnxn `--mode fast` | 70.17 | 0.44 s | 73 | 200 |
-| cubenxnxn, default | 68.98 | 2.2 s | 72 | 200 |
-| cubenxnxn `--mode full` | 68.20 | 8.7 s | 70 | first 40 |
+| cubenxnxn `--mode fast` | 70.16 | 0.34 s | 74 | 200 |
+| cubenxnxn, default | 68.82 | 1.4 s | 72 | 200 |
+| cubenxnxn `--mode full` | 68.20 | 5.3 s | 70 | first 40 |
 
-With the defaults 151 of the 200 solutions are shorter than cube555's, 27 are
-equal and 22 are longer; the slowest solve took 4.9 s. The times assume the
-tables are in memory: the first solve of a process pays for reading them
-(about a second more), and a machine short of memory pays again and again.
+With the defaults 159 of the 200 solutions are shorter than cube555's, 20 are
+equal and 21 are longer; the slowest solve took 3.5 s, and 0.74 s in the fast
+mode. The times assume the tables are in memory; the first solve of a process
+pays for reading them.
 
 ## How the 5x5x5 solver works
 
 - Centres (`src/stage5.rs`): the R/L centres go to the R and L faces with all
   36 moves, then an exact table puts the U/D and F/B centres on their axes.
+  Staging all centres in one step (`src/centres5.rs`) is exact and shorter,
+  15 moves against 17 on the one cube measured, but took 340 s for it.
 - Edges (`src/edges5.rs`), three phases:
   - C: every pair of wings gets one wing in each half of the wing positions,
     matching the flip of its middle edge (face turns and wide half turns);
@@ -147,10 +149,12 @@ Generated on first use into `tables/` (set `CUBENXNXN_TABLES` to move them),
 The 2x2x2 solver needs only `cube222.bin` (3.7 MB) and the 3x3x3 solver only
 `cube333.bin` (10 MB), plus `slice-exact.bin` for `--mode full`.
 
-The 5x5x5 solver has its own tables, 4.7 GB, generated in about two minutes on
-8 cores: `phase3-555.bin` (2.77 GB, phase C), `phase2-555.bin` (331 MB, centres),
-`phase4-555-*.bin` (850 MB, phase P), `phase5-555*.bin` (600 MB, phase E) and
-three small ones. It also uses `phase1-exact.bin` for the 3x3x3 step.
+The 5x5x5 solver has its own tables, 2.1 GB, generated in about two minutes on
+8 cores: `phase4-555-*.bin` (850 MB, phase P), `phase5-555*.bin` (600 MB,
+phase E), `phase2-555.bin` (331 MB, centres), `phase3-555-sym.bin` (175 MB,
+phase C, one entry per class under its 16 symmetries) and four small ones. It
+also uses `phase1-exact.bin` for the 3x3x3 step. `--joint` needs two more,
+`centres555-x.bin` and `centres555-t.bin` (300 MB each, 100 s to generate).
 
 ### Search flags (5x5x5)
 
@@ -164,6 +168,7 @@ three small ones. It also uses `phase1-exact.bin` for the 3x3x3 step.
 | `--c-keep`, `--p-keep` | 300 | 2000 | 5000 | results phases C and P aim for |
 | `--e-keep` | 50 | 200 | 1000 | reduced cubes aimed for |
 | `--pool`, `--probes` | 16, 500 | 60, 3000 | 400, 20000 | reduced cubes given the full 3x3x3 effort, and that effort |
+| `--joint N` | off | off | off | also stage the centres in one step, exactly, N lengths past the shortest; minutes per cube |
 
 ### Search flags (4x4x4)
 

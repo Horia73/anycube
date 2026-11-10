@@ -240,3 +240,39 @@ What the pieces were worth, on the first 40 cubes:
 | 20 times wider (`--c-keep 10000 --p-keep 10000 --e-keep 1000 --staged 1000`) | 68.20 | about 10 s |
 
 Reproduce with `cubenxnxn bench5 bench/scrambles555-200.txt [--mode fast|full] [--limit 40]`.
+
+## 5x5x5 after the phase C table was reduced by symmetry (2026-11-10)
+
+Same set and checks; the machine was even busier (load average 12 to 34).
+The result files in this folder are from this run.
+
+| Mode | Centres | Edges | 3x3x3 | Total | Mean time | Median | Max | Cubes |
+|---|---|---|---|---|---|---|---|---|
+| fast | 10.36 + 8.21 | 7.04 + 12.60 + 13.96 | 17.98 | 70.16 | 0.34 s | 0.31 s | 0.74 s | 200 |
+| default | 10.54 + 7.90 | 7.22 + 12.42 + 13.56 | 17.18 | 68.82 | 1.4 s | 1.3 s | 3.5 s | 200 |
+| full | 10.50 + 7.95 | 7.62 + 12.43 + 13.50 | 16.20 | 68.20 | 5.3 s | 4.9 s | 21 s | first 40 |
+
+Against cube555 cube by cube: default 159 shorter, 20 equal, 21 longer; fast
+104 shorter, 43 equal, 53 longer; full (40 cubes) 36, 1, 3.
+
+The phase C table went from 2.77 GB to 175 MB (170,971 classes of wing masks
+under 16 symmetries, times 2,048 flips). It agreed with the old table on
+20,000,000 random entries before the old one was deleted. The lengths differ
+slightly from the previous run because a phase cut short by the clock keeps
+whatever it has found by then.
+
+## 5x5x5 centres in one step (2026-11-10)
+
+Exact tables per orbit, all 36 moves, reduced by 16 symmetries:
+
+| Orbit | Classes | Entries | Largest distance | Generation |
+|---|---|---|---|---|
+| x centres | 46,371 | 596,794,770 | 11 | 50 s |
+| t centres | 46,935 | 604,053,450 | 12 | 50 s |
+
+Search bounded by the larger of the two distances, first scramble of the set:
+bounds 9 and 9, shortest staging 15 moves (2 of them), 340 s on 8 cores. The
+two-phase staging gives 17 for that cube in 0.1 s. Dropping branches when the
+moves left are fewer than the larger distance plus a share of the smaller
+(6/16 to 10/16) found nothing under 17 in 20 s on any of 8 cubes. One cube is
+not a mean; the search is too slow to measure more.
