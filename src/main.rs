@@ -20,6 +20,7 @@ fn main() {
         Some("gen-centres") => gen_centres(),
         Some("startup") => startup(),
         Some("facelets") => facelets(&args[1..]),
+        Some("verify") => verify(&args[1..]),
         _ => usage(),
     }
 }
@@ -386,4 +387,39 @@ fn facelets(args: &[String]) {
     let mut f = g.solved();
     g.apply_seq(&mut f, &moves);
     println!("{}", g.to_string(&f));
+}
+
+/// Checks solutions of any size: each line of the file is `scramble<TAB>solution`.
+/// With `--facelets`, prints the scrambled facelets of each line instead.
+fn verify(args: &[String]) {
+    let n = opt(args, "--size").and_then(|s| s.parse::<usize>().ok()).unwrap_or_else(|| usage());
+    let path = args.iter().find(|a| !a.starts_with("--") && **a != n.to_string()).unwrap_or_else(|| usage());
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let g = cube444::cuben::Geometry::new(n);
+    let only_facelets = args.iter().any(|a| a == "--facelets");
+    let (mut ok, mut total, mut moves) = (0usize, 0usize, 0usize);
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut parts = line.split('\t');
+        let scramble = g.parse_moves(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        if only_facelets {
+            println!("{}", g.to_string(&f));
+            continue;
+        }
+        // Dots separate phases in some solvers' output.
+        let solution = parts.next().unwrap_or("").replace('.', " ");
+        let solution = g.parse_moves(&solution).unwrap_or_else(|e| fail(&e));
+        g.apply_seq(&mut f, &solution);
+        total += 1;
+        moves += solution.len();
+        if g.is_solved(&f) {
+            ok += 1;
+        } else {
+            println!("line {}: not solved", total);
+        }
+    }
+    if !only_facelets {
+        println!("{} of {} solved, mean length {:.3}", ok, total, moves as f64 / total.max(1) as f64);
+    }
 }

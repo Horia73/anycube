@@ -133,7 +133,12 @@ impl Geometry {
             let digits = tok.bytes().take_while(u8::is_ascii_digit).count();
             let mut layers: usize = if digits > 0 { tok[..digits].parse().map_err(|_| bad())? } else { 1 };
             let rest = &tok.as_bytes()[digits..];
-            let face = rest.first().and_then(|c| b"URFDLB".iter().position(|x| x == c)).ok_or_else(bad)?;
+            // A lower-case face letter is a two-layer turn, as in `Uw`.
+            let first = *rest.first().ok_or_else(bad)?;
+            if first.is_ascii_lowercase() {
+                layers = layers.max(2);
+            }
+            let face = b"URFDLB".iter().position(|&x| x == first.to_ascii_uppercase()).ok_or_else(bad)?;
             let mut power = 0;
             for &ch in &rest[1..] {
                 match ch {
