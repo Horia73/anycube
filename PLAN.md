@@ -78,9 +78,10 @@ din toate cele 36, deci există o reducere de cel mult K mutări. Cifrele sunt
 - La K = 20 cubul e aproape aleator pentru solver (22,73 față de 23,10), iar
   reducerea în trei faze e cu 2,7 mutări mai lungă decât una care există
   sigur. Asta susține estimarea de ~20,5 pentru o reducere liberă.
-- La K = 14 solverul fie găsește reducerea cunoscută (12 din 30), fie ajunge
-  la 21–24, ca pe un cub aleator: apropierea de un cub redus nu îl ajută
-  decât dacă drumul scurt se potrivește cu fazele.
+- La K = 14, pe 12 cuburi din 30 solverul găsește reducerea cunoscută sau una
+  mai scurtă, iar pe alte 12 ajunge la 21–24, ca pe un cub aleator:
+  apropierea de un cub redus nu îl ajută decât dacă drumul scurt se
+  potrivește cu fazele.
 - Bancul e măsura pentru orice căutare liberă a reducerii: o idee nouă
   trebuie să găsească ≤ K aici înainte să fie încercată pe cuburi aleatoare.
 

@@ -349,10 +349,10 @@ Found minus known, cube by cube:
 - A cube 20 moves from a reduced cube is almost a random cube to the solver:
   22.73 against 23.10. On those the three-phase reduction is 2.7 moves longer
   than one that is known to exist.
-- At 14 moves the result splits in two: the solver either finds the known
-  reduction (12 of 30) or lands at 21 to 24, no better than on a random cube.
-  Being close to a reduced cube does not help unless the short path happens to
-  fit the phases.
+- At 14 moves the result splits in two: on 12 of the 30 cubes the solver finds
+  the known reduction or a shorter one, on another 12 it lands at 21 to 24, no
+  better than on a random cube. Being close to a reduced cube does not help
+  unless the short path happens to fit the phases.
 
 The machine was busy during these runs (load average 25 to 32 on 8 cores).
 The time limit was raised to 30 s so that the endpoint counts, not the clock,
