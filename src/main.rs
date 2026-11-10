@@ -22,6 +22,13 @@ fn main() {
         Some("facelets") => facelets(&args[1..]),
         Some("verify") => verify(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
+        Some("solve5") => solve5(&args[1..]),
+        Some("selftest5") => cube444::edges5::Edges5::load().self_test(),
+        Some("gen-edges5") => {
+            let t = Instant::now();
+            cube444::edges5::Edges5::load();
+            eprintln!("5x5x5 edge tables ready in {:.1} s", t.elapsed().as_secs_f64());
+        }
         _ => usage(),
     }
 }
@@ -469,6 +476,137 @@ fn bench5(args: &[String]) {
     );
     println!(
         "time per cube: mean {:.1} ms, median {:.1} ms, max {:.1} ms",
+        times.iter().sum::<f64>() / nf,
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+    println!("length histogram: {:?}", hist);
+}
+
+/// 5x5x5 on a scramble file: full solves, lengths per stage and times.
+fn solve5(args: &[String]) {
+    use cube444::c3::C3;
+    use cube444::c5::{tables5, Cube5};
+    use cube444::edges5::{EdgeParams, Edges5};
+    use cube444::stage5::Stage5;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let limit = num("--limit", usize::MAX);
+    let (extra, stage_ms, staged_keep) = (num("--extra", 1), num("--stage-time", 300), num("--staged", 400));
+    let (starts, pool, probes) = (num("--starts", 8), num("--pool", 40), num("--probes", 3000));
+    let d = EdgeParams::default();
+    let ep = EdgeParams {
+        labellings: num("--labellings", d.labellings),
+        c_keep: num("--c-keep", d.c_keep),
+        subsets: num("--subsets", d.subsets),
+        d_keep: num("--d-keep", d.d_keep),
+        d2_keep: num("--d2-keep", d.d2_keep),
+        d_extra: num("--d-extra", d.d_extra),
+        e_starts: num("--e-starts", d.e_starts),
+    };
+    let t0 = Instant::now();
+    let stage = Stage5::load();
+    let edges = Edges5::load();
+    let big = cube444::big1::Big1::load(&edges.t3);
+    eprintln!("tables ready in {:.2} s; {:?}", t0.elapsed().as_secs_f64(), ep);
+    let g = &tables5().geometry;
+    let mut sums = [0usize; 6];
+    let mut times = Vec::new();
+    let mut hist = std::collections::BTreeMap::new();
+    let mut n = 0usize;
+    let mut out = opt(args, "--out").map(|p| {
+        std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
+    });
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let deadline = t + std::time::Duration::from_millis(stage_ms as u64);
+        let staged = stage.stage(&f, extra, 100_000, staged_keep, Some(deadline)).unwrap_or_else(|e| fail(&e));
+        // Rank every staging by its length plus what phase C will need at least.
+        let start = Cube5::from_facelets(&f).unwrap_or_else(|e| fail(&e));
+        let mut ranked: Vec<(usize, usize, u16, Cube5)> = staged
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(si, s)| {
+                let mut c = start;
+                c.apply_seq(&s.moves);
+                edges
+                    .labellings(&c, ep.labellings)
+                    .into_iter()
+                    .map(move |(bound, lab)| (s.moves.len() + bound as usize, si, lab, c))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        ranked.sort_by_key(|r| (r.0, r.1, r.2));
+        ranked.truncate(starts);
+        // Phases C and D from the best of them, then phase E on the best candidates overall.
+        let mut cands: Vec<(usize, usize, cube444::edges5::Candidate)> = ranked
+            .par_iter()
+            .flat_map_iter(|(_, si, lab, c)| {
+                let s = &staged[*si];
+                edges
+                    .candidates(c, *lab, s.moves.last().copied().unwrap_or(255), &ep)
+                    .into_iter()
+                    .map(move |cand| (s.moves.len() + cand.bound, *si, cand))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        cands.sort_by_key(|c| c.0);
+        cands.truncate(ep.e_starts);
+        let mut reds: Vec<(usize, usize, cube444::edges5::Reduction)> = cands
+            .par_iter()
+            .filter_map(|(_, si, cand)| edges.finish(cand).map(|r| (staged[*si].moves.len() + r.moves.len(), *si, r)))
+            .collect();
+        reds.sort_by_key(|r| r.0);
+        reds.truncate(pool);
+        let best = reds
+            .par_iter()
+            .map(|(len, si, r)| {
+                let c3 = C3 { cp: r.cube.c4.cp, co: r.cube.c4.co, ep: r.cube.mid.ep, eo: r.cube.mid.eo };
+                let sol = edges.t3.solve(&c3, probes as u64, Some(&big));
+                (len + sol.len(), *si, r, sol)
+            })
+            .min_by_key(|x| x.0)
+            .unwrap_or_else(|| fail(&format!("cube {}: no reduction found", n)));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        let (_, si, r, sol3) = best;
+        let s = &staged[si];
+        let moves: Vec<u8> = s.moves.iter().chain(r.moves.iter()).chain(sol3.iter()).copied().collect();
+        g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !g.is_solved(&f) {
+            fail(&format!("cube {}: the solution does not solve the cube", n));
+        }
+        let lens = [s.len_a, s.moves.len() - s.len_a, r.lens[0], r.lens[1], r.lens[2], sol3.len()];
+        for k in 0..6 {
+            sums[k] += lens[k];
+        }
+        *hist.entry(moves.len()).or_insert(0usize) += 1;
+        times.push(ms);
+        if let Some(o) = out.as_mut() {
+            let names: Vec<String> = moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            writeln!(o, "{}\t{:?}\t{}\t{:.0}\t{}", n, lens, moves.len(), ms, names.join(" ")).unwrap();
+        }
+        n += 1;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nf = n as f64;
+    let mean = |k: usize| sums[k] as f64 / nf;
+    println!("solved {} cubes, every solution verified on the sticker model", n);
+    println!(
+        "mean length {:.3}  (centres {:.2} + {:.2}, edges {:.2} + {:.2} + {:.2}, 3x3x3 {:.2})",
+        sums.iter().sum::<usize>() as f64 / nf,
+        mean(0),
+        mean(1),
+        mean(2),
+        mean(3),
+        mean(4),
+        mean(5)
+    );
+    println!(
+        "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms",
         times.iter().sum::<f64>() / nf,
         times[times.len() / 2],
         times[times.len() - 1]

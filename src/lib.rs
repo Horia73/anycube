@@ -7,6 +7,7 @@ pub mod cache;
 pub mod ctab;
 pub mod cube;
 pub mod cuben;
+pub mod edges5;
 pub mod joint;
 pub mod opt3;
 pub mod solver;
