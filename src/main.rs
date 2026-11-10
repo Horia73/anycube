@@ -76,7 +76,7 @@ fn move_text(args: &[String]) -> String {
     let mut i = 0;
     while i < args.len() {
         if args[i].starts_with("--") {
-            i += if matches!(args[i].as_str(), "--split" | "--parallel" | "--matching" | "--merged") { 1 } else { 2 };
+            i += if matches!(args[i].as_str(), "--split" | "--parallel" | "--lazy") { 1 } else { 2 };
         } else {
             tokens.push(&args[i]);
             i += 1;
@@ -824,15 +824,8 @@ fn stage7(args: &[String]) {
         let scramble = s7.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = s7.g.solved();
         s7.g.apply_seq(&mut f, &scramble);
-        if let Some(c) = opt(args, "--probe2").and_then(|s| s.parse::<usize>().ok()) {
-            s7.probe_step2(&s5, &f, num("--extra", 0), c, num("--beam", 20_000) as u64);
-            continue;
-        }
         let t = Instant::now();
-        let found = match args.iter().any(|a| a == "--merged") {
-            true => s7.stage_merged(&s5, &f, num("--beam", 20_000), width),
-            false => s7.stage(&s5, &f, width, num("--beam", 20_000)),
-        };
+        let found = s7.stage(&s5, &f, width, num("--fan", width), num("--beam", 20_000));
         let took = t.elapsed().as_secs_f64() * 1e3;
         ms += took;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
@@ -864,14 +857,24 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
     let outer = params5(args);
     Params7 {
         width: num("--width", d.width),
+        fan: num("--fan", d.fan),
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
+        rigid: cubenxnxn::solver5::Params5 {
+            c_keep: num("--rigid-c", d.rigid.c_keep),
+            p_keep: num("--rigid-p", d.rigid.p_keep),
+            e_keep: num("--rigid-e", d.rigid.e_keep),
+            ..d.rigid
+        },
         match_extra: num("--match-extra", d.match_extra),
         beam: num("--beam", d.beam),
-        ride: !args.iter().any(|a| a == "--matching"),
         inner_beam: num("--inner-beam", d.inner_beam),
         more: num("--more", d.more),
         mix: [num("--mix-edges", d.mix[0] as usize) as u32, num("--mix-triples", d.mix[1] as usize) as u32],
+        stuck: num("--stuck", d.stuck as usize) as u32,
+        runs: num("--runs", d.runs),
+        lazy: args.iter().any(|a| a == "--lazy"),
+        look: num("--look", d.look as usize) as u32,
         reductions: num("--reductions", d.reductions),
         inner: cubenxnxn::solver5::Params5 {
             labellings: num("--inner-labellings", d.inner.labellings),

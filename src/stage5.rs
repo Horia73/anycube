@@ -294,6 +294,12 @@ impl Stage5 {
         all
     }
 
+    /// A lower bound on phase A from the positions of the R/L centres of the two orbits.
+    #[inline(always)]
+    pub fn a_bound(&self, x: u32, t: u32) -> u8 {
+        self.ax[x as usize].max(self.at[t as usize])
+    }
+
     /// Exact length of phase B from the ranks (`Ranks::rank16`) of the U/D
     /// patterns of the x and t orbits and the parity of the wing permutation.
     /// For searches on larger cubes that do the work of phase B among other things.

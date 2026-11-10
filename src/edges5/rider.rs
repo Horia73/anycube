@@ -17,11 +17,17 @@ use super::*;
 use crate::search::{beam_many, BeamFound, Problem};
 
 pub trait Rider: Sync {
-    type State: Copy + Ord + Send + Sync;
+    type State: Copy + Ord + std::hash::Hash + Send + Sync;
     /// The rider after move `m` of the 7x7x7, made in frame `ctx`.
     fn step(&self, ctx: usize, s: &Self::State, m: u8) -> Self::State;
     /// The moves the rider needs at least; 0 only at its goal.
     fn bound(&self, ctx: usize, s: &Self::State) -> usize;
+    /// How far the rider is from its goal, in quarters of a move, for
+    /// ranking states. It may be more than the bound, and it may look ahead
+    /// to what the phases after this one will ask of the rider.
+    fn rank(&self, ctx: usize, s: &Self::State) -> u32 {
+        4 * self.bound(ctx, s) as u32
+    }
 }
 
 /// The move of the inner 5x5x5 that a move of the 7x7x7 is.
@@ -42,8 +48,23 @@ pub struct Beam {
     /// Solutions wanted, and levels searched past the first one that has any.
     pub cap: usize,
     pub more: usize,
-    /// Weights of the edges' bound and of the rider's bound in the ranking.
+    /// Weights of the edges' bound and of the rider's bound in the ranking,
+    /// and the penalty, in moves, for a state with one of them at 0 alone.
     pub mix: [u32; 2],
+    pub stuck: u32,
+    /// See `beam_many`.
+    pub salt: u32,
+}
+
+/// How a state is ranked: what the edges need (with the moves its start was
+/// behind), what the rider needs, and a penalty where one of the two is
+/// done and the other is not. Such a state looks nearly solved, but the
+/// moves that finish one job undo the other; without the penalty states of
+/// this kind fill the beam and nothing in it can be finished.
+#[inline(always)]
+fn rank(b: &Beam, edges: usize, late: u8, rider_bound: usize, rider_rank: u32) -> u32 {
+    let stuck = (edges == 0) != (rider_bound == 0);
+    4 * b.mix[0] * (edges as u32 + late as u32) + b.mix[1] * rider_rank + 4 * b.stuck * stuck as u32
 }
 
 /// The 7x7x7 moves that are the given moves of the 5x5x5: a face turn with
@@ -224,9 +245,9 @@ impl Edges5 {
             }
         }
         let score = |n: &NodeC<R::State>| {
-            b.mix[0] * (p.edges(n) as u32 + n.0 .1 as u32) + b.mix[1] * rider.bound(n.0 .0 as usize, &n.0 .2) as u32
+            rank(b, p.edges(n), n.0 .1, rider.bound(n.0 .0 as usize, &n.0 .2), rider.rank(n.0 .0 as usize, &n.0 .2))
         };
-        found(beam_many(&p, &roots, score, |_, _| true, b.width, b.cap, b.more, 40), &start_of)
+        found(beam_many(&p, &roots, score, |_, _| true, b.width, b.cap, b.more, 40, b.salt), &start_of)
     }
 
     /// Phase P from many starts: every choice of four classes with no piece
@@ -255,7 +276,7 @@ impl Edges5 {
             }
         }
         let score = |n: &NodeP<R::State>| {
-            b.mix[0] * (p.edges(n) as u32 + n.0 .1 as u32) + b.mix[1] * rider.bound(n.0 .0 as usize, &n.0 .2) as u32
+            rank(b, p.edges(n), n.0 .1, rider.bound(n.0 .0 as usize, &n.0 .2), rider.rank(n.0 .0 as usize, &n.0 .2))
         };
         // Four whole edges are in the middle slice; phase E must also accept the rest.
         let accept = |root: usize, moves: &[u8]| {
@@ -265,7 +286,7 @@ impl Edges5 {
             }
             self.e_node(&c).is_some()
         };
-        found(beam_many(&p, &roots, score, accept, b.width, b.cap, b.more, 40), &start_of)
+        found(beam_many(&p, &roots, score, accept, b.width, b.cap, b.more, 40, b.salt), &start_of)
     }
 
     /// Phase E from many starts; the results are reduced cubes.
@@ -280,8 +301,27 @@ impl Edges5 {
             }
         }
         let score = |n: &NodeE<R::State>| {
-            b.mix[0] * (p.edges(n) as u32 + n.0 .1 as u32) + b.mix[1] * rider.bound(n.0 .0 as usize, &n.0 .2) as u32
+            rank(b, p.edges(n), n.0 .1, rider.bound(n.0 .0 as usize, &n.0 .2), rider.rank(n.0 .0 as usize, &n.0 .2))
         };
-        found(beam_many(&p, &roots, score, |_, _| true, b.width, b.cap, b.more, 40), &start_of)
+        if let Some(n) = std::env::var("CUBE7_E_IDA").ok().and_then(|s| s.parse::<usize>().ok()) {
+            // Development aid: exact lengths from the first few roots, to compare with the beam.
+            let mut order: Vec<usize> = (0..roots.len()).collect();
+            order.sort_by_key(|&i| roots[i].0 .1 as usize + p.bound(&roots[i]));
+            for &i in order.iter().take(n) {
+                let t = std::time::Instant::now();
+                let sols = crate::search::ida(&p, &roots[i], 0, 1, 2_000_000_000);
+                let one = beam_many(&p, &roots[i..i + 1], score, |_, _| true, b.width, 1, 0, 40, b.salt);
+                eprintln!(
+                    "      root late {} bound {} (edges {}): exact {:?} in {:.1} s, beam {:?}",
+                    roots[i].0 .1,
+                    p.bound(&roots[i]),
+                    p.edges(&roots[i]),
+                    sols.first().map(|s| s.len()),
+                    t.elapsed().as_secs_f64(),
+                    one.first().map(|s| s.moves.len())
+                );
+            }
+        }
+        found(beam_many(&p, &roots, score, |_, _| true, b.width, b.cap, b.more, 40, b.salt), &start_of)
     }
 }

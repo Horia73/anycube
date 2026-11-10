@@ -4,9 +4,25 @@
 
 use crate::stage6::skip54;
 use rayon::prelude::*;
+use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 
 const NONE: u8 = 255;
+/// In `beam_many`, the states of one score fill at most one part in this many of the beam.
+const SHARE: usize = 6;
+
+/// A fixed hash of a state. States with the same score are kept in the
+/// order of their hashes, so that what a beam keeps of them is a sample;
+/// in the order of the states themselves it would be a cluster of similar ones.
+fn mixed<N: Hash>(n: &N, salt: u32) -> u32 {
+    if salt == 0 {
+        return 0;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    salt.hash(&mut h);
+    n.hash(&mut h);
+    h.finish() as u32
+}
 
 /// A problem for `ida`: a state, the moves allowed, and a lower bound.
 pub trait Problem: Sync {
@@ -133,7 +149,7 @@ pub fn beam<P: Problem>(
     max_len: usize,
 ) -> Vec<Vec<u8>>
 where
-    P::Node: Ord,
+    P::Node: Ord + Hash,
 {
     if p.bound(root) == 0 && p.done(root) {
         return vec![Vec::new()];
@@ -142,8 +158,8 @@ where
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
     let mut level: Vec<(P::Node, u8)> = vec![(*root, NONE)];
     for _ in 0..max_len {
-        // (score, state, parent, index of the move); a score of 0 marks a solution.
-        let mut next: Vec<(u32, P::Node, u32, u8)> = level
+        // (score, hash, state, parent, index of the move); a score of 0 marks a solution.
+        let mut next: Vec<(u32, u32, P::Node, u32, u8)> = level
             .par_iter()
             .enumerate()
             .flat_map_iter(|(i, (n, last))| {
@@ -152,19 +168,19 @@ where
                 (0..moves.len()).filter(move |&k| *last == NONE || !skip54(*last, moves[k])).map(move |k| {
                     let c = p.next(n, k);
                     let solved = p.bound(&c) == 0 && p.done(&c);
-                    (if solved { 0 } else { 1 + score(&c) }, c, i as u32, k as u8)
+                    (if solved { 0 } else { 1 + score(&c) }, mixed(&c, 1), c, i as u32, k as u8)
                 })
             })
             .collect();
         next.par_sort_unstable();
-        next.dedup_by(|x, y| x.1 == y.1);
+        next.dedup_by(|x, y| x.2 == y.2);
         let solved = next.iter().take_while(|x| x.0 == 0).count();
         if solved > 0 {
             return next[..solved.min(cap)]
                 .iter()
                 .map(|x| {
-                    let mut path = vec![p.moves()[x.3 as usize]];
-                    let mut at = x.2 as usize;
+                    let mut path = vec![p.moves()[x.4 as usize]];
+                    let mut at = x.3 as usize;
                     for step in trail.iter().rev() {
                         path.push(step[at].1);
                         at = step[at].0 as usize;
@@ -178,8 +194,8 @@ where
         if std::env::var_os("CUBE7_BEAM_TRACE").is_some() {
             eprintln!("      level {:2}: scores {} to {}", trail.len() + 1, next.first().map_or(0, |x| x.0), next.last().map_or(0, |x| x.0));
         }
-        trail.push(next.iter().map(|x| (x.2, p.moves()[x.3 as usize])).collect());
-        level = next.iter().map(|x| (x.1, p.moves()[x.3 as usize])).collect();
+        trail.push(next.iter().map(|x| (x.3, p.moves()[x.4 as usize])).collect());
+        level = next.iter().map(|x| (x.2, p.moves()[x.4 as usize])).collect();
     }
     Vec::new()
 }
@@ -191,11 +207,17 @@ pub struct BeamFound {
     pub moves: Vec<u8>,
 }
 
-/// Beam search from several roots at once. As `beam`, with two additions:
+/// Beam search from several roots at once. As `beam`, with these additions:
 /// a state that looks solved counts only if `accept` agrees with the root
-/// and the moves that led to it, and the search goes on for `more` levels
-/// after the first solutions, so that roots that start further back get
-/// their turn. Returns at most `cap` solutions.
+/// and the moves that led to it; the search goes on for `more` levels after
+/// the first solutions, so that roots that start further back get their
+/// turn; and of the solutions of a level the ones with the lowest `score`
+/// come first (a score may look beyond the goal of this search). Returns
+/// at most `cap` solutions. Which of the states with the same score are
+/// kept depends on `salt`: searches that differ only in it find different
+/// solutions, of lengths that differ by a few moves. With a salt of 0 the
+/// states of a score are kept in their own order and may fill the beam;
+/// otherwise they are a sample and fill at most a share of it.
 #[allow(clippy::too_many_arguments)]
 pub fn beam_many<P: Problem>(
     p: &P,
@@ -206,9 +228,10 @@ pub fn beam_many<P: Problem>(
     cap: usize,
     more: usize,
     max_len: usize,
+    salt: u32,
 ) -> Vec<BeamFound>
 where
-    P::Node: Ord,
+    P::Node: Ord + Hash,
 {
     let mut out = Vec::new();
     for (i, root) in roots.iter().enumerate() {
@@ -228,8 +251,8 @@ where
         if depth > last_level || out.len() >= cap || level.is_empty() {
             break;
         }
-        // (score, state, parent, move); a score of 0 marks a state that looks solved.
-        let mut next: Vec<(u32, P::Node, u32, u8)> = level
+        // (not solved, score, hash, state, parent, move).
+        let mut next: Vec<(bool, u32, u32, P::Node, u32, u8)> = level
             .par_iter()
             .enumerate()
             .flat_map_iter(|(i, (n, last))| {
@@ -238,16 +261,16 @@ where
                 (0..moves.len()).filter(move |&k| *last == NONE || !skip54(*last, moves[k])).map(move |k| {
                     let c = p.next(n, k);
                     let solved = p.bound(&c) == 0 && p.done(&c);
-                    (if solved { 0 } else { 1 + score(&c) }, c, i as u32, moves[k])
+                    (!solved, score(&c), mixed(&c, salt), c, i as u32, moves[k])
                 })
             })
             .collect();
         next.par_sort_unstable();
-        next.dedup_by(|x, y| x.1 == y.1);
-        let solved = next.iter().take_while(|x| x.0 == 0).count();
+        next.dedup_by(|x, y| x.3 == y.3);
+        let solved = next.iter().take_while(|x| !x.0).count();
         for x in &next[..solved] {
-            let mut path = vec![x.3];
-            let mut at = x.2 as usize;
+            let mut path = vec![x.5];
+            let mut at = x.4 as usize;
             for step in trail.iter().rev() {
                 path.push(step[at].1);
                 at = step[at].0 as usize;
@@ -264,9 +287,24 @@ where
             last_level = depth + more;
         }
         next.drain(..solved);
-        next.truncate(width);
-        trail.push(next.iter().map(|x| (x.2, x.3)).collect());
-        level = next.iter().map(|x| (x.1, x.3)).collect();
+        // No score may fill more than a share of the beam: states that
+        // look one move from the goal and are not would crowd out the rest.
+        let (mut kept, mut run, mut score_of_run) = (0, 0, u32::MAX);
+        next.retain(|x| {
+            if x.1 != score_of_run {
+                (run, score_of_run) = (0, x.1);
+            }
+            run += 1;
+            let keep = (salt == 0 || run <= (width / SHARE).max(1)) && kept < width;
+            kept += keep as usize;
+            keep
+        });
+        if std::env::var_os("CUBE7_BEAM_TRACE").is_some() {
+            let b = |x: Option<&(bool, u32, u32, P::Node, u32, u8)>| x.map_or((0, 0), |x| (x.1, p.bound(&x.3)));
+            eprintln!("      level {:2}: {} solved, {} kept, score and bound {:?} to {:?}", depth + 1, solved, next.len(), b(next.first()), b(next.last()));
+        }
+        trail.push(next.iter().map(|x| (x.4, x.5)).collect());
+        level = next.iter().map(|x| (x.3, x.5)).collect();
     }
     out
 }
