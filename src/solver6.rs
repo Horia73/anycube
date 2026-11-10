@@ -473,6 +473,15 @@ impl Inner6 {
 
     /// `matched`: the obliques already follow the inner x centres, so only
     /// the wings matter (and 2-layer turns, which would undo that, are out).
+    /// Moves needed to split the wings alone, over all labellings.
+    pub fn split_bound(&self, ep: &[u8; 24]) -> usize {
+        (0..4096u16)
+            .filter(|lab| lab.count_ones() % 2 == 0)
+            .map(|lab| self.split[self.rk.rank(chosen(ep, lab))])
+            .min()
+            .unwrap() as usize
+    }
+
     #[inline(always)]
     fn bound2(&self, n: &Node2, matched: bool) -> usize {
         let mut h = self.split[self.rk.rank(n.wings)];
@@ -907,8 +916,18 @@ impl Solver6 {
         }
         if out.is_empty() {
             // The quick way: match the obliques to the inner x centres first.
-            for q in self.quads.solve(f1, 4) {
-                let fq = self.apply(f1, &q);
+            // Of many matchings of the same length, those that leave the wings easiest to split.
+            let mut matchings: Vec<(usize, Vec<u8>, Vec<u8>)> = self
+                .quads
+                .solve(f1, 64)
+                .into_iter()
+                .map(|q| {
+                    let fq = self.apply(f1, &q);
+                    (q.len() + self.inner.split_bound(&self.inner_cube(&fq).ep), q, fq)
+                })
+                .collect();
+            matchings.sort_by_key(|x| x.0);
+            for (_, q, fq) in matchings.into_iter().take(4) {
                 // The inner reduction is quick here, so several splits are taken to the end.
                 for (sp, f2) in self.splits(&fq, true).into_iter().take(4) {
                     let reds =

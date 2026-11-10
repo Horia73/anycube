@@ -390,3 +390,8 @@ More things that did not pay:
   instead of the larger: same lengths, same times.
 - Giving the 5x5x5 solver many reduced cubes to choose from instead of one:
   120.8 to 119.2 in the fast mode, less than hoped.
+- A beam search for the exact inner reduction (keep the positions that look
+  closest after each move): with 20,000 positions per level it found
+  nothing; with 200,000 it gave 114.2 moves on 6 cubes at 29 s per cube.
+- Choosing among 64 matchings by how easily the inner wings then split:
+  117.25 against 116.95 before, on the same 20 cubes; no gain.
