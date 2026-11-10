@@ -7,7 +7,7 @@
 //!
 //! Centre patterns are 24-bit masks permuted by byte-sliced lookup tables.
 
-use crate::cube::{tables as cube_tables, Cube, N_MOVES};
+use crate::cube::{tables as cube_tables, Cube};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use std::fs;
@@ -36,10 +36,15 @@ pub struct BitPerm {
 
 impl BitPerm {
     fn new() -> BitPerm {
-        let ct = cube_tables();
-        let mut t = vec![[[0u32; 256]; 3]; N_MOVES];
-        for m in 0..N_MOVES {
-            let src = &ct.ct_src[m];
+        BitPerm::from_src(&cube_tables().ct_src)
+    }
+
+    /// For any orbit of 24 positions: `src[m][i]` is the position whose piece
+    /// move `m` brings to position `i`.
+    pub fn from_src(src: &[[u8; 24]]) -> BitPerm {
+        let mut t = vec![[[0u32; 256]; 3]; src.len()];
+        for m in 0..src.len() {
+            let src = &src[m];
             for k in 0..3 {
                 for byte in 0..256usize {
                     let mut out = 0u32;
@@ -63,6 +68,7 @@ impl BitPerm {
     }
 }
 
+/// Rank tables for 4-of-8 and 8-of-16 bit masks.
 pub struct Ranks {
     pub rank8: [u8; 256],
     pub unrank8: [u8; 70],
@@ -71,7 +77,7 @@ pub struct Ranks {
 }
 
 impl Ranks {
-    fn new() -> Ranks {
+    pub fn new() -> Ranks {
         let mut rank8 = [255u8; 256];
         let mut unrank8 = [0u8; 70];
         let mut n = 0;
@@ -155,6 +161,11 @@ pub fn axis_masks(c: &Cube) -> [u32; 3] {
 
 /// Distance to bring the eight centres of one colour pair onto the face pair `goal`.
 fn gen_p1(bp: &BitPerm, goal: u32) -> Vec<u8> {
+    gen_stage(bp, goal, &P1_MOVES)
+}
+
+/// The same for any orbit and move set.
+pub fn gen_stage(bp: &BitPerm, goal: u32, moves: &[u8]) -> Vec<u8> {
     let mut dist = vec![UNREACHED; 1 << 24];
     dist[goal as usize] = 0;
     let mut frontier = vec![goal];
@@ -163,7 +174,7 @@ fn gen_p1(bp: &BitPerm, goal: u32) -> Vec<u8> {
     while !frontier.is_empty() {
         let mut next = Vec::new();
         for &x in &frontier {
-            for &m in &P1_MOVES {
+            for &m in moves {
                 let y = bp.apply(m, x);
                 if dist[y as usize] == UNREACHED {
                     dist[y as usize] = depth + 1;
@@ -513,7 +524,7 @@ pub(crate) fn table_dir() -> PathBuf {
     std::env::var_os("CUBE444_TABLES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("tables"))
 }
 
-fn load_or_gen_quiet(path: &Path, len: usize, gen: &dyn Fn() -> Vec<u8>) -> Bytes {
+pub(crate) fn load_or_gen_quiet(path: &Path, len: usize, gen: &dyn Fn() -> Vec<u8>) -> Bytes {
     load_or_gen_inner(path, len, gen, false)
 }
 

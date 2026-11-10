@@ -128,21 +128,37 @@ Ce a mai rămas:
 - Muchiile centrale fixează orientarea, deci nu există paritatea de la 4x4x4,
   dar faza de muchii are trei piese pe muchie în loc de două.
 
-**Pregătit acum:** `src/cuben.rs`, un model pe stickere pentru orice mărime,
-construit doar din geometrie și verificat mutare cu mutare față de modelul de
-4x4x4. Aplică scramble-uri și verifică soluții pentru 5x5x5, 6x6x6, 7x7x7.
+**Făcut până acum (2026-11-10):**
+
+- `src/cuben.rs`: model pe stickere pentru orice mărime, din geometrie.
+- `src/c5.rs`: model pe piese. Un 5x5x5 fără rândurile din mijloc e un 4x4x4,
+  deci modelul e cubul de 4x4x4 plus muchiile centrale plus centrele t.
+- Set fix de 200 de scramble-uri și măsurătoarea cube555: 70,58 în total.
+- `src/stage5.rs`: așezarea centrelor (ce fac fazele 1 și 2 la cube555).
+  Faza A caută cu toate mutările, faza B are tabel exact (331 de milioane de
+  stări). Rezultat: 17,1–17,6 mutări față de 18,28 la cube555.
+
+**Moduri cerute, pentru toate mărimile:**
+
+| Mod | Timp pe cub |
+|---|---|
+| fast | sub 1 s |
+| normal | sub 5 s |
+| full | fără limită |
+
+Așezarea centrelor are deja limită de timp; bugetele pe mod se împart când
+există și fazele de muchii.
 
 **Pași următori pentru 5x5x5:**
 
-1. Set fix de scramble-uri și măsurătoare cube555 pe Mac-ul tău, pe faze.
-2. Model pe piese (centre x, centre t, muchii centrale, wings, colțuri) și
-   tabelul exact pentru centrele t.
-3. Faza unită de centre pentru ambele orbite, apoi fazele de muchii după
-   cube555, cu lotul de reduceri și etapa 3x3x3 de la 4x4x4.
-4. Abia apoi: unirea fazelor de muchii, unde cred că e câștigul cel mai mare.
+1. Fazele de muchii (3, 4, 5 la cube555), întâi ca la el, cu tabelele lui ca
+   reper pentru numărul de stări.
+2. Etapa 3x3x3 cu lotul de reduceri, ca la 4x4x4. De aici vine câștigul sigur.
+3. Abia apoi: unirea fazelor de muchii, unde cred că e câștigul cel mai mare.
+4. Cele trei moduri, cu bugetele de timp de mai sus.
 
-Țintă realistă pentru prima versiune: sub 66 de mutări (cube555: ~71).
-E o estimare din ce am câștigat la 4x4x4, nu o măsurătoare.
+Țintă realistă pentru prima versiune completă: sub 66 de mutări (cube555:
+70,58). E o estimare din ce am câștigat la 4x4x4, nu o măsurătoare.
 
 ## Spre mărimi mai mari
 

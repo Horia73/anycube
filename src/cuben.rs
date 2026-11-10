@@ -38,6 +38,8 @@ pub struct Geometry {
     pub n: usize,
     /// `moves[m][j]` is the facelet whose sticker move `m` brings to facelet `j`.
     moves: Vec<Vec<u32>>,
+    /// The same for the whole-cube quarter turns x (about R), y (about U) and z (about F).
+    rotations: [Vec<u32>; 3],
 }
 
 impl Geometry {
@@ -84,7 +86,66 @@ impl Geometry {
                 moves.push(back);
             }
         }
-        Geometry { n, moves }
+        // Whole-cube turns follow the R, U and F faces.
+        let whole = |f: usize| -> Vec<u32> {
+            let axis = FACES[f].0;
+            let mut perm = vec![0u32; total];
+            for i in 0..total {
+                let (p, normal) = place(i);
+                perm[index(turn(axis, p), turn(axis, normal))] = i as u32;
+            }
+            perm
+        };
+        let rotations = [whole(1), whole(0), whole(2)];
+        Geometry { n, moves, rotations }
+    }
+
+    /// Where move `m` takes its stickers from.
+    pub fn move_src(&self, m: usize) -> &[u32] {
+        &self.moves[m]
+    }
+
+    /// Turns the whole cube by a sequence of quarter turns (0 = x, 1 = y, 2 = z)
+    /// and renames the colours so that the fixed centres read URFDLB again.
+    /// The result is the same puzzle seen from another side. Odd sizes only.
+    pub fn reframe(&self, facelets: &[u8], turns: &[usize]) -> Vec<u8> {
+        assert!(self.n % 2 == 1, "only odd cubes have fixed centres");
+        let mut f = facelets.to_vec();
+        for &t in turns {
+            let old = f.clone();
+            for (j, x) in f.iter_mut().enumerate() {
+                *x = old[self.rotations[t][j] as usize];
+            }
+        }
+        let nn = self.n * self.n;
+        let mut name = [0u8; 6];
+        for face in 0..6 {
+            name[f[face * nn + nn / 2] as usize] = face as u8;
+        }
+        f.iter().map(|&c| name[c as usize]).collect()
+    }
+
+    /// For a frame reached by `turns`: `out[m]` is the move of the original cube
+    /// that does what move `m` does in the new frame.
+    pub fn frame_moves(&self, turns: &[usize]) -> Vec<usize> {
+        let total = 6 * self.n * self.n;
+        // The turn as one permutation and its inverse.
+        let mut rot: Vec<u32> = (0..total as u32).collect();
+        for &t in turns {
+            rot = (0..total).map(|j| rot[self.rotations[t][j] as usize]).collect();
+        }
+        let mut inv = vec![0u32; total];
+        for j in 0..total {
+            inv[rot[j] as usize] = j as u32;
+        }
+        (0..self.moves.len())
+            .map(|m| {
+                // Turn to the new frame, do `m`, turn back.
+                let perm: Vec<u32> =
+                    (0..total).map(|j| rot[self.moves[m][inv[j] as usize] as usize]).collect();
+                self.moves.iter().position(|x| *x == perm).expect("a turned move is a move")
+            })
+            .collect()
     }
 
     pub fn move_count(&self) -> usize {
@@ -211,6 +272,32 @@ mod tests {
                 assert_eq!(f, start, "size {} move {}", n, g.move_name(m));
             }
         }
+    }
+
+    #[test]
+    fn reframing_commutes_with_moves() {
+        let g = Geometry::new(5);
+        let mut seed = 11u64;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % 36
+        };
+        let mut f = g.solved();
+        for _ in 0..60 {
+            g.apply(&mut f, rnd());
+        }
+        for turns in [vec![0, 1], vec![0, 1, 0, 1], vec![2], vec![1, 1]] {
+            let map = g.frame_moves(&turns);
+            let seq: Vec<usize> = (0..25).map(|_| rnd()).collect();
+            // Moves made in the new frame ...
+            let mut a = g.reframe(&f, &turns);
+            g.apply_seq(&mut a, &seq);
+            // ... are the mapped moves made in the old one.
+            let mut b = f.clone();
+            g.apply_seq(&mut b, &seq.iter().map(|&m| map[m]).collect::<Vec<_>>());
+            assert_eq!(a, g.reframe(&b, &turns));
+        }
+        assert_eq!(g.reframe(&g.solved(), &[0, 1]), g.solved());
     }
 
     #[test]

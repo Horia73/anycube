@@ -170,3 +170,34 @@ cubes, longer on none.
 
 Time per solve: mean 2.47 s (was 3.67 s), median 2.32 s, 99th percentile
 3.84 s, max 5.32 s. 6 cubes took more than the 4 s soft limit, 1 more than 5 s.
+
+## 5x5x5: baseline and centre staging (2026-11-10)
+
+Set: `scrambles555-200.txt`, 200 scrambles of 150 random moves (seed 555).
+
+cube555 by Chen Shuang with min2phase (`cube555-results.tsv`); all 200
+solutions solve the cube in the sticker model:
+
+| Phase | 1 | 2 | 3 | 4 | 5 | Reduction | 3x3x3 | Total |
+|---|---|---|---|---|---|---|---|---|
+| Mean length | 10.22 | 8.06 | 6.34 | 12.66 | 14.05 | 51.35 | 19.23 | 70.58 |
+| Max | 11 | 10 | 8 | 16 | 17 | 55 | | 75 |
+
+Time: 1.08 s per cube for the reduction (median 0.95 s, max 4.6 s).
+
+Centre staging (every centre on a face of its own axis, wing permutation
+even), which is what cube555's phases 1 and 2 do, all 200 cubes, every result
+checked on the sticker model:
+
+| Solver | Phase A | Phase B | Total | Mean time | Max time |
+|---|---|---|---|---|---|
+| cube555, phases 1 + 2 | 10.22 | 8.06 | 18.28 | | |
+| cube444 `bench5 --extra 0` | 9.63 | 8.56 | 18.19 | 43 ms | 1.1 s |
+| cube444 `bench5 --extra 1 --time 300` | 10.11 | 7.47 | 17.58 | 0.23 s | 0.82 s |
+| cube444 `bench5 --extra 1` (no limit) | 10.25 | 7.11 | 17.36 | 0.92 s | 23 s |
+| cube444 `bench5 --extra 2 --time 2000` | 10.60 | 6.50 | 17.10 | 1.5 s | 2.1 s |
+
+`--extra` is how many moves past the shortest phase A are searched; each
+phase-A solution is completed by an optimal phase B from its exact table.
+Two extra moves without a time limit gave 16.85 on the first 20 cubes, at
+15 s per cube.

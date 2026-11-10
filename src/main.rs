@@ -21,6 +21,7 @@ fn main() {
         Some("startup") => startup(),
         Some("facelets") => facelets(&args[1..]),
         Some("verify") => verify(&args[1..]),
+        Some("bench5") => bench5(&args[1..]),
         _ => usage(),
     }
 }
@@ -422,4 +423,55 @@ fn verify(args: &[String]) {
     if !only_facelets {
         println!("{} of {} solved, mean length {:.3}", ok, total, moves as f64 / total.max(1) as f64);
     }
+}
+
+/// 5x5x5 centre staging on a scramble file: lengths and times.
+fn bench5(args: &[String]) {
+    use cube444::c5::{tables5, Cube5};
+    use cube444::stage5::Stage5;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (limit, extra, per_job) = (num("--limit", usize::MAX), num("--extra", 1), num("--per-job", 2000));
+    let t0 = Instant::now();
+    let stage = Stage5::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let g = &tables5().geometry;
+    let (mut sum_a, mut sum_b, mut n) = (0usize, 0usize, 0usize);
+    let mut times = Vec::new();
+    let mut hist = std::collections::BTreeMap::new();
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let deadline = opt(args, "--time").and_then(|s| s.parse::<u64>().ok()).map(|ms| t + std::time::Duration::from_millis(ms));
+        let found = stage.stage(&f, extra, per_job, 1, deadline).unwrap_or_else(|e| fail(&e));
+        times.push(t.elapsed().as_secs_f64() * 1e3);
+        let best = found.first().unwrap_or_else(|| fail("no staging found"));
+        g.apply_seq(&mut f, &best.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !Stage5::is_staged(&Cube5::from_facelets(&f).unwrap_or_else(|e| fail(&e))) {
+            fail(&format!("cube {}: centres are not staged", n));
+        }
+        sum_a += best.len_a;
+        sum_b += best.moves.len() - best.len_a;
+        *hist.entry(best.moves.len()).or_insert(0usize) += 1;
+        n += 1;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nf = n as f64;
+    println!("staged the centres of {} cubes, every result verified", n);
+    println!(
+        "mean length {:.3}  (phase A {:.3}, phase B {:.3})",
+        (sum_a + sum_b) as f64 / nf,
+        sum_a as f64 / nf,
+        sum_b as f64 / nf
+    );
+    println!(
+        "time per cube: mean {:.1} ms, median {:.1} ms, max {:.1} ms",
+        times.iter().sum::<f64>() / nf,
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+    println!("length histogram: {:?}", hist);
 }

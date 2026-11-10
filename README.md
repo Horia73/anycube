@@ -27,7 +27,8 @@ longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
 | 2x2x2 | always optimal | about 2 ms |
 | 3x3x3 | two-phase search; `--mode full` searches for the optimal solution | about 10 ms; seconds to minutes for optimal |
 | 4x4x4 | see above | |
-| 5x5x5 and up | scrambles and checking only (`src/cuben.rs`); no solver yet | |
+| 5x5x5 | centre staging only so far (`bench5`); no full solver yet | |
+| 6x6x6, 7x7x7 | scrambles and checking only (`src/cuben.rs`) | |
 
 ## How the 4x4x4 solver works
 
