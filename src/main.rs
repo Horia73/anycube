@@ -24,6 +24,8 @@ fn main() {
         Some("scrambles") => scrambles(&args[1..]),
         Some("stage6") => stage6(&args[1..]),
         Some("bench6") => bench6(&args[1..]),
+        Some("stage7") => stage7(&args[1..]),
+        Some("bench7") => bench7(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
@@ -796,6 +798,131 @@ fn bench6(args: &[String]) {
         sums[1] as f64 / nf,
         sums[2] as f64 / nf,
         sums[3] as f64 / nf
+    );
+    println!(
+        "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms",
+        times.iter().sum::<f64>() / nf,
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+    println!("length histogram: {:?}", hist);
+}
+
+/// 7x7x7 centre staging on a scramble file: lengths and times per step.
+fn stage7(args: &[String]) {
+    use cubenxnxn::stage7::Stage7;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (limit, width) = (num("--limit", usize::MAX), num("--width", 4));
+    let t0 = Instant::now();
+    let s5 = cubenxnxn::stage5::Stage5::load();
+    let s7 = Stage7::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let (mut sums, mut total, mut ms, mut n) = ([0usize; 5], 0usize, 0.0, 0usize);
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = s7.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = s7.g.solved();
+        s7.g.apply_seq(&mut f, &scramble);
+        if let Some(c) = opt(args, "--probe2").and_then(|s| s.parse::<usize>().ok()) {
+            s7.probe_step2(&s5, &f, num("--extra", 0), c, num("--beam", 20_000) as u64);
+            continue;
+        }
+        let t = Instant::now();
+        let found = s7.stage(&s5, &f, width, num("--beam", 20_000));
+        let took = t.elapsed().as_secs_f64() * 1e3;
+        ms += took;
+        let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
+        s7.g.apply_seq(&mut f, &best.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !s7.is_staged(&f) {
+            fail(&format!("cube {}: the result is not staged", n));
+        }
+        eprintln!("cube {:3}: {:?} = {} moves, {:.0} ms", n, best.lens, best.moves.len(), took);
+        for k in 0..5 {
+            sums[k] += best.lens[k];
+        }
+        total += best.moves.len();
+        n += 1;
+    }
+    let nf = n as f64;
+    println!("staged the centres of {} cubes, every result verified", n);
+    println!(
+        "mean length {:.2}  (steps {})",
+        total as f64 / nf,
+        sums.iter().map(|&s| format!("{:.2}", s as f64 / nf)).collect::<Vec<_>>().join(" + ")
+    );
+    println!("mean time {:.0} ms", ms / nf);
+}
+
+fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
+    use cubenxnxn::solver7::Params7;
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let d = Params7::normal();
+    let outer = params5(args);
+    Params7 {
+        width: num("--width", d.width),
+        tries: num("--tries", d.tries),
+        matchings: num("--matchings", d.matchings),
+        match_extra: num("--match-extra", d.match_extra),
+        beam: num("--beam", d.beam),
+        reductions: num("--reductions", d.reductions),
+        inner: outer.clone(),
+        outer,
+    }
+}
+
+/// 7x7x7 on a scramble file: full solves, lengths per step and times.
+fn bench7(args: &[String]) {
+    use cubenxnxn::solver7::Solver7;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (limit, skip) = (num("--limit", usize::MAX), num("--skip", 0));
+    let p = params7(args);
+    let t0 = Instant::now();
+    let solver = Solver7::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let g = &solver.s7.g;
+    let (mut sums, mut times, mut n) = ([0usize; 5], Vec::new(), 0usize);
+    let mut hist = std::collections::BTreeMap::new();
+    let mut out = opt(args, "--out").map(|p| {
+        std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
+    });
+    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).enumerate().skip(skip).take(limit) {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !g.is_solved(&f) {
+            fail(&format!("cube {}: the solution does not solve the cube", i));
+        }
+        eprintln!("cube {:3}: {:?} = {} moves, {:.0} ms", i, sol.lens, sol.moves.len(), ms);
+        for k in 0..5 {
+            sums[k] += sol.lens[k];
+        }
+        *hist.entry(sol.moves.len()).or_insert(0usize) += 1;
+        times.push(ms);
+        if let Some(o) = out.as_mut() {
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            writeln!(o, "{}\t{:?}\t{}\t{:.0}\t{}", i, sol.lens, sol.moves.len(), ms, names.join(" ")).unwrap();
+            o.flush().unwrap();
+        }
+        n += 1;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nf = n as f64;
+    println!("solved {} cubes, every solution verified on the sticker model", n);
+    println!(
+        "mean length {:.2}  (staging {:.2}, matching {:.2}, inner edges {:.2}, outer edges {:.2}, 3x3x3 {:.2})",
+        sums.iter().sum::<usize>() as f64 / nf,
+        sums[0] as f64 / nf,
+        sums[1] as f64 / nf,
+        sums[2] as f64 / nf,
+        sums[3] as f64 / nf,
+        sums[4] as f64 / nf
     );
     println!(
         "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms",

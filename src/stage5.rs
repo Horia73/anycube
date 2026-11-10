@@ -294,6 +294,14 @@ impl Stage5 {
         all
     }
 
+    /// Exact length of phase B from the ranks (`Ranks::rank16`) of the U/D
+    /// patterns of the x and t orbits and the parity of the wing permutation.
+    /// For searches on larger cubes that do the work of phase B among other things.
+    #[inline(always)]
+    pub fn b_dist(&self, x: usize, t: usize, odd: bool) -> u8 {
+        self.b[(x * N_UD + t) * 2 + odd as usize]
+    }
+
     /// An optimal phase B from the positions of the U/D centres among the
     /// sixteen places on U, D, F and B (x orbit, t orbit) and the parity of
     /// the wing permutation.
