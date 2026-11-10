@@ -23,6 +23,7 @@ fn main() {
         Some("verify") => verify(&args[1..]),
         Some("scrambles") => scrambles(&args[1..]),
         Some("stage6") => stage6(&args[1..]),
+        Some("bench6") => bench6(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
@@ -726,4 +727,72 @@ fn stage6(args: &[String]) {
         sums.iter().map(|&s| format!("{:.2}", s as f64 / nf)).collect::<Vec<_>>().join(" + ")
     );
     println!("mean time {:.0} ms", ms / nf);
+}
+
+/// 6x6x6 on a scramble file: full solves, lengths per step and times.
+fn bench6(args: &[String]) {
+    use cubenxnxn::solver6::{Params6, Solver6};
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let limit = num("--limit", usize::MAX);
+    let d = Params6::normal();
+    let p = Params6 {
+        width: num("--width", d.width),
+        tries: num("--tries", d.tries),
+        finals: num("--finals", d.finals),
+        slack: num("--slack", d.slack),
+        budget: num("--budget", d.budget as usize) as u64,
+        outer: params5(args),
+    };
+    let t0 = Instant::now();
+    let solver = Solver6::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let g = &solver.s6.g;
+    let (mut sums, mut times, mut n) = ([0usize; 4], Vec::new(), 0usize);
+    let mut hist = std::collections::BTreeMap::new();
+    let mut out = opt(args, "--out").map(|p| {
+        std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
+    });
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !g.is_solved(&f) {
+            fail(&format!("cube {}: the solution does not solve the cube", n));
+        }
+        for k in 0..4 {
+            sums[k] += sol.lens[k];
+        }
+        *hist.entry(sol.moves.len()).or_insert(0usize) += 1;
+        times.push(ms);
+        if let Some(o) = out.as_mut() {
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            writeln!(o, "{}\t{:?}\t{}\t{:.0}\t{}", n, sol.lens, sol.moves.len(), ms, names.join(" ")).unwrap();
+            o.flush().unwrap();
+        }
+        n += 1;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nf = n as f64;
+    println!("solved {} cubes, every solution verified on the sticker model", n);
+    println!(
+        "mean length {:.2}  (staging {:.2}, wing split {:.2}, inner reduction {:.2}, outer 5x5x5 {:.2})",
+        sums.iter().sum::<usize>() as f64 / nf,
+        sums[0] as f64 / nf,
+        sums[1] as f64 / nf,
+        sums[2] as f64 / nf,
+        sums[3] as f64 / nf
+    );
+    println!(
+        "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms",
+        times.iter().sum::<f64>() / nf,
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+    println!("length histogram: {:?}", hist);
 }

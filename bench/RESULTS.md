@@ -312,3 +312,41 @@ checked on the sticker model. dwalton76 spends about 38 moves on the same job
 
 Staging the R/L inner x centres and both oblique orbits in one search with
 the three exact orbit tables as bound did not finish one cube in ten minutes.
+
+## 6x6x6: first complete solver (2026-11-10)
+
+`cubenxnxn bench6 bench/scrambles666-100.txt --width 4`, first 6 cubes (the run
+was cut off after ten minutes), every solution checked on the sticker model.
+File: `six666-first6.tsv`. dwalton76 on the first 10 cubes of the same set:
+136.10 moves, 43 s per cube.
+
+| Cube | Staging | Wing split | Inner reduction | Outer 5x5x5 | Total | Time |
+|---|---|---|---|---|---|---|
+| 0 | 36 | 5 | 18 | 52 | 111 | 3.6 s |
+| 1 | 37 | 7 | 17 | 54 | 115 | 8.3 s |
+| 2 | 34 | 7 | 18 | 51 | 110 | 22 s |
+| 3 | 35 | 7 | 18 | 54 | 114 | 14 s |
+| 4 | 36 | 6 | 21 | 55 | 118 | 239 s |
+| 5 | 33 | 7 | 18 | 53 | 111 | 46 s |
+| mean | 35.2 | 6.5 | 18.3 | 53.2 | 113.2 | 56 s |
+
+That is 17% below dwalton76, against a target of 20% (108.9 moves), and far
+too slow on some cubes.
+
+How it got here, each on a handful of cubes:
+
+| Version | Mean length | Time per cube |
+|---|---|---|
+| obliques matched to the inner x centres, then our 4x4x4 and 5x5x5 solvers as they are | 118.8 | 67 s, then about 5 s with an additive bound for the matching |
+| inner reduction that also pairs the obliques by colour, exact | 111 (one cube; 16 moves for that step) | 2.5 s to more than 10 minutes |
+| the same with the two bounds partly added, and a budget | 113.2 | see above |
+
+Things tried that did not pay:
+
+- Splitting the outer wings in the same search as the inner ones: 12 moves
+  instead of 5, to save 3 in the first edge phase of the 5x5x5.
+- Adding three quarters of the oblique bound to the inner bound everywhere:
+  the inner reduction came out at 19 moves instead of 16.
+- Staging with the cube held in each of the six ways that put different
+  colours on the axes: the same lengths on the cubes tried, for six times
+  the staging time.

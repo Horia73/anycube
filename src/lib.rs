@@ -14,6 +14,7 @@ pub mod opt3;
 pub mod orbits;
 pub mod solver;
 pub mod solver5;
+pub mod solver6;
 pub mod stage5;
 pub mod stage6;
 pub mod sym;

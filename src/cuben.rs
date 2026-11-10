@@ -125,6 +125,21 @@ impl Geometry {
         f.iter().map(|&c| name[c as usize]).collect()
     }
 
+    /// The same cube held differently: turned as a whole by a sequence of
+    /// quarter turns (0 = x, 1 = y, 2 = z), colours left as they are. A move
+    /// `m` made on the result is the move `frame_moves(turns)[m]` of the
+    /// cube as it was.
+    pub fn turned(&self, facelets: &[u8], turns: &[usize]) -> Vec<u8> {
+        let mut f = facelets.to_vec();
+        for &t in turns {
+            let old = f.clone();
+            for (j, x) in f.iter_mut().enumerate() {
+                *x = old[self.rotations[t][j] as usize];
+            }
+        }
+        f
+    }
+
     /// For a frame reached by `turns`: `out[m]` is the move of the original cube
     /// that does what move `m` does in the new frame.
     pub fn frame_moves(&self, turns: &[usize]) -> Vec<usize> {

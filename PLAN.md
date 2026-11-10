@@ -257,6 +257,28 @@ căutări, nu cum scrie mai sus: (a) x interior R/L pe fețe și oblicii R/L
 (d) faza B de la 5x5x5. Împerecherea în loc de așezare a adus 14 mutări.
 Pașii 2–4 urmează.
 
+**Solver complet (2026-11-10, seara):** 113,2 mutări pe primele 6 cuburi
+(dwalton76: 136,1), adică −17%; ținta lui Horia e −20% (108,9). Timpul e
+4–46 s, cu un cub la 4 minute. Planul de mai sus s-a schimbat pe drum:
+
+- „Sferturile într-o culoare” costau 11,5 mutări doar ca să poată lucra
+  4x4x4-ul virtual. Le-am înlocuit cu o reducere interioară proprie
+  (`src/solver6.rs`): mutările ultimei faze de la 4x4x4, cu tabelele ei de
+  împerechere ca prag, care face și perechile de oblici de o singură
+  culoare. Exact, pasul are ~16 mutări în loc de 11,5 + 12.
+- Problema rămasă e căutarea: pragul spune ~10, soluția are 16–19, fiindcă
+  împerecherea wings interioare și cea a oblicilor aproape nu împart
+  mutări. Căutarea exactă durează de la secunde la zeci de minute.
+
+**Ce urmează la 6x6x6, în ordine:**
+
+1. Un prag comun pentru pasul 3 (wings interioare + oblici), ca să fie și
+   exact, și rapid. Fără el nu se poate nici măsura cinstit pe 100 de cuburi.
+2. Lanțul de alegere între pași, ca la 5x5x5 (mai multe așezări și
+   împărțiri duse până la capăt, aleasă cea mai scurtă în total).
+3. Așezarea centrelor: 35–36 de mutări față de ~25 cât ar permite numărul
+   de stări; e cel mai mare rest de câștig.
+
 **7x7x7** urmează aceeași schemă: 5x5x5 virtual din straturile 1, 3, 4, 5, 7
 pentru interior, tripletele oblic–t–oblic în locul perechilor, apoi 5x5x5
 virtual din straturile 1, 2, 4, 6, 7.
