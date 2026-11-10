@@ -12,6 +12,7 @@ pub mod edges5;
 pub mod joint;
 pub mod opt3;
 pub mod orbits;
+pub mod search;
 pub mod solver;
 pub mod solver5;
 pub mod solver6;

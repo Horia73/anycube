@@ -1380,6 +1380,9 @@ impl Search<'_> {
     }
 }
 
+/// The same phases for a 5x5x5 that is the inside of a larger cube.
+pub mod rider;
+
 /// Phase E pairing table: distance modulo 3 for every pair of pairing
 /// permutations (low wings, high wings) of the eight outer edges; 3 = unreachable.
 fn gen_e(low_mv: &[[u16; 14]], high_mv: &[[u16; 14]]) -> Vec<u8> {

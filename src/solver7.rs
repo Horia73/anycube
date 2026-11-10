@@ -28,9 +28,11 @@
 
 use crate::c3::C3;
 use crate::c5::{tables5, Cube5};
+use crate::edges5::rider::{inner_move, Beam, Rider};
 use crate::edges5::{is_reduced, Found, Limits, Start};
 use crate::solver5::{Params5, Solver5};
-use crate::stage7::{beam, from_inner, moves_where, Problem, Stage7, INNER5, OBL_A, OBL_B, OUTER5, T_IN, T_OUT, X_IN, X_OUT};
+use crate::search::{beam, Problem};
+use crate::stage7::{from_inner, moves_where, Stage7, INNER5, OBL_A, OBL_B, OUTER5, T_IN, T_OUT, X_IN, X_OUT};
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
 
@@ -245,12 +247,129 @@ impl Problem for Match<'_> {
     }
 }
 
+/// The triples of one axis while the centres are staged: where the first
+/// obliques, the outer t centres and the second obliques show the first
+/// colour of the axis, each one of 70 patterns.
+pub struct Triples {
+    /// `step[axis][orbit][pattern * 54 + move]`: the pattern after a move that keeps the centres staged.
+    step: [[Vec<u8>; 3]; 3],
+    /// Per axis, by the three patterns: moves until every triple of the axis
+    /// shows one colour and the two colours lie in *stripes*, one on the
+    /// triples along the rows of both faces and the other on the triples
+    /// along the columns. Stripes stay stripes under every half turn.
+    stripes: [Vec<u8>; 3],
+    /// The same until every triple of the axis shows one colour.
+    uniform: [Vec<u8>; 3],
+}
+
+impl Triples {
+    pub fn new(s7: &Stage7) -> Triples {
+        let moves = moves_where(|_, layers, power| layers == 1 || power == 1);
+        let mut rank8 = [255u8; 256];
+        let unrank8: Vec<u32> = (0..256u32).filter(|x| x.count_ones() == 4).collect();
+        for (i, &x) in unrank8.iter().enumerate() {
+            rank8[x as usize] = i as u8;
+        }
+        let build = |axis: usize| -> ([Vec<u8>; 3], Vec<u8>, Vec<u8>) {
+            let shift = 8 * axis as u32;
+            let step = [OBL_A, T_OUT, OBL_B].map(|o| {
+                let mut t = vec![255u8; 70 * 54];
+                for r in 0..70 {
+                    for &m in &moves {
+                        let y = s7.perms[o].apply(m, unrank8[r] << shift) >> shift;
+                        assert!(y < 256, "these moves keep the centres staged");
+                        t[r * 54 + m as usize] = rank8[y as usize];
+                    }
+                }
+                t
+            });
+            let next = |s: usize, j: usize| {
+                let m = moves[j] as usize;
+                (step[0][s / 4900 * 54 + m] as usize * 70 + step[1][s / 70 % 70 * 54 + m] as usize) * 70 + step[2][s % 70 * 54 + m] as usize
+            };
+            // The triples of this axis that lie along a row of their face.
+            let rows = (0..8usize)
+                .filter(|&i| matches!(s7.orbits[T_OUT].facelet[8 * axis + i] / 7 % 7, 1 | 5))
+                .fold(0u32, |x, i| x | 1 << i);
+            assert_eq!(rows.count_ones(), 4);
+            let alike = |s: usize| s / 4900 == s % 70 && s / 70 % 70 == s % 70;
+            let striped = |s: usize| alike(s) && (unrank8[s % 70] == rows || unrank8[s % 70] == rows ^ 255);
+            // Positions are numbered U D F B R L, eight to an axis.
+            let own = |m: u8| [0, 2, 1][m as usize / 3 % 3] == axis;
+            for s in (0..343_000).filter(|&s| striped(s)) {
+                for (j, &m) in moves.iter().enumerate() {
+                    assert!(striped(next(s, j)) || (own(m) && m < 18 && m % 3 != 1), "stripes survive every half turn");
+                }
+            }
+            let cost = vec![1u8; moves.len()];
+            let stripes = cheapest(343_000, striped, &cost, next);
+            let uniform = cheapest(343_000, alike, &cost, next);
+            assert!(stripes.iter().all(|&d| d != FAR), "stripes can be reached from every staged pattern");
+            (step, stripes, uniform)
+        };
+        let (s0, a0, u0) = build(0);
+        let (s1, a1, u1) = build(1);
+        let (s2, a2, u2) = build(2);
+        if std::env::var_os("CUBE7_TRACE").is_some() {
+            let mean = |t: &[u8]| t.iter().map(|&d| d as f64).sum::<f64>() / t.len() as f64;
+            eprintln!(
+                "  triples: stripes mean {:.2} max {}, one colour mean {:.2} max {}",
+                mean(&a0),
+                a0.iter().max().unwrap(),
+                mean(&u0),
+                u0.iter().max().unwrap()
+            );
+        }
+        Triples { step: [s0, s1, s2], stripes: [a0, a1, a2], uniform: [u0, u1, u2] }
+    }
+
+    /// The three patterns of an axis on a staged cube.
+    fn patterns(&self, s7: &Stage7, f: &[u8], axis: usize) -> [u8; 3] {
+        [OBL_A, T_OUT, OBL_B].map(|o| s7.ranks.rank8[((s7.primary(o, f) >> (8 * axis)) & 255) as usize])
+    }
+}
+
+/// The triples as a rider of an edge phase of the inner cube. Each phase
+/// looks after the axis whose faces it turns by quarters, in the order that
+/// leaves stripes alone afterwards: phase C (0) stripes the axis that is R/L
+/// in its frame, phase P (1) the one that is F/B, and phase E (2) brings the
+/// triples of the last axis to one colour each.
+struct TripleRider<'a> {
+    s: &'a Solver7,
+    phase: usize,
+}
+
+impl Rider for TripleRider<'_> {
+    type State = [u8; 3];
+
+    #[inline(always)]
+    fn step(&self, ctx: usize, s: &[u8; 3], m: u8) -> [u8; 3] {
+        let frame = &self.s.frames[ctx];
+        let step = &self.s.triples.step[frame.axes[self.phase]];
+        let ours = frame.to7[m as usize] as usize;
+        [0, 1, 2].map(|k| step[k][s[k] as usize * 54 + ours])
+    }
+
+    #[inline(always)]
+    fn bound(&self, ctx: usize, s: &[u8; 3]) -> usize {
+        let axis = self.s.frames[ctx].axes[self.phase];
+        let i = (s[0] as usize * 70 + s[1] as usize) * 70 + s[2] as usize;
+        let t = &self.s.triples;
+        (if self.phase == 2 { &t.uniform[axis] } else { &t.stripes[axis] })[i] as usize
+    }
+}
+
 /// The cube seen from another side (a 5x5x5).
 struct Frame {
     turns: Vec<usize>,
     /// Move of the original cube for each move of this frame, and back.
     to_orig: Vec<u8>,
     from_orig: Vec<u8>,
+    /// The axes of the cube as given (0 U/D, 1 F/B, 2 R/L) that are R/L,
+    /// F/B and U/D in this frame.
+    axes: [usize; 3],
+    /// Move of the 7x7x7 as given for each of its moves made in this frame.
+    to7: Vec<u8>,
 }
 
 /// A 5x5x5 part of the way through its edge phases: the candidate it
@@ -259,6 +378,8 @@ struct Frame {
 struct Partial {
     cand: usize,
     moves: Vec<u8>,
+    /// For the inner cube: the same moves as moves of the 7x7x7.
+    ours: Vec<u8>,
     frame: usize,
     ends: Vec<usize>,
 }
@@ -310,9 +431,84 @@ impl<'a> Chain<'a> {
                 let moves: Vec<u8> = base.moves.iter().copied().chain(f.moves.iter().map(|&m| to_orig[m as usize])).collect();
                 let mut ends = base.ends.clone();
                 ends.push(moves.len());
-                Partial { cand: base.cand, moves, frame: base.frame, ends }
+                Partial { cand: base.cand, moves, ours: Vec::new(), frame: base.frame, ends }
             })
             .collect()
+    }
+
+    /// The same for a phase with the triples as rider, whose moves are
+    /// moves of the 7x7x7 in the frame of the start.
+    fn extend_ridden(&self, from: &[Partial], found: Vec<Found>) -> Vec<Partial> {
+        found
+            .into_iter()
+            .map(|f| {
+                let base = &from[f.start];
+                let to7 = &self.s.frames[base.frame].to7;
+                let (mut moves, mut ours) = (base.moves.clone(), base.ours.clone());
+                for &m in &f.moves {
+                    ours.push(to7[m as usize]);
+                    moves.push(inner_move(to7[m as usize]));
+                }
+                let mut ends = base.ends.clone();
+                ends.push(moves.len());
+                Partial { cand: base.cand, moves, ours, frame: base.frame, ends }
+            })
+            .collect()
+    }
+
+    /// The three edge phases of the inner cube with the triples as rider.
+    /// `cubes` are the 7x7x7 cubes the candidates were cut from. The results
+    /// are reduced inner cubes on which every triple shows one colour.
+    fn edges_ridden(&self, cubes: &[Vec<u8>], p: &Params7) -> Vec<Partial> {
+        let (s, e5) = (self.s, &self.s.s5.edges);
+        let beam = |cap: usize| Beam { width: p.inner_beam, cap, more: p.more, mix: p.mix };
+        // Frame and triple patterns of each start, for the axis its phase looks after.
+        let ride = |from: &[Partial], phase: usize| -> Vec<(usize, [u8; 3])> {
+            from.par_iter()
+                .map(|x| {
+                    let mut f = cubes[x.cand].clone();
+                    s.s7.g.apply_seq(&mut f, &x.ours.iter().map(|&m| m as usize).collect::<Vec<_>>());
+                    (x.frame, s.triples.patterns(&s.s7, &f, s.frames[x.frame].axes[phase]))
+                })
+                .collect()
+        };
+        let trace = std::env::var_os("CUBE7_TRACE").is_some();
+        let lap = |what: &str, found: &[Partial]| {
+            if trace {
+                let best = found.iter().map(|x| self.total(x)).min().unwrap_or(0);
+                eprintln!("    {} {:6} results, shortest {:3}, at {:6.0} ms", what, found.len(), best, self.t0.elapsed().as_secs_f64() * 1e3);
+            }
+        };
+        let from: Vec<Partial> = (0..self.roots.len())
+            .flat_map(|cand| {
+                (0..3).map(move |axis| Partial { cand, moves: Vec::new(), ours: Vec::new(), frame: 2 * axis, ends: Vec::new() })
+            })
+            .collect();
+        let rider = TripleRider { s, phase: 0 };
+        let found = e5.phase_c_ridden(&self.starts_of(&from), &ride(&from, 0), &rider, p.inner.labellings, &beam(p.inner.c_keep));
+        let after_c = self.extend_ridden(&from, found);
+        lap("phase C", &after_c);
+        let from: Vec<Partial> = after_c
+            .iter()
+            .flat_map(|x| {
+                (0..2).map(move |quarter| Partial {
+                    cand: x.cand,
+                    moves: x.moves.clone(),
+                    ours: x.ours.clone(),
+                    frame: x.frame + quarter,
+                    ends: x.ends.clone(),
+                })
+            })
+            .collect();
+        let rider = TripleRider { s, phase: 1 };
+        let found = e5.phase_p_ridden(&self.starts_of(&from), &ride(&from, 1), &rider, &beam(p.inner.p_keep));
+        let after_p = self.extend_ridden(&from, found);
+        lap("phase P", &after_p);
+        let rider = TripleRider { s, phase: 2 };
+        let found = e5.phase_e_ridden(&self.starts_of(&after_p), &ride(&after_p, 2), &rider, &beam(p.inner.e_keep));
+        let reduced = self.extend_ridden(&after_p, found);
+        lap("phase E", &reduced);
+        reduced
     }
 
     /// The three edge phases; the results are reduced cubes.
@@ -328,7 +524,9 @@ impl<'a> Chain<'a> {
         };
         // Phase C, along each axis.
         let from: Vec<Partial> = (0..self.roots.len())
-            .flat_map(|cand| (0..3).map(move |axis| Partial { cand, moves: Vec::new(), frame: 2 * axis, ends: Vec::new() }))
+            .flat_map(|cand| {
+                (0..3).map(move |axis| Partial { cand, moves: Vec::new(), ours: Vec::new(), frame: 2 * axis, ends: Vec::new() })
+            })
             .collect();
         let found = e5.phase_c(&self.starts_of(&from), p.labellings, &limits(p.c_keep, 10, 0.4));
         let after_c = self.extend(&from, found);
@@ -336,7 +534,13 @@ impl<'a> Chain<'a> {
         let from: Vec<Partial> = after_c
             .iter()
             .flat_map(|x| {
-                (0..2).map(move |quarter| Partial { cand: x.cand, moves: x.moves.clone(), frame: x.frame + quarter, ends: x.ends.clone() })
+                (0..2).map(move |quarter| Partial {
+                    cand: x.cand,
+                    moves: x.moves.clone(),
+                    ours: Vec::new(),
+                    frame: x.frame + quarter,
+                    ends: x.ends.clone(),
+                })
             })
             .collect();
         let found = e5.phase_p(&self.starts_of(&from), &limits(p.p_keep, 10, 0.7));
@@ -394,6 +598,15 @@ pub struct Params7 {
     pub match_extra: usize,
     /// States kept per level in the beam searches.
     pub beam: usize,
+    /// True: no matching step; the edge phases of the inner cube bring the
+    /// triples to one colour themselves (see `TripleRider`).
+    pub ride: bool,
+    /// The beam searches of the inner cube's edge phases: states kept per
+    /// level, levels searched past the first with a solution, and the
+    /// weights of the edges' and the triples' bounds in the ranking.
+    pub inner_beam: usize,
+    pub more: usize,
+    pub mix: [u32; 2],
     /// The edge phases of the inner cube, and how many of its reductions go on.
     pub inner: Params5,
     pub reductions: usize,
@@ -409,7 +622,11 @@ impl Params7 {
             matchings: 4,
             match_extra: 0,
             beam: 20_000,
-            inner: Params5::normal(),
+            ride: true,
+            inner_beam: 20_000,
+            more: 1,
+            mix: [1, 1],
+            inner: Params5 { labellings: 4, c_keep: 60, p_keep: 60, e_keep: 30, time_ms: 0, ..Params5::normal() },
             reductions: 16,
             outer: Params5::normal(),
         }
@@ -427,6 +644,7 @@ pub struct Solver7 {
     pub s7: Stage7,
     pub s5: Solver5,
     pub matching: Matching,
+    pub triples: Triples,
     frames: Vec<Frame>,
 }
 
@@ -449,10 +667,15 @@ impl Solver7 {
                 for (m, &o) in to_orig.iter().enumerate() {
                     from_orig[o as usize] = m as u8;
                 }
-                frames.push(Frame { turns, to_orig, from_orig });
+                // The faces that R, F and U of this frame are on the cube as given.
+                let axes = [3, 6, 0].map(|m| [0, 2, 1][to_orig[m] as usize / 3 % 3]);
+                let to7: Vec<u8> = s7.g.frame_moves(&turns).into_iter().map(|m| m as u8).collect();
+                assert!((0..54).all(|m| inner_move(to7[m]) == to_orig[inner_move(m as u8) as usize]));
+                frames.push(Frame { turns, to_orig, from_orig, axes, to7 });
             }
         }
-        Solver7 { s7, s5: Solver5::load(), matching, frames }
+        let triples = Triples::new(&s7);
+        Solver7 { s7, s5: Solver5::load(), matching, triples, frames }
     }
 
     /// Step 2 from a staged cube: the shortest matchings (up to `cap`).
@@ -503,7 +726,10 @@ impl Solver7 {
         let staged = self.s7.stage(&self.s5.stage, facelets, p.width, p.beam);
         lap("staged", staged.len(), staged.first().map_or(0, |s| s.moves.len()));
         // Step 2: (moves so far, lengths of steps 1 and 2, the cube).
-        let mut matched: Vec<(Vec<u8>, [usize; 2], Vec<u8>)> = staged[..staged.len().min(p.tries)]
+        let mut matched: Vec<(Vec<u8>, [usize; 2], Vec<u8>)> = if p.ride {
+            staged[..staged.len().min(p.tries)].iter().map(|st| (st.moves.clone(), [st.moves.len(), 0], apply(facelets, &st.moves))).collect()
+        } else {
+            staged[..staged.len().min(p.tries)]
             .par_iter()
             .flat_map_iter(|st| {
                 let f1 = apply(facelets, &st.moves);
@@ -517,13 +743,19 @@ impl Solver7 {
                     })
                     .collect::<Vec<_>>()
             })
-            .collect();
+            .collect()
+        };
         matched.sort_by_key(|m| m.0.len());
         lap("matched", matched.len(), matched.first().map_or(0, |m| m.0.len()));
         // Step 3: the inner cube, from every matching at once.
         let cands: Vec<(Vec<u8>, usize)> = matched.iter().map(|m| (g.sub_facelets(&m.2, &INNER5), m.0.len())).collect();
         let chain = Chain::new(self, &cands)?;
-        let mut reduced = chain.edges(&p.inner);
+        let mut reduced = if p.ride {
+            let cubes: Vec<Vec<u8>> = matched.iter().map(|m| m.2.clone()).collect();
+            chain.edges_ridden(&cubes, p)
+        } else {
+            chain.edges(&p.inner)
+        };
         reduced.sort_by_key(|x| chain.total(x));
         reduced.truncate(p.reductions);
         lap("inner", reduced.len(), reduced.first().map_or(0, |x| chain.total(x)));
@@ -532,7 +764,7 @@ impl Solver7 {
             .iter()
             .map(|x| {
                 let (before, lens, f2) = &matched[x.cand];
-                let ours: Vec<u8> = x.moves.iter().map(|&m| from_inner(m)).collect();
+                let ours: Vec<u8> = if p.ride { x.ours.clone() } else { x.moves.iter().map(|&m| from_inner(m)).collect() };
                 let f3 = apply(f2, &ours);
                 let moves: Vec<u8> = before.iter().chain(ours.iter()).copied().collect();
                 (moves, [lens[0], lens[1], ours.len()], f3)

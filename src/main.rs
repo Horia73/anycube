@@ -76,7 +76,7 @@ fn move_text(args: &[String]) -> String {
     let mut i = 0;
     while i < args.len() {
         if args[i].starts_with("--") {
-            i += if matches!(args[i].as_str(), "--split" | "--parallel") { 1 } else { 2 };
+            i += if matches!(args[i].as_str(), "--split" | "--parallel" | "--matching" | "--merged") { 1 } else { 2 };
         } else {
             tokens.push(&args[i]);
             i += 1;
@@ -829,7 +829,10 @@ fn stage7(args: &[String]) {
             continue;
         }
         let t = Instant::now();
-        let found = s7.stage(&s5, &f, width, num("--beam", 20_000));
+        let found = match args.iter().any(|a| a == "--merged") {
+            true => s7.stage_merged(&s5, &f, num("--beam", 20_000), width),
+            false => s7.stage(&s5, &f, width, num("--beam", 20_000)),
+        };
         let took = t.elapsed().as_secs_f64() * 1e3;
         ms += took;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
@@ -865,8 +868,19 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
         matchings: num("--matchings", d.matchings),
         match_extra: num("--match-extra", d.match_extra),
         beam: num("--beam", d.beam),
+        ride: !args.iter().any(|a| a == "--matching"),
+        inner_beam: num("--inner-beam", d.inner_beam),
+        more: num("--more", d.more),
+        mix: [num("--mix-edges", d.mix[0] as usize) as u32, num("--mix-triples", d.mix[1] as usize) as u32],
         reductions: num("--reductions", d.reductions),
-        inner: outer.clone(),
+        inner: cubenxnxn::solver5::Params5 {
+            labellings: num("--inner-labellings", d.inner.labellings),
+            c_keep: num("--inner-c", d.inner.c_keep),
+            p_keep: num("--inner-p", d.inner.p_keep),
+            e_keep: num("--inner-e", d.inner.e_keep),
+            time_ms: num("--inner-time", d.inner.time_ms as usize) as u64,
+            ..d.inner
+        },
         outer,
     }
 }

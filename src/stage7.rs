@@ -28,10 +28,10 @@ use crate::cube::Cube;
 use crate::cuben::Geometry;
 use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
-use crate::stage6::skip54;
-use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes, Ranks};
+use crate::search::{beam, Problem};
+use crate::tables::{gen_stage, load_or_gen, table_dir, BitPerm, Bytes, Ranks};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 const GOAL_RL: u32 = 0xFF_0000;
 const GOAL_UD: u32 = 0x00_00FF;
@@ -108,179 +108,6 @@ fn into_bytes(v: Vec<AtomicU8>) -> Vec<u8> {
     unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
 }
 
-/// A problem for `ida`: a state, the moves allowed, and a lower bound.
-pub trait Problem: Sync {
-    type Node: Copy + Send + Sync;
-    fn moves(&self) -> &[u8];
-    /// The state after the `k`-th of `moves`.
-    fn next(&self, n: &Self::Node, k: usize) -> Self::Node;
-    /// Never more than the moves still needed.
-    fn bound(&self, n: &Self::Node) -> usize;
-    /// Asked only where the bound is 0.
-    fn done(&self, n: &Self::Node) -> bool;
-    /// False for a move that cannot be the last of a shortest solution.
-    fn may_end(&self, _k: usize) -> bool {
-        true
-    }
-}
-
-struct Dfs<'a, P: Problem> {
-    p: &'a P,
-    cap: usize,
-    count: &'a AtomicUsize,
-    stop: &'a AtomicBool,
-    nodes: &'a AtomicU64,
-    budget: u64,
-    seen: u64,
-    out: Vec<Vec<u8>>,
-    path: [u8; 48],
-}
-
-impl<P: Problem> Dfs<'_, P> {
-    fn go(&mut self, n: &P::Node, k: usize, rem: usize, depth: usize) -> bool {
-        let p = self.p;
-        if rem == 1 && !p.may_end(k) {
-            return false;
-        }
-        let next = p.next(n, k);
-        let h = p.bound(&next);
-        if h > rem - 1 {
-            return false;
-        }
-        let m = p.moves()[k];
-        self.path[depth] = m;
-        let done = h == 0 && p.done(&next);
-        if rem == 1 {
-            if done {
-                self.out.push(self.path[..=depth].to_vec());
-                if self.count.fetch_add(1, Relaxed) + 1 >= self.cap {
-                    self.stop.store(true, Relaxed);
-                    return true;
-                }
-            }
-            return false;
-        }
-        // A solution that passes through the goal is a shorter one with moves added.
-        if done {
-            return false;
-        }
-        self.seen += 1;
-        if self.seen & 0x3FFF == 0 {
-            if self.nodes.fetch_add(0x4000, Relaxed) + 0x4000 > self.budget {
-                self.stop.store(true, Relaxed);
-            }
-            if self.stop.load(Relaxed) {
-                return true;
-            }
-        }
-        for k2 in 0..p.moves().len() {
-            if !skip54(m, p.moves()[k2]) && self.go(&next, k2, rem - 1, depth + 1) {
-                return true;
-            }
-        }
-        false
-    }
-}
-
-/// Iterative deepening: the solutions of the shortest length and of the
-/// next `extra` lengths, until there are `cap` of them. Empty if more than
-/// `budget` positions were visited before the first solution.
-pub fn ida<P: Problem>(p: &P, root: &P::Node, extra: usize, cap: usize, budget: u64) -> Vec<Vec<u8>> {
-    let h = p.bound(root);
-    if h == 0 && p.done(root) {
-        return vec![Vec::new()];
-    }
-    let nodes = AtomicU64::new(0);
-    let (count, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
-    let mut all: Vec<Vec<u8>> = Vec::new();
-    let mut optimum = None;
-    for depth in h.max(1)..=h + 24 {
-        if optimum.is_some_and(|o| depth > o + extra) || stop.load(Relaxed) {
-            break;
-        }
-        if std::env::var_os("CUBE7_TRACE").is_some() {
-            eprintln!("      depth {:2} (bound {}), {} positions so far", depth, h, nodes.load(Relaxed));
-        }
-        let found: Vec<Vec<u8>> = (0..p.moves().len())
-            .into_par_iter()
-            .with_max_len(1)
-            .flat_map_iter(|k| {
-                let mut dfs = Dfs { p, cap, count: &count, stop: &stop, nodes: &nodes, budget, seen: 0, out: Vec::new(), path: [0; 48] };
-                if !stop.load(Relaxed) {
-                    dfs.go(root, k, depth, 0);
-                }
-                dfs.out
-            })
-            .collect();
-        if !found.is_empty() && optimum.is_none() {
-            optimum = Some(depth);
-        }
-        all.extend(found);
-    }
-    all
-}
-
-/// Beam search, for problems whose bound is too weak for `ida`: level by
-/// level, only the `width` states with the lowest `score` are continued
-/// (states reached twice count once). Returns up to `cap` solutions of the
-/// first length at which any is found; they need not be the shortest that exist.
-pub fn beam<P: Problem>(
-    p: &P,
-    root: &P::Node,
-    score: impl Fn(&P::Node) -> u32 + Sync,
-    width: usize,
-    cap: usize,
-    max_len: usize,
-) -> Vec<Vec<u8>>
-where
-    P::Node: Ord,
-{
-    if p.bound(root) == 0 && p.done(root) {
-        return vec![Vec::new()];
-    }
-    // Per level: each kept state's parent in the level before and the move that led to it.
-    let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
-    let mut level: Vec<(P::Node, u8)> = vec![(*root, FAR)];
-    for _ in 0..max_len {
-        // (score, state, parent, index of the move); a score of 0 marks a solution.
-        let mut next: Vec<(u32, P::Node, u32, u8)> = level
-            .par_iter()
-            .enumerate()
-            .flat_map_iter(|(i, (n, last))| {
-                let moves = p.moves();
-                let score = &score;
-                (0..moves.len()).filter(move |&k| *last == FAR || !skip54(*last, moves[k])).map(move |k| {
-                    let c = p.next(n, k);
-                    let solved = p.bound(&c) == 0 && p.done(&c);
-                    (if solved { 0 } else { 1 + score(&c) }, c, i as u32, k as u8)
-                })
-            })
-            .collect();
-        next.par_sort_unstable();
-        next.dedup_by(|x, y| x.1 == y.1);
-        let solved = next.iter().take_while(|x| x.0 == 0).count();
-        if solved > 0 {
-            return next[..solved.min(cap)]
-                .iter()
-                .map(|x| {
-                    let mut path = vec![p.moves()[x.3 as usize]];
-                    let mut at = x.2 as usize;
-                    for step in trail.iter().rev() {
-                        path.push(step[at].1);
-                        at = step[at].0 as usize;
-                    }
-                    path.reverse();
-                    path
-                })
-                .collect();
-        }
-        next.truncate(width);
-        trail.push(next.iter().map(|x| (x.2, p.moves()[x.3 as usize])).collect());
-        level = next.iter().map(|x| (x.1, p.moves()[x.3 as usize])).collect();
-    }
-    Vec::new()
-}
-
 pub struct Stage7 {
     pub g: Geometry,
     pub orbits: Vec<CentreOrbit>,
@@ -298,6 +125,13 @@ pub struct Stage7 {
     m4: Vec<u8>,
     mv4: [Vec<u16>; 5],
     pair4: [Bytes; 3],
+    /// Whole axes at once (`stage_merged`). Per orbit: the moves that bring
+    /// its R/L centres onto R and L, by mask; then, for the outer x centres,
+    /// where the moves of step 4 take a U/D pattern, and for each oblique
+    /// orbit the moves that bring its U/D centres onto U and D, by pattern.
+    rl: Vec<Bytes>,
+    x_out4: Vec<u16>,
+    ud: [Vec<u8>; 2],
 }
 
 /// A staging: the moves and how many each step took.
@@ -443,7 +277,35 @@ impl Stage7 {
             load_or_gen(&dir.join(name), N_UD * N_UD / 2, || gen_pair(&mv4[p], &mv4[q], m4.len()))
         };
         let pair4 = [pair("stage777-4-ab.bin", 2, 4), pair("stage777-4-at.bin", 2, 3), pair("stage777-4-tb.bin", 3, 4)];
-        Stage7 { g, orbits, perms, ranks, m2, diff2, m4, mv4, pair4 }
+        let all: Vec<u8> = (0..54).collect();
+        let rl = (0..6)
+            .map(|o| load_or_gen(&dir.join(format!("stage777-rl-{}.bin", o)), 1 << 24, || gen_stage(&perms[o], GOAL_RL, &all)))
+            .collect();
+        let x_out4 = table(X_OUT);
+        let ud = [2, 4].map(|k| {
+            let goal = ranks.rank16[GOAL_UD as usize] as usize;
+            let mut dist = vec![FAR; N_UD];
+            dist[goal] = 0;
+            let mut frontier = vec![goal];
+            let mut depth = 0;
+            while !frontier.is_empty() {
+                let mut next = Vec::new();
+                for &r in &frontier {
+                    for j in 0..m4.len() {
+                        let t = mv4[k][r * m4.len() + j] as usize;
+                        if dist[t] == FAR {
+                            dist[t] = depth + 1;
+                            next.push(t);
+                        }
+                    }
+                }
+                frontier = next;
+                depth += 1;
+            }
+            assert!(dist.iter().all(|&d| d != FAR));
+            dist
+        });
+        Stage7 { g, orbits, perms, ranks, m2, diff2, m4, mv4, pair4, rl, x_out4, ud }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -533,8 +395,55 @@ impl Stage7 {
         beam(&Step2 { s: self }, root, score, width, cap, 40)
     }
 
+    /// Staging in two beam searches instead of five steps: every orbit's
+    /// R/L centres onto R and L with all moves, then every orbit's U/D
+    /// centres onto U and D and both wing parities with the moves of step 4.
+    /// No triples are formed on the way; states are ranked by the sum of
+    /// what the orbits need one by one. Returns up to `cap` stagings.
+    pub fn stage_merged(&self, s5: &Stage5, facelets: &[u8], wide: usize, cap: usize) -> Vec<Staged7> {
+        let mut root = [0u32; 6];
+        for o in 0..6 {
+            root[o] = self.mask(o, facelets, 1);
+        }
+        let p = AxisRl { s: self };
+        let score = |n: &[u32; 6]| (0..6).map(|o| self.rl[o][n[o] as usize] as u32).sum::<u32>();
+        let firsts = beam(&p, &root, score, wide, cap, 60);
+        let mut out: Vec<Staged7> = firsts
+            .par_iter()
+            .flat_map_iter(|first| {
+                let mut f = facelets.to_vec();
+                self.g.apply_seq(&mut f, &first.iter().map(|&m| m as usize).collect::<Vec<_>>());
+                let rank = |o: usize| self.ranks.rank16[self.mask(o, &f, 0) as usize];
+                let root = NodeUd {
+                    x: rank(X_IN),
+                    t: rank(T_IN),
+                    odd: self.wings_odd(&f, INNER_WINGS),
+                    xo: rank(X_OUT),
+                    o: rank(T_OUT),
+                    odd_out: self.wings_odd(&f, OUTER_WINGS),
+                    a: rank(OBL_A),
+                    b: rank(OBL_B),
+                };
+                let p = AxisUd { s: self, s5 };
+                let score = |n: &NodeUd| {
+                    s5.b_dist(n.x as usize, n.t as usize, n.odd) as u32
+                        + s5.b_dist(n.xo as usize, n.o as usize, n.odd_out) as u32
+                        + self.ud[0][n.a as usize] as u32
+                        + self.ud[1][n.b as usize] as u32
+                };
+                beam(&p, &root, score, wide, cap, 60).into_iter().map(move |second| {
+                    let moves: Vec<u8> = first.iter().chain(second.iter()).copied().collect();
+                    Staged7 { moves, lens: [first.len(), 0, 0, second.len(), 0] }
+                })
+            })
+            .collect();
+        out.sort_by_key(|s| s.moves.len());
+        out.truncate(cap);
+        out
+    }
+
     /// Solutions of one step from a cube on which the earlier steps are done.
-    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize, beam: usize) -> Vec<Vec<u8>> {
+    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize, wide: usize) -> Vec<Vec<u8>> {
         if std::env::var_os("CUBE7_TRACE").is_some() {
             eprintln!("    staging step {}", step + 1);
         }
@@ -544,7 +453,7 @@ impl Stage7 {
                 .into_iter()
                 .map(|sol| sol.into_iter().map(from_inner).collect())
                 .collect(),
-            1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], beam, cap),
+            1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], wide, cap),
             2 => s5.phase_a(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1), 0, cap, None),
             3 => {
                 let rank = |o: usize| self.ranks.rank16[self.mask(o, f, 0) as usize];
@@ -556,7 +465,19 @@ impl Stage7 {
                     o: rank(T_OUT),
                     b: rank(OBL_B),
                 };
-                ida(&Step4 { s: self, s5 }, &root, 0, cap, u64::MAX)
+                // The two halves of the job share few moves, so the bound is
+                // weak: beam search, states ranked by the sum of what the inner
+                // centres and the triples need.
+                let p = Step4 { s: self, s5 };
+                let score = |n: &Node4| {
+                    let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
+                    let t = &self.pair4;
+                    2 * s5.b_dist(n.x as usize, n.t as usize, n.odd) as u32
+                        + nibble(&t[0], a * N_UD + b) as u32
+                        + nibble(&t[1], a * N_UD + o) as u32
+                        + nibble(&t[2], o * N_UD + b) as u32
+                };
+                beam(&p, &root, score, wide, cap, 40)
             }
             _ => vec![s5.phase_b(self.mask(X_OUT, f, 0), self.mask(T_OUT, f, 0), self.wings_odd(f, OUTER_WINGS))],
         };
@@ -601,7 +522,7 @@ impl Problem for Step2<'_> {
 
 /// Step 4: the U/D patterns of the inner x and inner t centres, the parity
 /// of the inner wings, and the U/D patterns of the three orbits of the triples.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Node4 {
     x: u16,
     t: u16,
@@ -655,5 +576,104 @@ impl Problem for Step4<'_> {
     /// Only a 3-layer turn moves an inner centre off its face or changes a triple.
     fn may_end(&self, k: usize) -> bool {
         self.s.m4[k] >= 36
+    }
+}
+
+/// Every orbit's R/L centres onto R and L: the R/L masks of the six orbits.
+struct AxisRl<'a> {
+    s: &'a Stage7,
+}
+
+const ALL_MOVES: [u8; 54] = {
+    let mut m = [0u8; 54];
+    let mut i = 0;
+    while i < 54 {
+        m[i] = i as u8;
+        i += 1;
+    }
+    m
+};
+
+impl Problem for AxisRl<'_> {
+    type Node = [u32; 6];
+
+    fn moves(&self) -> &[u8] {
+        &ALL_MOVES
+    }
+
+    #[inline(always)]
+    fn next(&self, n: &[u32; 6], k: usize) -> [u32; 6] {
+        let mut out = [0u32; 6];
+        for o in 0..6 {
+            out[o] = self.s.perms[o].apply(k as u8, n[o]);
+        }
+        out
+    }
+
+    #[inline(always)]
+    fn bound(&self, n: &[u32; 6]) -> usize {
+        (0..6).map(|o| self.s.rl[o][n[o] as usize]).max().unwrap() as usize
+    }
+
+    fn done(&self, _: &[u32; 6]) -> bool {
+        true
+    }
+}
+
+/// Every orbit's U/D centres onto U and D: the U/D patterns of the inner x
+/// and inner t centres, the parity of the inner wings, the same for the
+/// outer x and outer t centres and the outer wings, and the patterns of
+/// the two oblique orbits.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct NodeUd {
+    x: u16,
+    t: u16,
+    odd: bool,
+    xo: u16,
+    o: u16,
+    odd_out: bool,
+    a: u16,
+    b: u16,
+}
+
+struct AxisUd<'a> {
+    s: &'a Stage7,
+    s5: &'a Stage5,
+}
+
+impl Problem for AxisUd<'_> {
+    type Node = NodeUd;
+
+    fn moves(&self) -> &[u8] {
+        &self.s.m4
+    }
+
+    #[inline(always)]
+    fn next(&self, n: &NodeUd, k: usize) -> NodeUd {
+        let (mv, w, m) = (&self.s.mv4, self.s.m4.len(), self.s.m4[k]);
+        NodeUd {
+            x: mv[0][n.x as usize * w + k],
+            t: mv[1][n.t as usize * w + k],
+            odd: n.odd ^ flips_inner(m),
+            xo: self.s.x_out4[n.xo as usize * w + k],
+            o: mv[3][n.o as usize * w + k],
+            // Quarter turns of two and of three layers move an outer slice a quarter turn.
+            odd_out: n.odd_out ^ (m >= 18 && m % 3 != 1),
+            a: mv[2][n.a as usize * w + k],
+            b: mv[4][n.b as usize * w + k],
+        }
+    }
+
+    #[inline(always)]
+    fn bound(&self, n: &NodeUd) -> usize {
+        self.s5
+            .b_dist(n.x as usize, n.t as usize, n.odd)
+            .max(self.s5.b_dist(n.xo as usize, n.o as usize, n.odd_out))
+            .max(self.s.ud[0][n.a as usize])
+            .max(self.s.ud[1][n.b as usize]) as usize
+    }
+
+    fn done(&self, _: &NodeUd) -> bool {
+        true
     }
 }
