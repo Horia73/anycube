@@ -741,7 +741,7 @@ fn bench6(args: &[String]) {
         width: num("--width", d.width),
         tries: num("--tries", d.tries),
         finals: num("--finals", d.finals),
-        slack: num("--slack", d.slack),
+        starts: num("--starts", d.starts),
         budget: num("--budget", d.budget as usize) as u64,
         outer: params5(args),
     };

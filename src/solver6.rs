@@ -515,20 +515,19 @@ impl Run3<'_> {
 pub struct Params6 {
     /// Stagings carried from step to step in step 1.
     pub width: usize,
-    /// Stagings taken on, and continuations tried for each in steps 2 and 3.
+    /// Stagings taken on to step 2, and results of step 2 taken on to step 3.
     pub tries: usize,
+    pub starts: usize,
     /// Cubes taken through the 5x5x5 solver.
     pub finals: usize,
-    /// Step 3: the slack it starts with and the positions it may visit
-    /// before trying again with less slack (see `Inner6::bound`).
-    pub slack: usize,
+    /// Step 3: the positions it may visit from one start before moving to the next.
     pub budget: u64,
     pub outer: Params5,
 }
 
 impl Params6 {
     pub fn normal() -> Params6 {
-        Params6 { width: 8, tries: 1, finals: 1, slack: 2, budget: 400_000_000, outer: Params5::normal() }
+        Params6 { width: 4, tries: 2, starts: 6, finals: 2, budget: 100_000_000, outer: Params5::normal() }
     }
 }
 
@@ -587,47 +586,53 @@ impl Solver6 {
             .collect();
         staged.sort_by_key(|s| s.1.moves.len());
         lap("staged");
-        // Steps 2 and 3: candidates as (hold, moves, lengths so far, cube).
-        let mut cands: Vec<(usize, Vec<u8>, [usize; 3], Vec<u8>)> = staged[..staged.len().min(p.tries)]
+        // Step 2: many ways to split the wings of the best stagings, those that
+        // leave step 3 least to do first: (lower bound on the total, hold, moves, lengths, cube).
+        let mut splits: Vec<(usize, usize, Vec<u8>, [usize; 2], Vec<u8>)> = staged[..staged.len().min(p.tries)]
             .par_iter()
             .flat_map_iter(|(hold, st)| {
                 let f1 = apply(&starts[*hold], &st.moves);
-                let mut out = Vec::new();
                 // The centres and the parity of the inner cube must suit its last phase.
                 let suits = |path: &[u8]| {
                     let c = inner_cube(&apply(&f1, path));
                     let t = &self.solver4.tabs;
                     t.ct3[t.ct3_index(ct3_mask(&c), ct3_parity(&c))] != crate::tables::UNREACHED
                 };
-                // Of many ways to split the wings, go on with those that leave step 3 least to do.
-                let mut splits: Vec<(usize, Vec<u8>, Vec<u8>)> = self
-                    .inner
+                self.inner
                     .split(&self.s6, &f1, &inner_cube(&f1).ep, 16, 64, &suits)
                     .into_iter()
                     .map(|sp| {
                         let f2 = apply(&f1, &sp);
                         let bound = self.inner.reduce_bound(&self.s6, &self.solver4, &f2, &inner_cube(&f2));
-                        (sp.len() + bound, sp, f2)
+                        let moves: Vec<u8> = st.moves.iter().chain(sp.iter()).copied().collect();
+                        (moves.len() + bound, *hold, moves, [st.moves.len(), sp.len()], f2)
                     })
-                    .collect();
-                splits.sort_by_key(|x| x.0);
-                for (_, sp, f2) in splits.into_iter().take(p.tries) {
-                    // Less slack is quicker; with none the search is greedy.
-                    let reds = (0..=p.slack)
-                        .rev()
-                        .find_map(|slack| {
-                            let budget = if slack == 0 { u64::MAX } else { p.budget };
-                            self.inner.reduce(&self.s6, &self.solver4, &f2, &inner_cube(&f2), slack, budget, p.tries)
-                        })
-                        .unwrap_or_default();
-                    for red in reds {
-                        let moves: Vec<u8> = st.moves.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
-                        out.push((*hold, moves, [st.moves.len(), sp.len(), red.len()], apply(&f2, &red)));
-                    }
-                }
-                out
+                    .collect::<Vec<_>>()
             })
             .collect();
+        splits.sort_by_key(|x| x.0);
+        splits.truncate(p.starts);
+        lap("split");
+        // Step 3. How hard it is varies enormously from one start to the next,
+        // so each gets a small budget and the ones that finish are kept: first
+        // exactly, then with less and less slack (see `Inner6::bound`).
+        let mut cands: Vec<(usize, Vec<u8>, [usize; 3], Vec<u8>)> = Vec::new();
+        for slack in [99, 2, 1, 0] {
+            for (_, hold, moves, lens, f2) in &splits {
+                let budget = if slack == 0 { u64::MAX } else { p.budget };
+                let reds = self.inner.reduce(&self.s6, &self.solver4, f2, &inner_cube(f2), slack, budget, 2);
+                for red in reds.unwrap_or_default() {
+                    let all: Vec<u8> = moves.iter().chain(red.iter()).copied().collect();
+                    cands.push((*hold, all, [lens[0], lens[1], red.len()], apply(f2, &red)));
+                }
+                if cands.len() >= p.finals {
+                    break;
+                }
+            }
+            if !cands.is_empty() {
+                break;
+            }
+        }
         lap("reduced");
         cands.sort_by_key(|c| c.1.len());
         cands.truncate(p.finals);

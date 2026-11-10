@@ -350,3 +350,10 @@ Things tried that did not pay:
 - Staging with the cube held in each of the six ways that put different
   colours on the axes: the same lengths on the cubes tried, for six times
   the staging time.
+
+Step 3 from many starts with a small budget each (`six666-many-starts.tsv`,
+24 starts, 50 million positions each, the run cut off after five cubes):
+111, 112, 112, 113, 115, mean 112.6, 34 to 170 s per cube. With 6 starts and
+100 million positions each: 110, 113, 113, 113, 111, mean 112.0, 42 to 124 s.
+The length does not move; this step is about 17 moves whichever way it is
+searched, and the whole solve stays near 112.
