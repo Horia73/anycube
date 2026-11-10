@@ -252,6 +252,68 @@ impl Stage5 {
         Ok(all.into_iter().map(|s| s.1).collect())
     }
 
+    /// Phase A on the positions of the R/L centres alone (x orbit, t orbit),
+    /// in this frame only: every solution of the shortest length and of the
+    /// next `extra` lengths, at most `limit` per first move and length.
+    /// For cubes whose centres move like these, such as the outer x centres
+    /// and the oblique pairs of a 6x6x6.
+    pub fn phase_a(&self, x: u32, t: u32, extra: usize, limit: usize, deadline: Option<Instant>) -> Vec<Vec<u8>> {
+        let h = self.ax[x as usize].max(self.at[t as usize]) as usize;
+        let stop = AtomicBool::new(false);
+        let mut all = Vec::new();
+        let mut optimum = None;
+        for depth in h..=h + 12 {
+            if optimum.is_some_and(|o| depth > o + extra) || stop.load(Relaxed) {
+                break;
+            }
+            if depth == 0 {
+                all.push(Vec::new());
+                optimum = Some(0);
+                continue;
+            }
+            let cut = if optimum.is_some() { deadline } else { None };
+            let found: Vec<Vec<u8>> = (0..36u8)
+                .into_par_iter()
+                .flat_map_iter(|m| {
+                    let mut out = Vec::new();
+                    let (a, b) = (self.bx.apply(m, x), self.bt.apply(m, t));
+                    if self.ax[a as usize].max(self.at[b as usize]) as usize <= depth - 1 {
+                        let mut path = [0u8; 32];
+                        path[0] = m;
+                        let mut ctx = Ctx { out: &mut out, limit, nodes: 0, stop: &stop, deadline: cut };
+                        self.dfs_a(a, b, depth - 1, m, 1, &mut path, &mut ctx);
+                    }
+                    out
+                })
+                .collect();
+            if !found.is_empty() && optimum.is_none() {
+                optimum = Some(depth);
+            }
+            all.extend(found);
+        }
+        all
+    }
+
+    /// An optimal phase B from the positions of the U/D centres among the
+    /// sixteen places on U, D, F and B (x orbit, t orbit) and the parity of
+    /// the wing permutation.
+    pub fn phase_b(&self, x_ud: u32, t_ud: u32, odd: bool) -> Vec<u8> {
+        let mut idx = (self.ranks.rank16[x_ud as usize] as usize * N_UD + self.ranks.rank16[t_ud as usize] as usize) * 2
+            + odd as usize;
+        let mut out = Vec::new();
+        while self.b[idx] > 0 {
+            let (x, t, p) = (idx / 2 / N_UD, idx / 2 % N_UD, idx % 2);
+            let next = B_MOVES.iter().enumerate().find_map(|(k, &m)| {
+                let j = (self.x_mv[x][k] as usize * N_UD + self.t_mv[t][k] as usize) * 2 + (p ^ flips_parity(m) as usize);
+                (self.b[j] + 1 == self.b[idx]).then_some((m, j))
+            });
+            let (m, j) = next.expect("the phase-B table is consistent");
+            out.push(m);
+            idx = j;
+        }
+        out
+    }
+
     fn dfs_a(&self, x: u32, t: u32, rem: usize, last: u8, depth: usize, path: &mut [u8; 32], ctx: &mut Ctx) -> bool {
         if rem == 0 {
             // The last move was checked to reach the goal.

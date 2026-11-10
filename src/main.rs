@@ -22,6 +22,7 @@ fn main() {
         Some("facelets") => facelets(&args[1..]),
         Some("verify") => verify(&args[1..]),
         Some("scrambles") => scrambles(&args[1..]),
+        Some("stage6") => stage6(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
@@ -685,4 +686,44 @@ fn scrambles(args: &[String]) {
         }
         println!("{}", names.join(" "));
     }
+}
+
+/// 6x6x6 centre staging on a scramble file: lengths and times per step.
+fn stage6(args: &[String]) {
+    use cubenxnxn::stage6::Stage6;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (limit, width) = (num("--limit", usize::MAX), num("--width", 8));
+    let t0 = Instant::now();
+    let s5 = cubenxnxn::stage5::Stage5::load();
+    let s6 = Stage6::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let (mut sums, mut total, mut ms, mut n) = ([0usize; 4], 0usize, 0.0, 0usize);
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = s6.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = s6.g.solved();
+        s6.g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let found = s6.stage(&s5, &f, width);
+        ms += t.elapsed().as_secs_f64() * 1e3;
+        let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
+        s6.g.apply_seq(&mut f, &best.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !s6.is_staged(&f) {
+            fail(&format!("cube {}: the result is not staged", n));
+        }
+        for k in 0..4 {
+            sums[k] += best.lens[k];
+        }
+        total += best.moves.len();
+        n += 1;
+    }
+    let nf = n as f64;
+    println!("staged the centres of {} cubes, every result verified", n);
+    println!(
+        "mean length {:.2}  (steps {})",
+        total as f64 / nf,
+        sums.iter().map(|&s| format!("{:.2}", s as f64 / nf)).collect::<Vec<_>>().join(" + ")
+    );
+    println!("mean time {:.0} ms", ms / nf);
 }

@@ -276,3 +276,39 @@ two-phase staging gives 17 for that cube in 0.1 s. Dropping branches when the
 moves left are fewer than the larger distance plus a share of the smaller
 (6/16 to 10/16) found nothing under 17 in 20 s on any of 8 cubes. One cube is
 not a mean; the search is too slow to measure more.
+
+## dwalton76 on our scramble sets (2026-11-10)
+
+His solver at commit of Horia's local copy, run with the lookup tables
+already on this machine; every solution checked on the sticker model. Files:
+`dwalton444-results.tsv` and so on (cube, length, seconds, solution).
+
+| Size | Cubes | dwalton76 mean length | Mean time | Ours on the same cubes |
+|---|---|---|---|---|
+| 4x4x4 | first 100 | 51.71 | 1.6 s | 40.6 (default, mean of all 1,000) |
+| 5x5x5 | first 40 | 79.78 | 4.6 s | 68.67 (default) |
+| 6x6x6 | first 10 | 136.10 | 43 s | not yet |
+| 7x7x7 | first 10 | 194.40 | 9.4 s | not yet |
+
+The table in his README (4x4x4 51.6, 5x5x5 78.9, 6x6x6 135.7, 7x7x7 193.8)
+is captioned as moves "to reduce the cube to a 3x3x3", with about 20 more
+for the 3x3x3. These runs show the numbers are totals: a 52-move 4x4x4
+solution of his is 32 moves of reduction and 20 of 3x3x3.
+
+## 6x6x6: centre staging (2026-11-10)
+
+`cubenxnxn stage6 bench/scrambles666-100.txt --limit 20`: every centre of the
+four orbits on a face of its own axis, both wing orbits even; every result
+checked on the sticker model. dwalton76 spends about 38 moves on the same job
+(his own figure for the four phases, from comments in his code).
+
+| Version | Steps | Total | Mean time |
+|---|---|---|---|
+| six steps, obliques staged orbit by orbit | 6.2 + 10.4 + 9.0 + 5.6 + 10.6 + 8.8 | 50.6 | 2.9 s |
+| U/D obliques paired with an exact table instead | 6.3 + 10.6 + 8.9 + 5.8 + 5.1 + 9.9 | 46.6 | 12 s |
+| R/L inner x and oblique pairing in one search | 8.8 + 10.0 + 5.5 + 5.5 + 9.3 | 39.2 | 0.46 s |
+| U/D inner x, parity and pairing in one search, width 4 | 9.05 + 9.85 + 8.25 + 9.40 | 36.55 | 0.48 s |
+| the same, width 32 | 9.05 + 9.45 + 8.10 + 9.05 | 35.65 | 2.2 s |
+
+Staging the R/L inner x centres and both oblique orbits in one search with
+the three exact orbit tables as bound did not finish one cube in ten minutes.

@@ -6,8 +6,11 @@
 //! 4x4x4, and a t centre (on the middle column of an odd cube) like the t
 //! centres of a 5x5x5, so their positions are numbered the same way here
 //! and the tables of those cubes apply unchanged. Oblique centres come in
-//! mirror pairs: `(r, c)` and the cell next to it across the middle of the
-//! row, `(r, n - 1 - c)`.
+//! mirror pairs: `(r, c)` and its mate across the middle of the row,
+//! `(r, n - 1 - c)`. Turns that reach no deeper than row `r` move the two
+//! mates together, and move them as the t centre between them would move;
+//! oblique orbits are numbered like t centres too, so that a centre and its
+//! mate have the same number.
 
 use crate::c5::tables5;
 use crate::cube::tables as cube_tables;
@@ -89,36 +92,39 @@ fn orbit(g: &Geometry, kind: Kind, cell: (usize, usize)) -> CentreOrbit {
             })
             .collect()
     };
-    // Renumber x and t orbits like the pieces they move like.
-    let reference: Option<&[[u8; 24]]> = match kind {
-        Kind::X => Some(&cube_tables().ct_src),
-        Kind::T => Some(&tables5().t_src),
-        Kind::Oblique => None,
+    // Renumber the orbit like the pieces it moves like.
+    let reference: &[[u8; 24]] = match kind {
+        Kind::X => &cube_tables().ct_src,
+        Kind::T | Kind::Oblique => &tables5().t_src,
     };
-    if let Some(reference) = reference {
-        let raw = destinations(&src_of(&facelet));
-        let like = destinations(reference);
-        // A turn of `layers` layers reaches the orbit's nearest slice or it does not.
-        let pairs: Vec<(usize, usize)> = (0..g.move_count())
-            .map(|m| {
-                let (face_power, layers) = (m % 18, m / 18 + 1);
-                (m, face_power + if layers > cell.0 { 18 } else { 0 })
-            })
-            .collect();
-        let found = conjugators(24, &pairs, &|m, x| raw[m][x] as usize, &|m, x| like[m][x] as usize, &[]);
-        let p = found
-            .into_iter()
-            .find(|p| {
-                let map = MaskMap::new(p);
-                map.apply(0x0000FF) == 0x0000FF && map.apply(0x00FF00) == 0x00FF00
-            })
-            .expect("the orbit moves like its model");
-        let mut renumbered = [0usize; 24];
-        for i in 0..24 {
-            renumbered[p[i] as usize] = facelet[i];
-        }
-        facelet = renumbered;
+    let raw = destinations(&src_of(&facelet));
+    let like = destinations(reference);
+    // A turn of `layers` layers reaches the orbit's nearest slice or it does not.
+    // An oblique is compared only under the turns that do not reach its second slice.
+    let deepest = if kind == Kind::Oblique { cell.1.min(n - 1 - cell.1) } else { n };
+    let pairs: Vec<(usize, usize)> = (0..g.move_count())
+        .filter(|m| m / 18 + 1 <= deepest)
+        .map(|m| {
+            let (face_power, layers) = (m % 18, m / 18 + 1);
+            (m, face_power + if layers > cell.0 { 18 } else { 0 })
+        })
+        .collect();
+    // The first raw position is the naming cell on U, in the row nearest B,
+    // like the first t centre. Pinning it there gives mates the same numbers.
+    let fixed: &[(usize, usize)] = if kind == Kind::Oblique { &[(0, 0)] } else { &[] };
+    let found = conjugators(24, &pairs, &|m, x| raw[m][x] as usize, &|m, x| like[m][x] as usize, fixed);
+    let p = found
+        .into_iter()
+        .find(|p| {
+            let map = MaskMap::new(p);
+            map.apply(0x0000FF) == 0x0000FF && map.apply(0x00FF00) == 0x00FF00
+        })
+        .expect("the orbit moves like its model");
+    let mut renumbered = [0usize; 24];
+    for i in 0..24 {
+        renumbered[p[i] as usize] = facelet[i];
     }
+    facelet = renumbered;
     let src = src_of(&facelet);
     CentreOrbit { kind, cell, facelet, src }
 }
@@ -151,6 +157,22 @@ mod tests {
                     let like = m % 18 + if m / 18 + 1 > o.cell.0 { 18 } else { 0 };
                     assert_eq!(o.src[m], reference[like], "size {} cell {:?} move {}", n, o.cell, m);
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn oblique_mates_share_numbers() {
+        for n in [6usize, 7] {
+            let g = Geometry::new(n);
+            let obliques: Vec<CentreOrbit> = centre_orbits(&g).into_iter().filter(|o| o.kind == Kind::Oblique).collect();
+            assert_eq!(obliques.len(), 2);
+            for i in 0..24 {
+                let (a, b) = (obliques[0].facelet[i], obliques[1].facelet[i]);
+                let (ra, ca, rb, cb) = (a / n % n, a % n, b / n % n, b % n);
+                assert_eq!(a / (n * n), b / (n * n), "same face");
+                // Mirror images across the middle of their row or column.
+                assert!((ra == rb && ca + cb == n - 1) || (ca == cb && ra + rb == n - 1), "size {} position {}", n, i);
             }
         }
     }

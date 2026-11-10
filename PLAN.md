@@ -249,6 +249,14 @@ toate centrele se comportă ca centrele unui 4x4x4.
 Estimare: ~37 + ~13 + ~23 + ~50 ≈ 120–125 de mutări. E o estimare, nu o
 măsurătoare.
 
+**Stadiu (2026-11-10):** pasul 1 e scris și verificat (`src/stage6.rs`):
+36,55 de mutări în 0,48 s, față de ~38 la dwalton76. A ieșit în patru
+căutări, nu cum scrie mai sus: (a) x interior R/L pe fețe și oblicii R/L
+împerecheați, toate mutările; (b) faza A de la 5x5x5 pe cubul virtual;
+(c) x interior U/D, paritatea wings interioare și oblicii U/D împerecheați;
+(d) faza B de la 5x5x5. Împerecherea în loc de așezare a adus 14 mutări.
+Pașii 2–4 urmează.
+
 **7x7x7** urmează aceeași schemă: 5x5x5 virtual din straturile 1, 3, 4, 5, 7
 pentru interior, tripletele oblic–t–oblic în locul perechilor, apoi 5x5x5
 virtual din straturile 1, 2, 4, 6, 7.
