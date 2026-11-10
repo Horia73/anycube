@@ -16,6 +16,7 @@
 use crate::c3::{perm_rank, perm_unrank, T3};
 use crate::c5::{tables5, Cube5};
 use crate::cube::{skip_move, tables as cube_tables};
+use crate::sym::{axis_move_maps, closure, conjugators, destinations, MaskMap};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
@@ -27,7 +28,6 @@ pub const H_MOVES: [u8; 24] =
 
 const N_MASK: usize = 2_704_156; // 12 of 24
 const N_FLIP: usize = 2048;
-const N_C: usize = N_MASK * N_FLIP;
 const LOW_HALF: u32 = 0x000FFF;
 const UNSEEN: u8 = 15;
 
@@ -109,112 +109,127 @@ fn nib_set(bytes: &[AtomicU8], idx: usize, v: u8) -> bool {
     }
 }
 
-/// Phase C: moves until the low-labelled wings fill the low half and the
-/// (labelled) middle edges are unflipped, for every (wing mask, flip) pair.
-/// Four bits per entry, 2.77 GB; exact up to 14 moves.
-fn gen_c(bw: &BitPerm, flip_mv: &[[u16; 18]], rk: &MaskRank) -> Vec<u8> {
-    let bytes: Vec<AtomicU8> = {
-        let mut v = vec![0xFFu8; N_C / 2];
-        let p = v.as_mut_ptr() as *mut AtomicU8;
-        let (len, cap) = (v.len(), v.capacity());
-        std::mem::forget(v);
-        // AtomicU8 has the same layout as u8.
-        unsafe { Vec::from_raw_parts(p, len, cap) }
-    };
-    let goal = rk.rank(LOW_HALF) * N_FLIP;
-    nib_set(&bytes, goal, 0);
-    let mut done = 1u64;
-    let mut depth = 0u8;
-    let mut frontier: Vec<u64> = vec![goal as u64];
-    // Push from explicit frontiers while they are small.
-    while !frontier.is_empty() {
-        let keep = frontier.len() <= 3_000_000;
-        let next: Vec<(Vec<u64>, u64)> = frontier
-            .par_chunks(4096)
-            .map(|chunk| {
-                let (mut out, mut n) = (Vec::new(), 0u64);
-                for &x in chunk {
-                    let (mask, flip) = (rk.unrank[x as usize / N_FLIP], x as usize % N_FLIP);
-                    for &m in &H_MOVES {
-                        let y = rk.rank(bw.apply(m, mask)) * N_FLIP + flip_mv[flip][m as usize % 18] as usize;
-                        if nib_set(&bytes, y, depth + 1) {
-                            n += 1;
-                            if keep {
-                                out.push(y as u64);
-                            }
-                        }
-                    }
-                }
-                (out, n)
-            })
-            .collect();
-        let n: u64 = next.iter().map(|p| p.1).sum();
-        frontier = next.into_iter().flat_map(|p| p.0).collect();
-        depth += 1;
-        done += n;
-        eprintln!("  5x5x5 phase C table: depth {:2}  {:>10} new  {:>10} total", depth, n, done);
-        if !keep {
-            break;
+/// The symmetries of phase C: for each, where a set of wing positions goes
+/// (a permutation, then perhaps the complement) and where a flip coordinate goes.
+struct CSym {
+    wings: MaskMap,
+    complement: bool,
+    flips: Vec<u16>,
+}
+
+impl CSym {
+    #[inline(always)]
+    fn mask(&self, mask: u32) -> u32 {
+        let x = self.wings.apply(mask);
+        if self.complement {
+            !x & 0xFF_FFFF
+        } else {
+            x
         }
     }
-    drop(frontier);
-    // Then pull: every unseen state looks for a neighbour at the current depth.
-    // A couple of thousand states need 15 moves; they are stored as 14, which
-    // keeps the table a lower bound.
-    while done < N_C as u64 && depth < UNSEEN - 1 {
-        let n: u64 = (0..N_MASK)
+}
+
+/// Every map of (wing mask, flip) that commutes with the moves of phase C
+/// up to renaming them and keeps the goal in place. Besides the sixteen
+/// symmetries of the cube that keep the R/L axis, the two wings of every
+/// edge can change places.
+fn c_symmetries(flip_mv: &[[u16; 18]]) -> Vec<CSym> {
+    let dest = destinations(&cube_tables().ep_src);
+    let mut generators = Vec::new();
+    for mu in axis_move_maps() {
+        let flips = conjugators(N_FLIP, &H_MOVES, &mu, &|m, f| flip_mv[f][m as usize % 18] as usize, &[(0, 0)]);
+        let Some(flips) = flips.into_iter().next() else { continue };
+        for wings in conjugators(24, &H_MOVES, &mu, &|m, p| dest[m as usize][p] as usize, &[]) {
+            let image = MaskMap::new(&wings).apply(LOW_HALF);
+            let complement = match image {
+                LOW_HALF => vec![0, 1],
+                x if x == !LOW_HALF & 0xFF_FFFF => vec![1, 0],
+                _ => continue,
+            };
+            generators.push(vec![wings, flips.clone(), complement]);
+        }
+    }
+    closure(&generators)
+        .into_iter()
+        .map(|e| CSym {
+            wings: MaskMap::new(&e[0]),
+            complement: e[2][0] == 1,
+            flips: e[1].iter().map(|&f| f as u16).collect(),
+        })
+        .collect()
+}
+
+/// For every wing mask, by rank: its class and the symmetry that takes it to
+/// the class's representative, as `class << 6 | symmetry`.
+fn c_classes(syms: &[CSym], rk: &MaskRank) -> Vec<u32> {
+    let best: Vec<(u32, u32)> = (0..N_MASK)
+        .into_par_iter()
+        .map(|r| {
+            let mask = rk.unrank[r];
+            syms.iter().enumerate().map(|(s, sym)| (sym.mask(mask), s as u32)).min().unwrap()
+        })
+        .collect();
+    let mut reps: Vec<u32> = best.iter().map(|b| b.0).collect();
+    reps.sort_unstable();
+    reps.dedup();
+    best.par_iter().map(|&(rep, s)| (reps.binary_search(&rep).unwrap() as u32) << 6 | s).collect()
+}
+
+/// Phase C: moves until the low-labelled wings fill the low half and the
+/// (labelled) middle edges are unflipped, for every (class of wing masks,
+/// flip) pair. Four bits per entry; 15 stands for the few states that need
+/// 15 moves.
+fn gen_c_sym(bw: &BitPerm, flip_mv: &[[u16; 18]], rk: &MaskRank, syms: &[CSym], cls: &[u32]) -> Vec<u8> {
+    let n_cls = cls.iter().map(|&c| c >> 6).max().unwrap() as usize + 1;
+    // Representative of each class and the symmetries that keep it in place.
+    let mut reps = vec![0u32; n_cls];
+    for (r, &c) in cls.iter().enumerate() {
+        reps[(c >> 6) as usize] = syms[(c & 63) as usize].mask(rk.unrank[r]);
+    }
+    let stab: Vec<u64> = reps
+        .par_iter()
+        .map(|&x| syms.iter().enumerate().filter(|(_, s)| s.mask(x) == x).fold(0u64, |a, (i, _)| a | 1 << i))
+        .collect();
+    let bytes: Vec<AtomicU8> = (0..n_cls * N_FLIP / 2).into_par_iter().map(|_| AtomicU8::new(0xFF)).collect();
+    // Sets a state and its images under the symmetries that keep its class representative.
+    let set = |c: usize, f: usize, v: u8| -> u64 {
+        let mut n = 0;
+        let mut st = stab[c];
+        while st != 0 {
+            let s = st.trailing_zeros() as usize;
+            st &= st - 1;
+            n += nib_set(&bytes, c * N_FLIP + syms[s].flips[f] as usize, v) as u64;
+        }
+        n
+    };
+    let goal = cls[rk.rank(LOW_HALF)];
+    set((goal >> 6) as usize, syms[(goal & 63) as usize].flips[0] as usize, 0);
+    let mut done = 1u64;
+    for depth in 0..14u8 {
+        let n: u64 = (0..n_cls)
             .into_par_iter()
-            .with_min_len(64)
-            .map(|b| {
-                let base = b * N_FLIP;
-                let mut unseen: Vec<u16> = Vec::new();
+            .with_min_len(16)
+            .map(|c| {
+                let mut new = 0;
                 for f in 0..N_FLIP {
-                    if nib(&bytes, base + f) == UNSEEN {
-                        unseen.push(f as u16);
+                    if nib(&bytes, c * N_FLIP + f) != depth {
+                        continue;
+                    }
+                    for &m in &H_MOVES {
+                        let to = cls[rk.rank(bw.apply(m, reps[c]))];
+                        let g = syms[(to & 63) as usize].flips[flip_mv[f][m as usize % 18] as usize] as usize;
+                        new += set((to >> 6) as usize, g, depth + 1);
                     }
                 }
-                if unseen.is_empty() {
-                    return 0;
-                }
-                let mask = rk.unrank[b];
-                let mut found = 0u64;
-                for &m in &H_MOVES {
-                    let nb = rk.rank(bw.apply(m, mask)) * N_FLIP;
-                    let mut i = 0;
-                    while i < unseen.len() {
-                        let f = unseen[i] as usize;
-                        if nib(&bytes, nb + flip_mv[f][m as usize % 18] as usize) == depth {
-                            nib_set(&bytes, base + f, depth + 1);
-                            found += 1;
-                            unseen.swap_remove(i);
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    if unseen.is_empty() {
-                        break;
-                    }
-                }
-                found
+                new
             })
             .sum();
-        assert!(n > 0, "phase C table: unreachable states remain");
-        depth += 1;
         done += n;
-        eprintln!("  5x5x5 phase C table: depth {:2}  {:>10} new  {:>10} total", depth, n, done);
+        eprintln!("  5x5x5 phase C table: depth {:2}  {:>10} new  {:>10} total", depth + 1, n, done);
     }
-    eprintln!("  5x5x5 phase C table: {} states further than {} moves", N_C as u64 - done, depth);
-    bytes.par_iter().for_each(|cell| {
-        let mut x = cell.load(Relaxed);
-        if x & 15 == UNSEEN {
-            x -= 1;
-        }
-        if x >> 4 == UNSEEN {
-            x -= 16;
-        }
-        cell.store(x, Relaxed);
-    });
+    eprintln!("  5x5x5 phase C table: {} classes, {} entries further than 14 moves", n_cls, (n_cls * N_FLIP) as u64 - done);
     let mut v = std::mem::ManuallyDrop::new(bytes);
+    // AtomicU8 has the same layout as u8.
     unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
 }
 
@@ -257,7 +272,11 @@ pub struct Edges5 {
     bt: BitPerm,
     pub rk: MaskRank,
     rank8: [u8; 256],
+    /// Phase C: the table over (class of wing masks, flip), the class and
+    /// symmetry of every wing mask, and the flip maps of the symmetries.
     c: Bytes,
+    c_cls: Vec<u32>,
+    c_phi: Vec<Vec<u16>>,
     /// Phase C centres: moves until the R-vs-L patterns on the R and L faces
     /// are ones the later phases can finish, by (x pattern, t pattern).
     c_centres: Vec<u8>,
@@ -385,7 +404,17 @@ impl Edges5 {
         let bt = BitPerm::from_src(&tables5().t_src);
         let rk = MaskRank::new();
         let dir = table_dir();
-        let c = load_or_gen(&dir.join("phase3-555.bin"), N_C / 2, || gen_c(&bw, &t3.flip_mv, &rk));
+        let c_syms = c_symmetries(&t3.flip_mv);
+        let c_cls = load_or_gen(&dir.join("phase3-555-classes.bin"), N_MASK * 4, || {
+            c_classes(&c_syms, &rk).iter().flat_map(|x| x.to_le_bytes()).collect()
+        });
+        let c_cls: Vec<u32> = c_cls.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
+        let n_cls = c_cls.iter().map(|&c| c >> 6).max().unwrap() as usize + 1;
+        let c = load_or_gen(&dir.join("phase3-555-sym.bin"), n_cls * N_FLIP / 2, || {
+            eprintln!("  5x5x5 phase C: {} symmetries", c_syms.len());
+            gen_c_sym(&bw, &t3.flip_mv, &rk, &c_syms, &c_cls)
+        });
+        let c_phi: Vec<Vec<u16>> = c_syms.into_iter().map(|s| s.flips).collect();
         let mut rank8 = [255u8; 256];
         let mut n = 0;
         for x in 0..256usize {
@@ -775,7 +804,7 @@ impl Edges5 {
         let e_side = [e_side_table(&out_low_mv), e_side_table(&out_high_mv)];
 
         Edges5 {
-            t3, bw, bx, bt, rk, rank8, c, c_centres, out_low_mv, out_high_mv, e, ud_mv, side_id,
+            t3, bw, bx, bt, rk, rank8, c, c_cls, c_phi, c_centres, out_low_mv, out_high_mv, e, ud_mv, side_id,
             side_last, last_mv, e_centres, outer_index, rank1680, ml_mv, mh_mv, pq, fb_mv, rl_mv, p_centres,
             p_fb, p_rl, rl_id, n_rl, e_ud, e_side,
         }
@@ -784,8 +813,8 @@ impl Edges5 {
     /// Phase-C distance for a wing mask and a flip coordinate.
     #[inline(always)]
     pub fn c_dist(&self, mask: u32, flip: usize) -> u8 {
-        let idx = self.rk.rank(mask) * N_FLIP + flip;
-        (self.c[idx >> 1] >> ((idx & 1) * 4)) & 15
+        let cs = self.c_cls[self.rk.rank(mask)];
+        nibble(&self.c, (cs >> 6) as usize * N_FLIP + self.c_phi[(cs & 63) as usize][flip] as usize)
     }
 
     #[inline(always)]

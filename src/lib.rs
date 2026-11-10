@@ -13,4 +13,5 @@ pub mod opt3;
 pub mod solver;
 pub mod solver5;
 pub mod stage5;
+pub mod sym;
 pub mod tables;
