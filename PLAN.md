@@ -1,60 +1,117 @@
 # Plan: solver 4x4x4 cu soluții mai scurte decât TPR
 
-Actualizat: 2026-11-10. Țintă: medie de 35–40 de mutări (OBTM), sub 10 s pe cub pe M1 Pro.
+Actualizat: 2026-11-10. Țintă: medie cât mai aproape de 39 de mutări (OBTM).
 Cifrele măsurate sunt în `bench/RESULTS.md`.
 
 ## Unde suntem
 
-| Pas | Stare | Medie |
-|---|---|---|
-| Măsurătoare TPR pe setul de 1.000 | făcut | 44,57 |
-| Aceleași faze în Rust, mod rapid | făcut, cu 0,26 peste TPR | 44,84 |
-| Multe reduceri comparate după lungimea totală | făcut | 42,92 |
-| Fazele 1 și 2 unite, cu tabel exact pentru centre | făcut | ~41,0 |
-| Mai multe capete, căutare 3x3x3 adâncită pe cele mai bune reduceri | făcut | 40,67 pe toate cele 1.000 |
-| Limită de timp pe cub | făcut (`--time`, implicit 8 s) | |
-| Solver 3x3x3 exact | făcut și validat, oprit implicit | fără câștig la cost rezonabil |
-| Reduceri mai lungi, apropiate de subgrupul domino | făcut, oprit implicit | −0,07, în marja de zgomot |
+| Mod | Medie | Timp mediu | Măsurat pe |
+|---|---|---|---|
+| TPR (referință) | 44,57 | 0,15 s | 1.000 de cuburi |
+| `--mode fast` | 41,82 | 0,34 s | primele 100 |
+| implicit | 40,67 | 3,7 s | 1.000 de cuburi |
+| `--mode full` | vezi `bench/RESULTS.md` | ~14 s | primele 100 |
 
-## Ce am învățat
+## De ce nu am schimbat structura fazei 3
 
-1. **Unirea fazelor 1 și 2 a meritat.** Primul capăt apare la ~11,1 mutări în
-   loc de ~12,4, iar pe total câștigul e de ~0,8–1,2 mutări.
-2. **Etapa 3x3x3 e aproape de limită.** De 10 ori mai mult efort two-phase
-   aduce 0,2 mutări. Căutarea exactă costă ~1 s pentru o singură întrebare
-   „există soluție în 15?" și e de ~2.000 de ori mai scumpă pe rezultat util
-   decât two-phase. Un tabel de 10 ori mai rapid nu ar schimba concluzia.
-3. **Fiecare buget suplimentar aduce tot mai puțin.** De la 3.000 la 10.000 de
-   capete: −0,15. Încă un nivel de reduceri: −0,1 până la −0,2, la de 3 ori timpul.
-4. **Lungimile pe etape acum:** faza unită 12,78, faza 3 10,90, 3x3x3 17,00.
+Am verificat ideea prin numărarea stărilor, înainte să scriu cod. O fază cu
+`S` stări și `b` continuări utile pe mutare cere cam `ln S / ln b` mutări.
 
-Concluzie: cu structura actuală suntem pe la 40,6–40,8. Sub 40 cere încă o
-schimbare de structură, nu mai mult buget.
+| Etapă | Stări | Continuări utile | Estimat | Măsurat |
+|---|---|---|---|---|
+| Faza unită (toate mutările) | 1,5×10^14 | ~22 | 10,5 | 11,1 (primul capăt) |
+| Faza 3 (17 mutări permise) | 2,8×10^13 | ~12 | 12,4 | 12,4 (TPR, un singur capăt) |
+| 3x3x3 | 4,3×10^19 | ~13 | 17,5 | 17,7 (optim cunoscut) |
 
-## Ce ar mai putea aduce un câștig real
+- Suma dă ~40,6, adică exact unde suntem. Structura în trei etape e la limita ei.
+- Faza 3 pierde ~2,4 mutări fiindcă lucrează cu 12 continuări în loc de 22.
+- Dacă îi dau fazei 3 mai multe mutări, coordonata ei de împerechere dispare și
+  spațiul crește de la 2,4×10^8 la 3,2×10^11. Faza ar prelua muncă din faza
+  liberă și totalul ar ieși mai lung, nu mai scurt.
+- Singura cale de a recupera cele 2,4 mutări e ca reducerea să fie o singură
+  fază liberă, iar pentru ea nu există un prag de căutare suficient de bun.
 
-Estimările sunt presupuneri, nu măsurători.
+## Ce am încercat după 40,67
 
-**A. Faza 3 cu mai multe mutări permise.**
-Faza 3 folosește doar 17 mutări și are ~11 mutări în medie. Dacă ținta fazei
-unite ar fi mai slabă, iar faza 3 ar primi și sferturile de tură R/L, ar scădea
-ambele. Coordonata de împerechere de acum nu mai e definită atunci, deci cere
-o coordonată nouă și, probabil, un tabel mult mai mare.
+| Idee | Rezultat |
+|---|---|
+| Capete și reduceri fără mutare finală redundantă | corect logic, fără câștig măsurabil |
+| Tabel 3x3x3 mai puternic (53 de miliarde de clase, 1,7 GB) | căutarea exactă de ~5 ori mai rapidă |
+| Căutare exactă 3x3x3 peste lot, până la 16 mutări | −0,4 la ~10 s în plus (modul full) |
 
-**B. Pruning pe muchii în faza unită.**
-Acum doar 1 din ~20.000 de secvențe care așază centrele trece și testele de
-muchii. Un prag admisibil pe muchii ar permite un nivel în plus în același timp.
+## Cât de departe e 39
 
-**C. Faza unită care ține cont de faza 3.**
-Capetele se aleg acum după o estimare a fazei 3 care e cu ~1,5 mutări sub
-realitate. O estimare mai strânsă ar alege capete mai bune.
+Pe aceleași cuburi, lotul de reduceri conține rar un 3x3x3 de 15 mutări
+(2,5 la mie din stări) și destul de des unul de 16 (3%). Căutarea exactă îl
+găsește pe cel de 16, dar o întrebare „există soluție în 16?" costă ~2 s.
+
+- **~40,2** e atins de modul full, în ~14 s.
+- **~39,8** ar cere loturi de 10 ori mai mari sau o căutare exactă de 10 ori
+  mai rapidă. Fiecare factor de 13 în viteză aduce cam o treime de mutare.
+- **39** cere o idee nouă. Nu o am încă și nu vreau să promit.
+
+Idei rămase, în ordinea în care le-aș încerca:
+
+1. Prag de căutare 3x3x3 pe starea inversă (maximul din 6 tabele în loc de 3):
+   de 2–3 ori mai puține noduri.
+2. Pruning pe muchii în faza unită: un nivel în plus în același timp, ~−0,2.
+3. Tabel de împerechere pentru 4–5 perechi sub toate mutările, ca faza liberă
+   să poată cere „k perechi deja făcute": −0,5 estimat, muncă multă.
+
+## Viteză
+
+Unde se duce timpul în modul implicit: faza unită ~40%, faza 3 ~25%, 3x3x3 ~35%.
+
+| Pas | Câștig așteptat |
+|---|---|
+| Tabelele mici salvate pe disc (acum se refac la fiecare pornire) | pornire din ~0,5 s în ~0,05 s |
+| Urmărirea muchiilor în faza unită, în loc de reaplicarea secvenței la capăt | faza unită de ~1,5 ori mai rapidă |
+| Tabel de împerechere redus prin simetrie (240 MB → 30 MB, în cache) | faza 3 de ~2 ori mai rapidă |
+| Mod fără tabelul de centre (fazele 1 și 2 separate) | 3 MB de tabele în loc de 4,9 GB |
+| Proces rezident sau bibliotecă, pentru rezolvări în serie | fără cost de pornire |
+
+## Moduri
+
+- **fast** (~0,3 s): fază unită mică, fără adâncire 3x3x3. Există.
+- **normal** (~4 s): implicitul de acum.
+- **full** (~14 s): implicit plus căutare exactă 3x3x3. Există.
+- De făcut: un mod **tiny**, fără tabelele mari, pentru mașini cu puțină memorie.
+
+## Spre NxNxN
+
+Ce se generalizează și ce nu:
+
+- **Se păstrează:** etapa 3x3x3 (two-phase și exact), ideea de lot de reduceri
+  comparat după lungimea totală, variantele de orientare, limita de timp.
+- **Se rescrie:** modelul de cub și fazele de reducere. Acum sunt scrise de
+  mână pentru 4x4x4, după numerotarea TPR.
+
+Pași propuși:
+
+1. **Model generic.** Piesele pe orbite (colțuri, muchii centrale, perechi de
+   wings, orbite de centre), cu mutările generate din geometrie, nu din liste.
+2. **5x5x5.** Are două orbite de centre de câte 24 (ca la 4x4x4), 24 de wings
+   și 12 muchii centrale care fixează orientarea. Fără paritatea de la 4x4x4.
+3. **6x6x6 și 7x7x7.** Apar centrele oblice; aici dwalton76 e singura referință.
+4. **N general.** Reducere pe orbite, cu tabele doar pentru orbitele mici.
+
+Avertisment: tabelul exact de centre (9,5 miliarde de stări) e posibil doar
+pentru o orbită. La 5x5x5 sunt două orbite care trebuie rezolvate împreună,
+deci va fi nevoie de alte faze, nu doar de tabele mai mari.
+
+## Despre tabelele lui dwalton76
+
+Pentru 4x4x4 are opt tabele cu între 840 și 5,9 milioane de rânduri, ca text:
+fiecare rând e o stare și secvența care o rezolvă. Sunt mari pe disc din cauza
+formatului, nu a numărului de stări. Gigabiții sunt mai ales pentru 5x5x5–7x7x7.
+Ale noastre țin 2 biți pe stare (distanța modulo 3) și acoperă spații de până
+la 9,5 miliarde de stări; de aici vine diferența de lungime, nu din mărime.
 
 ## Riscuri
 
-- Sub 40 nu pot promite. 35 e aproape de limita inferioară teoretică.
-- Tabelele ocupă 3,2 GB pe disc, iar cel de centre se generează în ~2 minute.
-- Limita de timp e „moale": fiecare etapă își așteaptă primul rezultat, deci
-  un cub greu poate depăși limita.
+- Tabelele ocupă 4,9 GB pe disc și se generează în ~4 minute la prima rulare.
+- Limita de timp e „moale": fiecare etapă își așteaptă primul rezultat.
+- Rezultatele variază cu câteva sutimi între rulări, din cauza paralelismului.
 
 ## Surse
 

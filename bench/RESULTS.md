@@ -101,3 +101,27 @@ cubes, longer on none.
 
 Time per solve: mean 3.67 s, median 3.30 s, 99th percentile 8.07 s, max
 9.07 s. 12 cubes took more than the 8 s soft limit, none more than 10 s.
+
+## Modes and the exact 3x3x3 search (2026-11-10)
+
+| Mode | Cubes | Mean length | Mean time | Max time |
+|---|---|---|---|---|
+| `--mode fast` | first 100 | 41.82 | 0.34 s | 0.98 s |
+| default | all 1,000 | 40.67 | 3.67 s | 9.07 s |
+| `--exact 25 --exact-cap 16` | first 24 | 40.54 | 9.8 s | 13.5 s |
+| `--exact 100 --exact-cap 16 --time 30000` (`--mode full`) | first 24 | 40.25 | 13.7 s | 23.1 s |
+
+Exact 3x3x3 search, "is there a solution of at most 15 moves?" on random cubes:
+
+| Lower bound | Nodes | Time |
+|---|---|---|
+| distance to the domino subgroup (`phase1-exact.bin`) | 0.7–2.2 million | 0.5–1.4 s |
+| distance to "no twist, no flip, slice edges in place" (`slice-exact.bin`) | 0.08–0.24 million | 0.10–0.25 s |
+
+A full exact scan of the default pool up to 15 moves found nothing better than
+the two-phase search on any of the first 8 cubes (pools of 8 to 265
+reductions): 15-move 3x3x3 states are too rare for pools this small. Scanning
+up to 16 moves is what pays, and that costs about 2 s per reduction.
+
+Dropping endpoints and reductions whose last move the next stage could make
+itself changed nothing measurable (40.73 against 40.67 on the first 30 cubes).

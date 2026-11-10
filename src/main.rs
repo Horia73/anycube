@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cube444 solve <moves...> [search flags]   solve a scramble given as moves\n  cube444 solve --state <96 facelets> [search flags]   solve a cube given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]"
+        "usage:\n  cube444 solve <moves...> [search flags]   solve a scramble given as moves\n  cube444 solve --state <96 facelets> [search flags]   solve a cube given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -60,7 +60,12 @@ fn fail(msg: &str) -> ! {
 }
 
 fn params(args: &[String]) -> Params {
-    let mut p = Params::default();
+    let mut p = match opt(args, "--mode") {
+        None | Some("normal") => Params::default(),
+        Some("fast") => Params::fast(),
+        Some("full") => Params::full(),
+        Some(_) => usage(),
+    };
     let num = |name: &str| opt(args, name).map(|s| s.parse::<usize>().unwrap_or_else(|_| usage()));
     if let Some(v) = num("--n1") {
         p.n1 = v;
@@ -218,14 +223,14 @@ fn bench(args: &[String]) {
 
 /// Development aid: speed of the exact 3x3x3 search on random outer-move scrambles.
 fn probe333(args: &[String]) {
-    use cube444::big1::Big1;
+    use cube444::big2::Big2;
     use cube444::c3::{C3, T3};
     use cube444::opt3::{Opt3, Outcome};
     use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
     let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(10);
     let max_len: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(15);
     let t = T3::new();
-    let big = Big1::load(&t);
+    let big = Big2::load(&t);
     let o = Opt3::new(&t, &big);
     let mut seed = 12345u64;
     let mut rnd = || {

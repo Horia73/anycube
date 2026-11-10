@@ -1,15 +1,17 @@
 //! Exact 3x3x3 search with a length limit: finds the shortest solution of at
-//! most `max_len` moves, or proves there is none. IDA* with the exact
-//! distance to the domino subgroup along all three axes as lower bound.
+//! most `max_len` moves, or proves there is none. IDA* whose lower bound is
+//! the exact distance, along each of the three axes, to the subgroup with
+//! untwisted corners, unflipped edges and the four slice edges in place.
 
 use crate::big1::Big1;
+use crate::big2::Big2;
 use crate::c3::{C3, T3};
 use crate::cube::{skip_move, tables as cube_tables};
 use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
 
 pub struct Opt3<'a> {
     t: &'a T3,
-    big: &'a Big1,
+    big: &'a Big2,
     /// Per axis: the move seen from that axis' frame.
     axis_move: [[u8; 18]; 3],
 }
@@ -34,7 +36,7 @@ struct Ctx<'a> {
 }
 
 impl<'a> Opt3<'a> {
-    pub fn new(t: &'a T3, big: &'a Big1) -> Opt3<'a> {
+    pub fn new(t: &'a T3, big: &'a Big2) -> Opt3<'a> {
         let ct = cube_tables();
         let mut axis_move = [[0u8; 18]; 3];
         for (a, (r, _, _)) in t.frames.iter().enumerate() {
@@ -51,29 +53,12 @@ impl<'a> Opt3<'a> {
         let mut st = [[0u16; 3]; 3];
         let mut d = [0u8; 3];
         for (a, (_, rinv, rot)) in self.t.frames.iter().enumerate() {
-            let (tw, fl, sl) = self.t.coords(&rinv.mul(cube).mul(rot));
-            st[a] = [tw as u16, fl as u16, sl as u16];
-            d[a] = self.big.exact(self.t, tw, fl, sl);
+            let c = rinv.mul(cube).mul(rot);
+            let (tw, fl, ss) = (c.twist(), c.flip(), self.big.ss(self.t, &c));
+            st[a] = [tw as u16, fl as u16, ss as u16];
+            d[a] = self.big.exact(self.t, tw, fl, ss);
         }
         Root { cube: *cube, st, d }
-    }
-
-    /// Smallest exact distance to a domino subgroup over the three axes, or
-    /// `None` if it is above `cap` on every axis.
-    pub fn domino_distance(&self, cube: &C3, cap: u8) -> Option<u8> {
-        let mut best = None;
-        for (_, rinv, rot) in &self.t.frames {
-            let (tw, fl, sl) = self.t.coords(&rinv.mul(cube).mul(rot));
-            // The small tables give a lower bound without touching the big one.
-            if self.t.h1(tw, fl, sl) > cap {
-                continue;
-            }
-            let d = self.big.exact(self.t, tw, fl, sl);
-            if d <= cap && best.is_none_or(|b| d < b) {
-                best = Some(d);
-            }
-        }
-        best
     }
 
     /// Shortest solution with `min_len..=max_len` moves, assuming none is shorter than `min_len`.
@@ -93,6 +78,24 @@ impl<'a> Opt3<'a> {
         }
         Outcome::None
     }
+}
+
+/// Smallest exact distance to a domino subgroup over the three axes, or
+/// `None` if it is above `cap` on every axis.
+pub fn domino_distance(t: &T3, big: &Big1, cube: &C3, cap: u8) -> Option<u8> {
+    let mut best = None;
+    for (_, rinv, rot) in &t.frames {
+        let (tw, fl, sl) = t.coords(&rinv.mul(cube).mul(rot));
+        // The small tables give a lower bound without touching the big one.
+        if t.h1(tw, fl, sl) > cap {
+            continue;
+        }
+        let d = big.exact(t, tw, fl, sl);
+        if d <= cap && best.is_none_or(|b| d < b) {
+            best = Some(d);
+        }
+    }
+    best
 }
 
 pub struct Root {
@@ -135,10 +138,10 @@ impl Ctx<'_> {
                 let c = [
                     t.twist_mv[st[a][0] as usize][mm],
                     t.flip_mv[st[a][1] as usize][mm],
-                    t.slice_mv[st[a][2] as usize][mm],
+                    big.ss_mv[st[a][2] as usize][mm],
                 ];
                 // The neighbour is at distance d-1, d or d+1; the table says which, modulo 3.
-                let v = big.get(Big1::index(c[0] as usize, c[1] as usize, c[2] as usize));
+                let v = big.get(big.index(c[0] as usize, c[1] as usize, c[2] as usize));
                 nd[a] = d[a] + (v + 3 - (d[a] + 2) % 3) % 3 - 1;
                 if nd[a] > limit {
                     continue 'moves;
@@ -185,10 +188,10 @@ mod tests {
     use crate::cube::{parse_moves, Cube};
 
     #[test]
-    #[ignore = "needs the 554 MB exact table"]
+    #[ignore = "needs the 1.7 GB slice table"]
     fn finds_optimal_solutions() {
         let t = T3::new();
-        let big = Big1::load(&t);
+        let big = Big2::load(&t);
         let o = Opt3::new(&t, &big);
         let budget = AtomicI64::new(i64::MAX);
         for (scr, opt) in [("U", 1), ("R U R' U'", 4), ("F R U' B2 L D F' R2 U B D2", 11)] {

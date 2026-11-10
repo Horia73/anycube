@@ -6,9 +6,10 @@
 //! fixed phase definitions apply. Solutions are mapped back at the end.
 
 use crate::big1::Big1;
+use crate::big2::Big2;
 use crate::ctab::{Ctab, Near};
 use crate::c3::{C3, T3};
-use crate::opt3::{Opt3, Outcome, Root};
+use crate::opt3::{domino_distance, Opt3, Outcome, Root};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 use crate::tables::*;
 use rayon::prelude::*;
@@ -77,6 +78,27 @@ impl Default for Params {
     }
 }
 
+impl Params {
+    /// About 0.4 s per cube on an M1 Pro.
+    pub fn fast() -> Params {
+        Params {
+            n2: 300,
+            k3: 300,
+            joint_nodes: 20_000_000,
+            probes333: 1000,
+            refine: 1,
+            n3: 200,
+            time_limit_ms: 1000,
+            ..Params::default()
+        }
+    }
+
+    /// About 14 s per cube: the default plus an exact 3x3x3 search over the reductions.
+    pub fn full() -> Params {
+        Params { exact_nodes: 100_000_000, exact_cap: 16, time_limit_ms: 30_000, ..Params::default() }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Solution {
     pub moves: Vec<u8>,
@@ -88,6 +110,7 @@ pub struct Solver {
     pub tabs: Tabs,
     pub t3: T3,
     pub big: Big1,
+    pub big2: Big2,
     pub ctab: Ctab,
     pub(crate) near: Near,
     /// R-vs-L patterns on the R and L faces that phase 3 can finish.
@@ -141,6 +164,7 @@ impl Solver {
         ];
         let t3 = T3::new();
         let big = Big1::load(&t3);
+        let big2 = Big2::load(&t3);
         let tabs = Tabs::load();
         let ctab = Ctab::load(&tabs.bp, &tabs.ranks);
         let mut rl_ok = [false; 256];
@@ -148,7 +172,7 @@ impl Solver {
             *ok = pat.count_ones() == 4 && tabs.p2[tabs.p2_index(0x00FF | (pat as u32) << 16, 0)] == 0;
         }
         let near = Near::new(&tabs.bp);
-        Solver { tabs, t3, big, ctab, near, rl_ok, frames, classes }
+        Solver { tabs, t3, big, big2, ctab, near, rl_ok, frames, classes }
     }
 
     /// The 18 variants of a cube: (re-expressed cube, frame rotation).
@@ -338,7 +362,6 @@ impl Solver {
         // two-phase search then starts with a short first phase.
         if let (Some(first), true) = (first_len, p.far_g > 0 && t_start.elapsed() < limit.mul_f64(0.5)) {
             let level = first + p.extra3 + 1;
-            let opt = Opt3::new(&self.t3, &self.big);
             let jobs: Vec<(usize, &P2Cand, u8)> = found[..k.min(p.far_k)]
                 .iter()
                 .enumerate()
@@ -358,7 +381,7 @@ impl Solver {
                         reduced
                             .with_home_centres()
                             .and_then(|h| C3::from_cube(&h))
-                            .is_some_and(|c3| opt.domino_distance(&c3, p.far_g).is_some())
+                            .is_some_and(|c3| domino_distance(&self.t3, &self.big, &c3, p.far_g).is_some())
                     });
                     out
                 })
@@ -437,7 +460,7 @@ impl Solver {
         // Pass 2: exact search. Scan every reduction for very short 3x3x3 solutions first
         // (cheap), then raise the limit one move at a time while the node budget lasts.
         if p.exact_nodes > 0 {
-            let opt = Opt3::new(&self.t3, &self.big);
+            let opt = Opt3::new(&self.t3, &self.big2);
             let roots: Vec<Root> = items.par_iter().map(|it| opt.prepare(&it.c3)).collect();
             let mut order: Vec<usize> = (0..items.len()).collect();
             order.sort_by_key(|&k| (items[k].len123, two[k].len()));
@@ -653,6 +676,11 @@ impl Solver {
         }
         for (k, &m) in P3_MOVES.iter().enumerate() {
             if last != 255 && skip_move(last, m) {
+                continue;
+            }
+            // A reduction that ends with a face turn is a shorter reduction plus a move
+            // the 3x3x3 stage could make itself.
+            if rem == 1 && m < 18 {
                 continue;
             }
             let x = tabs.bp.apply(m, mask);

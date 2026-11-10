@@ -280,6 +280,11 @@ impl Ctx<'_> {
             if (allowed >> m) & 1 == 0 || (last != 255 && skip_move(last, m)) {
                 continue;
             }
+            // An endpoint that ends with a phase-3 move is the previous endpoint plus a
+            // move phase 3 could make itself. Half turns are phase-3 moves in every frame.
+            if rem == 1 && m % 3 == 1 {
+                continue;
+            }
             if let Some(next) = self.solver.joint_step(n, m, rem - 1) {
                 self.path[depth] = m;
                 self.dfs(&next, rem - 1, m, depth + 1);
@@ -297,13 +302,16 @@ impl Ctx<'_> {
             return;
         }
         let solver = self.solver;
-        if solver.rl_ok[(n.r >> 16) as usize] {
+        let last = if depth > 0 { Some(self.path[depth - 1]) } else { None };
+        if solver.rl_ok[(n.r >> 16) as usize] && !last.is_some_and(is_p3_move) {
             let moves = self.path[..depth].to_vec();
             self.endpoint(self.variant, moves);
         }
         let partners = self.partners;
         for (k, part) in partners.iter().enumerate() {
-            if part.ok[((n.pr[k] >> part.shift) & 255) as usize] {
+            if part.ok[((n.pr[k] >> part.shift) & 255) as usize]
+                && !last.is_some_and(|m| is_p3_move(part.relabel[m as usize]))
+            {
                 let moves = self.path[..depth].iter().map(|&m| part.relabel[m as usize]).collect();
                 self.endpoint(part.variant, moves);
             }

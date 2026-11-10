@@ -17,7 +17,9 @@ longest is 43 moves and the slowest solve took 9.1 s.
 | TPR (Java) | 44.57 | 146 ms | 1,000 |
 | cube444, phases as in TPR, fast | 44.84 | 121 ms | 1,000 |
 | cube444, phases as in TPR, many reductions compared | 42.92 | 0.95 s | 1,000 |
+| cube444 `--mode fast` | 41.82 | 0.34 s | first 100 |
 | cube444, default | 40.67 | 3.7 s | 1,000 |
+| cube444 `--mode full` | 40.25 | 13.7 s | first 24 |
 
 ## How it works
 
@@ -70,12 +72,14 @@ Generated on first use into `tables/` (set `CUBE444_TABLES` to move them):
 |---|---|---|---|
 | `centres-exact.bin` | 2.37 GB | 105 s | moves to stage all centres, every centre state |
 | `pairing.bin` | 240 MB | 20 s | moves to pair the dedges in phase 3 |
+| `slice-exact.bin` | 1.72 GB | 55 s | 3x3x3 distance to "no twist, no flip, slice edges in place" |
 | `phase1-exact.bin` | 554 MB | 20 s | 3x3x3 distance to the domino subgroup |
 
 ### Search flags
 
 | Flag | Meaning | Default |
 |---|---|---|
+| `--mode` | `fast`, `normal` or `full`; sets the flags below | normal |
 | `--time` | soft time limit per cube, in ms | 8000 |
 | `--n2` | joint-phase endpoints collected | 10000 |
 | `--joint-nodes` | node budget of the joint phase, in millions | 1000 |
@@ -92,9 +96,10 @@ Generated on first use into `tables/` (set `CUBE444_TABLES` to move them):
 
 `--split --n2 100 --k3 100 --n3 1 --probes 500 --refine 1` mirrors TPR's search.
 
-Two options are off because they did not pay for themselves in testing: the
-exact 3x3x3 search (`src/opt3.rs`, about 1 s per 15-move query) and the "far"
-level of longer reductions.
+`--mode full` adds the exact 3x3x3 search (`src/opt3.rs`): it scans the
+reductions for 3x3x3 solutions of up to 16 moves that the two-phase search
+missed, at about 0.15 s per 15-move query. The "far" level of longer
+reductions is off because it did not pay for itself in testing.
 
 ## Verification
 

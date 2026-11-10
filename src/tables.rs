@@ -222,6 +222,15 @@ impl Tabs {
     }
 }
 
+/// True for the moves phase 3 may use (in any of the 36 move names).
+#[inline(always)]
+pub fn is_p3_move(m: u8) -> bool {
+    if m >= 18 {
+        return m % 3 == 1;
+    }
+    !matches!(m / 3, 1 | 4) || m % 3 == 1
+}
+
 /// True for the wide half turns, which change the phase 3 parity.
 #[inline(always)]
 pub fn p3_flips_parity(m: u8) -> bool {

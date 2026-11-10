@@ -81,20 +81,20 @@ impl C3 {
         out
     }
 
-    fn twist(&self) -> usize {
+    pub(crate) fn twist(&self) -> usize {
         self.co[..7].iter().fold(0, |a, &x| a * 3 + x as usize)
     }
 
-    fn flip(&self) -> usize {
+    pub(crate) fn flip(&self) -> usize {
         (0..11).fold(0, |a, i| a | (self.eo[i] as usize) << i)
     }
 
-    fn slice_mask(&self) -> usize {
+    pub(crate) fn slice_mask(&self) -> usize {
         (0..12).fold(0, |a, i| a | ((self.ep[i] >= 8) as usize) << i)
     }
 }
 
-fn perm_rank(p: &[u8]) -> usize {
+pub(crate) fn perm_rank(p: &[u8]) -> usize {
     let n = p.len();
     let mut r = 0;
     for i in 0..n {
@@ -104,7 +104,7 @@ fn perm_rank(p: &[u8]) -> usize {
     r
 }
 
-fn perm_unrank(mut r: usize, out: &mut [u8]) {
+pub(crate) fn perm_unrank(mut r: usize, out: &mut [u8]) {
     let n = out.len();
     let mut digits = [0usize; 12];
     for i in (0..n).rev() {
@@ -123,6 +123,7 @@ pub struct T3 {
     pub(crate) flip_mv: Vec<[u16; 18]>,
     pub(crate) slice_mv: Vec<[u16; 18]>,
     pub(crate) slice_rank: Vec<u16>,
+    pub(crate) slice_unrank: Vec<usize>,
     slice_goal: usize,
     cperm_mv: Vec<[u16; 10]>,
     uperm_mv: Vec<[u16; 10]>,
@@ -283,6 +284,7 @@ impl T3 {
             flip_mv,
             slice_mv,
             slice_rank,
+            slice_unrank,
             cperm_mv,
             uperm_mv,
             sperm_mv,
