@@ -736,14 +736,23 @@ fn bench6(args: &[String]) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let limit = num("--limit", usize::MAX);
-    let d = Params6::normal();
+    let d = match opt(args, "--mode") {
+        Some("fast") => Params6::fast(),
+        Some("full") => Params6::full(),
+        Some("normal") | None => Params6::normal(),
+        Some(_) => usage(),
+    };
+    let outer = match opt(args, "--mode") {
+        // The 5x5x5 part follows the mode unless its own flags say otherwise.
+        Some("fast") | None | Some("normal") => cubenxnxn::solver5::Params5 { ..params5(args) },
+        _ => cubenxnxn::solver5::Params5 { time_ms: 0, ..d.outer.clone() },
+    };
     let p = Params6 {
         width: num("--width", d.width),
         tries: num("--tries", d.tries),
         finals: num("--finals", d.finals),
-        starts: num("--starts", d.starts),
-        budget: num("--budget", d.budget as usize) as u64,
-        outer: params5(args),
+        budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
+        outer,
     };
     let t0 = Instant::now();
     let solver = Solver6::load();
@@ -781,7 +790,7 @@ fn bench6(args: &[String]) {
     let nf = n as f64;
     println!("solved {} cubes, every solution verified on the sticker model", n);
     println!(
-        "mean length {:.2}  (staging {:.2}, wing split {:.2}, inner reduction {:.2}, outer 5x5x5 {:.2})",
+        "mean length {:.2}  (staging {:.2}, preparing {:.2}, inner reduction {:.2}, outer 5x5x5 {:.2})",
         sums.iter().sum::<usize>() as f64 / nf,
         sums[0] as f64 / nf,
         sums[1] as f64 / nf,

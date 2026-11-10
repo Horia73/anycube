@@ -270,6 +270,21 @@ Pașii 2–4 urmează.
   împerecherea wings interioare și cea a oblicilor aproape nu împart
   mutări. Căutarea exactă durează de la secunde la zeci de minute.
 
+**Stadiu 2026-11-11:** trei moduri. Rapid: 119,0 mutări în 2,8 s; normal:
+116,95 în 5,6 s (20 de cuburi); exact (modul full): ~112, de la 40 s la
+minute. dwalton76: 136,1 în 43 s. Ținta de −20% (108,9) nu e atinsă: rapid
+−12,6%, normal −14,1%, exact −17%.
+
+De ce nu ajunge schema de acum, după numărătoarea de stări:
+
+- așezarea a patru orbite de centre pe axe costă 36 de mutări; fără ea,
+  solverul de 5x5x5 și-ar așeza singur centrele în 18,4;
+- ce trebuie de fapt făcut înainte de 5x5x5 e doar: x interior rezolvat,
+  wings interioare împerecheate, perechile de oblici de o culoare. După
+  numărul de stări asta ar cere 26–32 de mutări, deci un total de ~95–101;
+- piedica e aceeași în orice variantă: o căutare care împerechează wings
+  interioare și oblicii împreună, cu un prag bun. Fără prag, e lentă.
+
 **Ce urmează la 6x6x6, în ordine:**
 
 1. Un prag comun pentru pasul 3 (wings interioare + oblici), ca să fie și

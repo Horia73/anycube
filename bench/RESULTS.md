@@ -357,3 +357,36 @@ Step 3 from many starts with a small budget each (`six666-many-starts.tsv`,
 100 million positions each: 110, 113, 113, 113, 111, mean 112.0, 42 to 124 s.
 The length does not move; this step is about 17 moves whichever way it is
 searched, and the whole solve stays near 112.
+
+## 6x6x6: three modes (2026-11-11)
+
+First 20 cubes of `scrambles666-100.txt`, every solution checked on the
+sticker model; another benchmark was running on the same machine, so the
+times are on the high side. dwalton76: 136.10 moves and 43 s per cube on the
+first 10 cubes.
+
+| Mode | Staging | Preparing | Inner reduction | Outer 5x5x5 | Total | Mean time | Max time | Against dwalton76 |
+|---|---|---|---|---|---|---|---|---|
+| `--mode fast` | 36.20 | 16.00 | 13.15 | 53.65 | 119.00 | 2.8 s | 7.8 s | -12.6% |
+| default | 36.05 | 15.85 | 12.80 | 52.25 | 116.95 | 5.6 s | 9.4 s | -14.1% |
+| exact inner reduction (what `--mode full` does), first 5 or 6 cubes | 35.2 | 6.5 | 17 to 18 | 53 | 112 to 113 | 40 s to minutes | | -17% |
+
+Files: `fast666-20.tsv`, `normal666-20.tsv`.
+
+Fast and default take the quick way for the inner cube: the obliques are
+matched to the inner x centres first (about 11 moves, found in
+milliseconds thanks to a bound that adds over the three axes), so that the
+inner reduction need not watch them. The exact way pairs the obliques by
+colour inside the inner reduction and saves about 5 moves, but its lower
+bound is about 10 where the answer is 16 to 18. With a budget of 40 million
+positions per staging it finished for 2 cubes in 12 and the mean was 116.75
+at 15 s per cube, so the default no longer tries it.
+
+More things that did not pay:
+
+- A bound for the exact inner reduction that joins the inner x centres with
+  the obliques of the same axis: the bound stayed at the pairing table's 10.
+- Choosing where the inner reduction starts by the sum of its two bounds
+  instead of the larger: same lengths, same times.
+- Giving the 5x5x5 solver many reduced cubes to choose from instead of one:
+  120.8 to 119.2 in the fast mode, less than hoped.

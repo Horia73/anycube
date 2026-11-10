@@ -122,6 +122,8 @@ struct Partial {
     frame: usize,
     /// Length after each finished step.
     ends: Vec<usize>,
+    /// Which of the cubes given this continues.
+    root: usize,
 }
 
 pub struct Solver5 {
@@ -160,23 +162,33 @@ impl Solver5 {
 
     /// Solves a cube given as 150 facelets (faces U R F D L B, row by row).
     pub fn solve(&self, facelets: &[u8], p: &Params5) -> Result<Solution5, String> {
+        self.solve_any(&[(facelets.to_vec(), 0)], p).map(|x| x.1)
+    }
+
+    /// Solves whichever of several cubes gives the shortest total, each
+    /// given as 150 facelets and the number of moves already spent on it:
+    /// (which cube, its solution). For callers that reach a 5x5x5 in many
+    /// ways, such as the larger cubes: every step here chooses among all of
+    /// them by total length.
+    pub fn solve_any(&self, cubes: &[(Vec<u8>, usize)], p: &Params5) -> Result<(usize, Solution5), String> {
         let g = &tables5().geometry;
         let t0 = Instant::now();
         let until = |share: f64| (p.time_ms > 0).then(|| t0 + Duration::from_secs_f64(p.time_ms as f64 * share / 1e3));
-        let roots: Vec<Cube5> = self
-            .frames
+        let roots: Vec<Vec<Cube5>> = cubes
             .iter()
-            .map(|f| Cube5::from_facelets(&g.reframe(facelets, &f.turns)))
-            .collect::<Result<_, _>>()?;
-        let start_in = |frame: usize, moves: &[u8]| -> Start {
+            .map(|(facelets, _)| {
+                self.frames.iter().map(|f| Cube5::from_facelets(&g.reframe(facelets, &f.turns))).collect::<Result<_, _>>()
+            })
+            .collect::<Result<_, String>>()?;
+        let start_in = |root: usize, frame: usize, moves: &[u8]| -> Start {
             let f = &self.frames[frame];
-            let mut cube = roots[frame];
+            let mut cube = roots[root][frame];
             let mut last = 255;
             for &m in moves {
                 last = f.from_orig[m as usize];
                 cube.apply(last);
             }
-            Start { cube, cost: moves.len(), last }
+            Start { cube, cost: cubes[root].1 + moves.len(), last }
         };
         let limits = |keep: usize, per_node: usize, share: f64| Limits {
             keep,
@@ -197,11 +209,12 @@ impl Solver5 {
                         base.moves.iter().copied().chain(f.moves.iter().map(|&m| to_orig[m as usize])).collect();
                     let mut ends = base.ends.clone();
                     ends.push(moves.len());
-                    Partial { moves, frame: base.frame, ends }
+                    Partial { moves, frame: base.frame, ends, root: base.root }
                 })
                 .collect()
         };
-        let starts_of = |from: &[Partial]| -> Vec<Start> { from.par_iter().map(|x| start_in(x.frame, &x.moves)).collect() };
+        let starts_of =
+            |from: &[Partial]| -> Vec<Start> { from.par_iter().map(|x| start_in(x.root, x.frame, &x.moves)).collect() };
 
         let trace = std::env::var_os("CUBE5_TRACE").is_some();
         let mut clock = Instant::now();
@@ -212,30 +225,41 @@ impl Solver5 {
             clock = Instant::now();
         };
         let shortest = |x: &[Partial]| x.iter().map(|p| p.moves.len()).min().unwrap_or(0);
-        // Centres.
-        let mut staged = self.stage.stage(facelets, p.stage_extra, 100_000, p.staged, until(0.15))?;
-        lap("centres", staged.len(), staged.first().map_or(0, |s| s.moves.len()));
-        if let Some(extra) = p.joint_extra {
+        // Centres, of every cube: (cube, staging).
+        let per_cube = (p.staged / cubes.len()).max(8);
+        let mut staged: Vec<(usize, Staged)> = Vec::new();
+        for (root, (facelets, _)) in cubes.iter().enumerate() {
+            let found = self.stage.stage(facelets, p.stage_extra, 100_000, per_cube, until(0.15))?;
+            staged.extend(found.into_iter().map(|s| (root, s)));
+        }
+        lap("centres", staged.len(), staged.iter().map(|s| s.1.moves.len()).min().unwrap_or(0));
+        if let (Some(extra), 1) = (p.joint_extra, cubes.len()) {
             // In one step: only stagings no longer than the two-phase ones are of use.
             let budget = Budget {
-                max_len: staged.first().map_or(30, |s| s.moves.len()),
+                max_len: staged.first().map_or(30, |s| s.1.moves.len()),
                 extra,
                 cap: p.staged * 4,
                 deadline: None,
             };
-            let joint = self.centres.get_or_init(Centres5::load).stage(&roots[0], &budget);
+            let joint = self.centres.get_or_init(Centres5::load).stage(&roots[0][0], &budget);
             lap("in one", joint.len(), joint.first().map_or(0, |s| s.len()));
-            let mut all: Vec<Staged> = joint.into_iter().map(|moves| Staged { len_a: moves.len(), moves }).collect();
+            let mut all: Vec<(usize, Staged)> =
+                joint.into_iter().map(|moves| (0, Staged { len_a: moves.len(), moves })).collect();
             all.append(&mut staged);
-            all.sort_by_key(|s| s.moves.len());
+            all.sort_by_key(|s| s.1.moves.len());
             all.truncate(p.staged);
             staged = all;
         }
         // Phase C, along each axis.
         let from: Vec<Partial> = staged
             .iter()
-            .flat_map(|s| {
-                (0..3).map(move |axis| Partial { moves: s.moves.clone(), frame: 2 * axis, ends: vec![s.len_a, s.moves.len()] })
+            .flat_map(|(root, s)| {
+                (0..3).map(move |axis| Partial {
+                    moves: s.moves.clone(),
+                    frame: 2 * axis,
+                    ends: vec![s.len_a, s.moves.len()],
+                    root: *root,
+                })
             })
             .collect();
         let found = self.edges.phase_c(&starts_of(&from), p.labellings, &limits(p.c_keep, 10, 0.4));
@@ -245,7 +269,12 @@ impl Solver5 {
         let from: Vec<Partial> = after_c
             .iter()
             .flat_map(|x| {
-                (0..2).map(move |quarter| Partial { moves: x.moves.clone(), frame: x.frame + quarter, ends: x.ends.clone() })
+                (0..2).map(move |quarter| Partial {
+                    moves: x.moves.clone(),
+                    frame: x.frame + quarter,
+                    ends: x.ends.clone(),
+                    root: x.root,
+                })
             })
             .collect();
         let found = self.edges.phase_p(&starts_of(&from), &limits(p.p_keep, 10, 0.7));
@@ -260,11 +289,11 @@ impl Solver5 {
         let mut quick: Vec<(usize, &Partial, C3, Vec<u8>)> = reduced
             .par_iter()
             .map(|x| {
-                let cube = start_in(x.frame, &x.moves).cube;
+                let cube = start_in(x.root, x.frame, &x.moves).cube;
                 debug_assert!(is_reduced(&cube));
                 let c3 = C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo };
                 let sol = self.edges.t3.solve(&c3, 30, Some(&self.big));
-                (x.moves.len() + sol.len(), x, c3, sol)
+                (cubes[x.root].1 + x.moves.len() + sol.len(), x, c3, sol)
             })
             .collect();
         quick.sort_by_key(|r| r.0);
@@ -274,7 +303,7 @@ impl Solver5 {
             .map(|(len, x, c3, sol)| {
                 let better = self.edges.t3.solve(&c3, p.probes, Some(&self.big));
                 match better.len() < sol.len() {
-                    true => (x.moves.len() + better.len(), x, better),
+                    true => (cubes[x.root].1 + x.moves.len() + better.len(), x, better),
                     false => (len, x, sol),
                 }
             })
@@ -283,14 +312,14 @@ impl Solver5 {
             // A step cut short by the clock left the next one nothing to work with.
             return match p.time_ms {
                 0 => Err("no reduction found".to_string()),
-                _ => self.solve(facelets, &Params5 { time_ms: 0, ..p.clone() }),
+                _ => self.solve_any(cubes, &Params5 { time_ms: 0, ..p.clone() }),
             };
         };
-        lap("3x3x3", 1, x.moves.len() + sol3.len());
+        lap("3x3x3", 1, cubes[x.root].1 + x.moves.len() + sol3.len());
         let to_orig = &self.frames[x.frame].to_orig;
         let moves: Vec<u8> = x.moves.iter().copied().chain(sol3.iter().map(|&m| to_orig[m as usize])).collect();
         let e = &x.ends;
         let lens = [e[0], e[1] - e[0], e[2] - e[1], e[3] - e[2], e[4] - e[3], sol3.len()];
-        Ok(Solution5 { moves, lens })
+        Ok((x.root, Solution5 { moves, lens }))
     }
 }
