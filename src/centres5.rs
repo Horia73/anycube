@@ -14,7 +14,7 @@
 
 use crate::c5::{tables5, Cube5};
 use crate::cube::{skip_move, tables as cube_tables};
-use crate::sym::{axis_move_maps, closure, conjugators, destinations, CombRank, MaskMap};
+use crate::sym::{axis_move_maps, closure, conjugators, destinations, renamed, CombRank, MaskMap};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes, Ranks};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
@@ -108,7 +108,8 @@ impl Orbit {
         let moves: Vec<u8> = (0..36).collect();
         let mut generators = Vec::new();
         for mu in axis_move_maps() {
-            for p in conjugators(24, &moves, &mu, &|m, x| dest[m as usize][x] as usize, &[]) {
+            let act = |m: usize, x: usize| dest[m][x] as usize;
+            for p in conjugators(24, &renamed(&moves, &mu), &act, &act, &[]) {
                 let map = MaskMap::new(&p);
                 if map.apply(RL_SET) != RL_SET {
                     continue;

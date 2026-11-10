@@ -34,75 +34,74 @@ pub fn axis_move_maps() -> Vec<[u8; 36]> {
     vec![to_array((0..36).collect()), to_array(g.frame_moves(&[0])), to_array(g.frame_moves(&[1, 1])), mirror]
 }
 
-/// Every permutation `p` of `0..n` with `p(act(m, x)) == act(mu[m], p(x))`
-/// for all the given moves, and with `p(a) == b` for each pair in `fixed`.
+/// Every permutation `p` of `0..n` with `p(act_a(a, x)) == act_b(b, p(x))`
+/// for each pair of moves `(a, b)`, and with `p(x) == y` for each pair in
+/// `fixed`. With one action and a renaming of its moves these are the
+/// symmetries of a coordinate; with two actions they are the ways to number
+/// one set of pieces like another.
 pub fn conjugators(
     n: usize,
-    moves: &[u8],
-    mu: &[u8; 36],
-    act: &dyn Fn(u8, usize) -> usize,
+    pairs: &[(usize, usize)],
+    act_a: &dyn Fn(usize, usize) -> usize,
+    act_b: &dyn Fn(usize, usize) -> usize,
     fixed: &[(usize, usize)],
 ) -> Vec<Vec<u32>> {
     const NONE: u32 = u32::MAX;
-    // Sets p(a) = b and everything that follows from it; false on a contradiction.
-    fn assign(
-        p: &mut [u32],
-        used: &mut [bool],
-        a: usize,
-        b: usize,
-        moves: &[u8],
-        mu: &[u8; 36],
-        act: &dyn Fn(u8, usize) -> usize,
-    ) -> bool {
-        let mut queue = vec![(a, b)];
-        while let Some((a, b)) = queue.pop() {
-            if p[a] != NONE {
-                if p[a] as usize != b {
+    struct Ctx<'a> {
+        pairs: &'a [(usize, usize)],
+        act_a: &'a dyn Fn(usize, usize) -> usize,
+        act_b: &'a dyn Fn(usize, usize) -> usize,
+    }
+    // Sets p(x) = y and everything that follows from it; false on a contradiction.
+    fn assign(c: &Ctx, p: &mut [u32], used: &mut [bool], x: usize, y: usize) -> bool {
+        let mut queue = vec![(x, y)];
+        while let Some((x, y)) = queue.pop() {
+            if p[x] != NONE {
+                if p[x] as usize != y {
                     return false;
                 }
                 continue;
             }
-            if used[b] {
+            if used[y] {
                 return false;
             }
-            p[a] = b as u32;
-            used[b] = true;
-            for &m in moves {
-                queue.push((act(m, a), act(mu[m as usize], b)));
+            p[x] = y as u32;
+            used[y] = true;
+            for &(a, b) in c.pairs {
+                queue.push(((c.act_a)(a, x), (c.act_b)(b, y)));
             }
         }
         true
     }
-    fn extend(
-        p: Vec<u32>,
-        used: Vec<bool>,
-        moves: &[u8],
-        mu: &[u8; 36],
-        act: &dyn Fn(u8, usize) -> usize,
-        out: &mut Vec<Vec<u32>>,
-    ) {
-        let Some(a) = p.iter().position(|&x| x == NONE) else {
+    fn extend(c: &Ctx, p: Vec<u32>, used: Vec<bool>, out: &mut Vec<Vec<u32>>) {
+        let Some(x) = p.iter().position(|&v| v == NONE) else {
             out.push(p);
             return;
         };
-        for b in 0..p.len() {
-            if !used[b] {
+        for y in 0..p.len() {
+            if !used[y] {
                 let (mut q, mut u) = (p.clone(), used.clone());
-                if assign(&mut q, &mut u, a, b, moves, mu, act) {
-                    extend(q, u, moves, mu, act, out);
+                if assign(c, &mut q, &mut u, x, y) {
+                    extend(c, q, u, out);
                 }
             }
         }
     }
+    let c = Ctx { pairs, act_a, act_b };
     let (mut p, mut used) = (vec![NONE; n], vec![false; n]);
-    for &(a, b) in fixed {
-        if !assign(&mut p, &mut used, a, b, moves, mu, act) {
+    for &(x, y) in fixed {
+        if !assign(&c, &mut p, &mut used, x, y) {
             return Vec::new();
         }
     }
     let mut out = Vec::new();
-    extend(p, used, moves, mu, act, &mut out);
+    extend(&c, p, used, &mut out);
     out
+}
+
+/// The pairs (move, renamed move) for a list of moves.
+pub fn renamed(moves: &[u8], mu: &[u8; 36]) -> Vec<(usize, usize)> {
+    moves.iter().map(|&m| (m as usize, mu[m as usize] as usize)).collect()
 }
 
 /// A symmetry as it acts on several sets of points at once.

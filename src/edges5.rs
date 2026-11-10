@@ -16,7 +16,7 @@
 use crate::c3::{perm_rank, perm_unrank, T3};
 use crate::c5::{tables5, Cube5};
 use crate::cube::{skip_move, tables as cube_tables};
-use crate::sym::{axis_move_maps, closure, conjugators, destinations, MaskMap};
+use crate::sym::{axis_move_maps, closure, conjugators, destinations, renamed, MaskMap};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
@@ -137,9 +137,12 @@ fn c_symmetries(flip_mv: &[[u16; 18]]) -> Vec<CSym> {
     let dest = destinations(&cube_tables().ep_src);
     let mut generators = Vec::new();
     for mu in axis_move_maps() {
-        let flips = conjugators(N_FLIP, &H_MOVES, &mu, &|m, f| flip_mv[f][m as usize % 18] as usize, &[(0, 0)]);
+        let pairs = renamed(&H_MOVES, &mu);
+        let flip = |m: usize, f: usize| flip_mv[f][m % 18] as usize;
+        let flips = conjugators(N_FLIP, &pairs, &flip, &flip, &[(0, 0)]);
         let Some(flips) = flips.into_iter().next() else { continue };
-        for wings in conjugators(24, &H_MOVES, &mu, &|m, p| dest[m as usize][p] as usize, &[]) {
+        let wing = |m: usize, p: usize| dest[m][p] as usize;
+        for wings in conjugators(24, &pairs, &wing, &wing, &[]) {
             let image = MaskMap::new(&wings).apply(LOW_HALF);
             let complement = match image {
                 LOW_HALF => vec![0, 1],

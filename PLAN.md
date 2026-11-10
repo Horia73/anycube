@@ -103,7 +103,9 @@ Ce a mai rămas:
 | 5 | ultimele opt muchii și toate centrele | 14 |
 
 - Rezultat publicat: 51–52 de mutări pentru reducere, 1–2 s, tabele de 240 MB.
-  Cu 3x3x3 (~19,6) iese ~71 în total. dwalton76 raportează ~77–79.
+  Cu 3x3x3 (~19,6) iese ~71 în total. dwalton76 raportează 78,9 doar pentru
+  reducere, deci ~99 în total (corectat 2026-11-10: scrisesem „~77–79” ca
+  și cum ar fi totalul).
 - Unde pierde mutări, după cod:
   - etapa 3x3x3 se rezolvă o singură dată, după prima reducere găsită;
   - mutările nu se anulează la trecerea dintre faze;
@@ -205,6 +207,59 @@ la 15% din buget, faza C până la 40%, P până la 70%, E până la 90%; o faz�
    tabele comune muchii+centre mai mari ar grăbi căutarea și ar permite un
    lot mai lat în același timp.
 3. Unirea fazelor E și 3x3x3 pentru ultimele mutări, ca la 4x4x4.
+
+## 6x6x6 și 7x7x7 (început 2026-11-10)
+
+Ordinea stabilită cu Horia: 6 și 7 optimizate ca mutări și ca timp, apoi
+NxNxN general ca baseline, apoi îmbunătățiri pe rând.
+
+**Referința.** dwalton76, rulat pe seturile noastre din instalarea lui Horia
+(`~/MultiCuber/rubiks-cube-NxNxN-solver`, cu tabelele deja descărcate).
+Tabelul din README-ul lui spune „mutări până la 3x3x3”, dar cifrele sunt
+totaluri: la 4x4x4 am măsurat 51,71 pe 100 de cuburi (README: 51,6), toate
+soluțiile verificate. Rezultatele pe 5, 6 și 7 sunt în `bench/RESULTS.md`.
+
+**Ce e nou la 6x6x6.** Patru orbite de centre (x interior, x exterior, două
+orbite oblice în oglindă) și două orbite de wings, fără piese fixe. Tot ce
+avem se refolosește prin „cuburi virtuale” (`Geometry::sub_facelets`):
+
+- straturile 1, 3, 4, 6 formează un 4x4x4 (colțuri, wings interioare, x
+  interior); mutarea lui lată e mutarea de 3 straturi;
+- straturile 1, 2, 3|4, 5, 6 formează un 5x5x5 dacă cele două straturi din
+  mijloc arată la fel; mutările lui sunt chiar mutările de 1 și 2 straturi.
+
+Observația pe care se sprijină planul: sub mutările 4x4x4-ului virtual,
+fiecare sfert de față (un x interior, cei doi oblici de lângă el și x-ul
+exterior din colț) se mișcă rigid. Dacă fiecare sfert are o singură culoare,
+toate centrele se comportă ca centrele unui 4x4x4.
+
+**Planul pentru prima versiune:**
+
+1. Centrele celor patru orbite pe axele lor, în patru pași: R/L pentru x
+   interior și oblici (toate cele 54 de mutări), apoi R/L pentru x exterior
+   cu faza A de la 5x5x5 pe cubul virtual (perechile de oblici sunt centrele
+   lui t); la fel pentru U/D, cu tabelul exact al fazei B.
+2. Sferturile într-o singură culoare: doar jumătăți de tură late și fețe;
+   pe fiecare axă starea are 70⁴ valori, deci tabel exact pe axă.
+3. Solverul nostru de 4x4x4 pe cubul virtual, fără etapa 3x3x3: rezolvă
+   toate centrele și împerechează wings interioare, cu paritate cu tot.
+4. Solverul nostru de 5x5x5 pe cubul virtual: centrele sunt gata, deci
+   rămân fazele de muchii și 3x3x3.
+
+Estimare: ~37 + ~13 + ~23 + ~50 ≈ 120–125 de mutări. E o estimare, nu o
+măsurătoare.
+
+**7x7x7** urmează aceeași schemă: 5x5x5 virtual din straturile 1, 3, 4, 5, 7
+pentru interior, tripletele oblic–t–oblic în locul perechilor, apoi 5x5x5
+virtual din straturile 1, 2, 4, 6, 7.
+
+**Kociemba, RubikNxNxNSolver** (citit 2026-11-10): rezolvă doar centrele,
+în metrica de felii simple, ~1,19 mutări pe centru la 101x101x101; pentru
+7x7x7 ar însemna ~170 de mutări doar pe centre, deci nu ajută la 6 și 7.
+Pentru solverul general e scheletul potrivit: fiecare pereche de orbite
+oblice (x, y) se rezolvă împreună, doar cu fețe și feliile x și y, iar
+orbita „+” a fiecărei felii e martorul că felia a fost întoarsă la loc, deci
+perechile deja rezolvate nu se strică.
 
 ## Spre mărimi mai mari
 

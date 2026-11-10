@@ -21,6 +21,7 @@ fn main() {
         Some("startup") => startup(),
         Some("facelets") => facelets(&args[1..]),
         Some("verify") => verify(&args[1..]),
+        Some("scrambles") => scrambles(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
@@ -658,5 +659,30 @@ fn centres5(args: &[String]) {
             sols.len(),
             ms
         );
+    }
+}
+
+/// Random-move scrambles for a cube of any size, one per line.
+fn scrambles(args: &[String]) {
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (size, count, length) = (num("--size", 6), num("--count", 100), num("--length", 200));
+    let mut seed = num("--seed", size * 111) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let g = cubenxnxn::cuben::Geometry::new(size);
+    for _ in 0..count {
+        let mut names = Vec::with_capacity(length);
+        let mut last = usize::MAX;
+        while names.len() < length {
+            let m = rnd(g.move_count());
+            // Not the same face and depth twice in a row.
+            if m / 3 != last {
+                names.push(g.move_name(m));
+                last = m / 3;
+            }
+        }
+        println!("{}", names.join(" "));
     }
 }

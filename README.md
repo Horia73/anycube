@@ -208,5 +208,11 @@ returned. Beyond that:
 
 ## Credits
 
-Piece numbering, move definitions and the design of phase 3 come from TPR by
-Chen Shuang (MIT licence).
+All code here is written for this project; nothing is copied from other
+solvers. The ideas are not all ours:
+
+- 4x4x4: piece numbering, move definitions and the design of phase 3 come
+  from TPR by Chen Shuang (MIT licence).
+- 5x5x5: the split into phases follows cube555 by Chen Shuang.
+- 3x3x3: the two-phase algorithm and the exact search bounded by distances
+  to a subgroup are Herbert Kociemba's.

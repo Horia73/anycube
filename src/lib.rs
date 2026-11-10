@@ -11,6 +11,7 @@ pub mod cuben;
 pub mod edges5;
 pub mod joint;
 pub mod opt3;
+pub mod orbits;
 pub mod solver;
 pub mod solver5;
 pub mod stage5;

@@ -148,6 +148,24 @@ impl Geometry {
             .collect()
     }
 
+    /// The facelets of the smaller cube made of the given layers of this one
+    /// (the same list for rows and columns, counted from 0). With layers
+    /// that mirror each other, such as `[0, 1, 3, 5, 6]` on a 7x7x7, turning
+    /// `k` chosen layers of the smaller cube is turning the layers of this
+    /// cube up to the `k`-th chosen one.
+    pub fn sub_facelets(&self, facelets: &[u8], layers: &[usize]) -> Vec<u8> {
+        let nn = self.n * self.n;
+        let mut out = Vec::with_capacity(6 * layers.len() * layers.len());
+        for face in 0..6 {
+            for &r in layers {
+                for &c in layers {
+                    out.push(facelets[face * nn + r * self.n + c]);
+                }
+            }
+        }
+        out
+    }
+
     pub fn move_count(&self) -> usize {
         self.moves.len()
     }
