@@ -1,4 +1,6 @@
-# cube444
+# cubenxnxn
+
+Formerly `cube444`; renamed when it grew past the 4x4x4.
 
 A Rubik's cube solver in Rust for 2x2x2 to 5x5x5. The 4x4x4 and 5x5x5 solvers
 aim for shorter solutions than the existing reduction solvers, within a few
@@ -14,9 +16,9 @@ Work in progress. 4x4x4 results on the fixed scrambles in
 | Solver | Mean length | Mean time | Cubes |
 |---|---|---|---|
 | TPR (Java) | 44.57 | 146 ms | 1,000 |
-| cube444 `--mode fast` | 41.54 | 0.36 s | first 100 |
-| cube444, default | 40.60 | 2.5 s | 1,000 |
-| cube444 `--mode full` | 40.00 | 15.9 s | first 30 |
+| cubenxnxn `--mode fast` | 41.54 | 0.36 s | first 100 |
+| cubenxnxn, default | 40.60 | 2.5 s | 1,000 |
+| cubenxnxn `--mode full` | 40.00 | 15.9 s | first 30 |
 
 With the defaults no solution is longer than TPR's for the same cube, the
 longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
@@ -37,9 +39,9 @@ high side:
 | Solver | Mean length | Mean time | Longest | Cubes |
 |---|---|---|---|---|
 | cube555 (Java) with min2phase | 70.58 | 1.1 s | 75 | 200 |
-| cube444 `--mode fast` | 70.17 | 0.44 s | 73 | 200 |
-| cube444, default | 68.98 | 2.2 s | 72 | 200 |
-| cube444 `--mode full` | 68.20 | 8.7 s | 70 | first 40 |
+| cubenxnxn `--mode fast` | 70.17 | 0.44 s | 73 | 200 |
+| cubenxnxn, default | 68.98 | 2.2 s | 72 | 200 |
+| cubenxnxn `--mode full` | 68.20 | 8.7 s | 70 | first 40 |
 
 With the defaults 151 of the 200 solutions are shorter than cube555's, 27 are
 equal and 22 are longer; the slowest solve took 4.9 s. The times assume the
@@ -98,40 +100,40 @@ cargo build --release
 ```
 
 ```bash
-./target/release/cube444 solve "Rw U2 F' Uw L2 D Bw' R"
+./target/release/cubenxnxn solve "Rw U2 F' Uw L2 D Bw' R"
 ```
 
 ```bash
-./target/release/cube444 solve --size 3 "R U R' F2 D L B' U2" --mode full
+./target/release/cubenxnxn solve --size 3 "R U R' F2 D L B' U2" --mode full
 ```
 
 ```bash
-./target/release/cube444 solve --size 2 "R U R' F2 D L B' U2"
+./target/release/cubenxnxn solve --size 2 "R U R' F2 D L B' U2"
 ```
 
 ```bash
-./target/release/cube444 solve --size 5 "Rw U2 F' Uw L2 D Bw' R" --mode fast
+./target/release/cubenxnxn solve --size 5 "Rw U2 F' Uw L2 D Bw' R" --mode fast
 ```
 
 ```bash
-./target/release/cube444 solve --state <24, 54, 96 or 150 facelets in URFDLB order>
+./target/release/cubenxnxn solve --state <24, 54, 96 or 150 facelets in URFDLB order>
 ```
 
 ```bash
-./target/release/cube444 bench5 bench/scrambles555-200.txt
+./target/release/cubenxnxn bench5 bench/scrambles555-200.txt
 ```
 
 ```bash
-./target/release/cube444 bench bench/scrambles-1000.txt --tpr bench/tpr-results.tsv
+./target/release/cubenxnxn bench bench/scrambles-1000.txt --tpr bench/tpr-results.tsv
 ```
 
 ```bash
-./target/release/cube444 facelets --size 5 "Uw R' F2"
+./target/release/cubenxnxn facelets --size 5 "Uw R' F2"
 ```
 
 ### Tables
 
-Generated on first use into `tables/` (set `CUBE444_TABLES` to move them),
+Generated on first use into `tables/` (set `CUBENXNXN_TABLES` to move them),
 4.9 GB in all. The large ones take about four minutes on 8 cores, once.
 
 | File | Size | Time on 8 cores | Contents |

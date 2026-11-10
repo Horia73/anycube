@@ -1,6 +1,9 @@
 //! 5x5x5, the whole solve: the centres are staged, the edges are reduced in
 //! three phases, and what is left is solved as a 3x3x3.
 //!
+//! The centres are staged in two phases. Staging them in one step with all
+//! moves is shorter but takes minutes; it runs only on request.
+//!
 //! Every step keeps many results, and the next one continues the ones that
 //! are shortest in total. The edge phases also look at the cube from six
 //! sides: any of the three axes can be the one the wings are split along,
@@ -10,9 +13,11 @@
 use crate::big1::Big1;
 use crate::c3::C3;
 use crate::c5::{tables5, Cube5};
+use crate::centres5::{Budget, Centres5};
 use crate::edges5::{is_reduced, Edges5, Limits, Start};
-use crate::stage5::Stage5;
+use crate::stage5::{Stage5, Staged};
 use rayon::prelude::*;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// How wide the search goes.
@@ -22,6 +27,9 @@ pub struct Params5 {
     /// phase they may come from.
     pub staged: usize,
     pub stage_extra: usize,
+    /// Stage the centres in one step as well, searching this many lengths
+    /// past the shortest staging. Exact but takes minutes; off in every mode.
+    pub joint_extra: Option<usize>,
     /// Labellings (which wing of each pair goes to which half) tried per staging.
     pub labellings: usize,
     /// Results each edge phase aims for before the next one starts.
@@ -43,6 +51,7 @@ impl Params5 {
         Params5 {
             staged: 200,
             stage_extra: 1,
+            joint_extra: None,
             labellings: 4,
             c_keep: 300,
             p_keep: 300,
@@ -58,6 +67,7 @@ impl Params5 {
         Params5 {
             staged: 400,
             stage_extra: 1,
+            joint_extra: None,
             labellings: 8,
             c_keep: 2000,
             p_keep: 2000,
@@ -73,6 +83,7 @@ impl Params5 {
         Params5 {
             staged: 2000,
             stage_extra: 1,
+            joint_extra: None,
             labellings: 16,
             c_keep: 5000,
             p_keep: 5000,
@@ -115,6 +126,7 @@ struct Partial {
 
 pub struct Solver5 {
     pub stage: Stage5,
+    centres: OnceLock<Centres5>,
     pub edges: Edges5,
     pub big: Big1,
     frames: Vec<Frame>,
@@ -143,7 +155,7 @@ impl Solver5 {
                 frames.push(Frame { turns, to_orig, from_orig });
             }
         }
-        Solver5 { stage, edges, big, frames }
+        Solver5 { stage, centres: OnceLock::new(), edges, big, frames }
     }
 
     /// Solves a cube given as 150 facelets (faces U R F D L B, row by row).
@@ -201,8 +213,24 @@ impl Solver5 {
         };
         let shortest = |x: &[Partial]| x.iter().map(|p| p.moves.len()).min().unwrap_or(0);
         // Centres.
-        let staged = self.stage.stage(facelets, p.stage_extra, 100_000, p.staged, until(0.15))?;
+        let mut staged = self.stage.stage(facelets, p.stage_extra, 100_000, p.staged, until(0.15))?;
         lap("centres", staged.len(), staged.first().map_or(0, |s| s.moves.len()));
+        if let Some(extra) = p.joint_extra {
+            // In one step: only stagings no longer than the two-phase ones are of use.
+            let budget = Budget {
+                max_len: staged.first().map_or(30, |s| s.moves.len()),
+                extra,
+                cap: p.staged * 4,
+                deadline: None,
+            };
+            let joint = self.centres.get_or_init(Centres5::load).stage(&roots[0], &budget);
+            lap("in one", joint.len(), joint.first().map_or(0, |s| s.len()));
+            let mut all: Vec<Staged> = joint.into_iter().map(|moves| Staged { len_a: moves.len(), moves }).collect();
+            all.append(&mut staged);
+            all.sort_by_key(|s| s.moves.len());
+            all.truncate(p.staged);
+            staged = all;
+        }
         // Phase C, along each axis.
         let from: Vec<Partial> = staged
             .iter()

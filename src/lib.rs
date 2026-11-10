@@ -3,6 +3,7 @@ pub mod big2;
 pub mod c2;
 pub mod c3;
 pub mod c5;
+pub mod centres5;
 pub mod cache;
 pub mod ctab;
 pub mod cube;

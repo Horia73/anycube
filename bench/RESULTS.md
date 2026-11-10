@@ -9,16 +9,16 @@ Metric: OBTM. Every solution was applied to the cube model and verified.
 | Solver | Phase 1 | Phase 2 | Phase 3 | 3x3x3 | Total | Min | Max |
 |---|---|---|---|---|---|---|---|
 | TPR (Java, `tpr-results.tsv`) | 6.727 | 5.847 | 12.362 | 19.638 | 44.574 | 40 | 48 |
-| cube444 `--n3 1 --probes 500` (`m1-results.tsv`) | 6.666 | 6.021 | 12.323 | 19.828 | 44.838 | 40 | 48 |
-| cube444 default (`n3-2000-results.tsv`) | 6.652 | 6.223 | 12.605 | 17.438 | 42.918 | 38 | 47 |
+| cubenxnxn `--n3 1 --probes 500` (`m1-results.tsv`) | 6.666 | 6.021 | 12.323 | 19.828 | 44.838 | 40 | 48 |
+| cubenxnxn default (`n3-2000-results.tsv`) | 6.652 | 6.223 | 12.605 | 17.438 | 42.918 | 38 | 47 |
 
 ## Time per solve
 
 | Solver | Mean | Median | Max | Cubes timed |
 |---|---|---|---|---|
 | TPR (Java, after JIT warm-up) | 146 ms | 121 ms | 2.4 s | 1,000 |
-| cube444 `--n3 1 --probes 500` | 121 ms | 101 ms | 1.4 s | 1,000 |
-| cube444 default (`timing-200.tsv`) | 950 ms | 748 ms | 6.6 s | 200 |
+| cubenxnxn `--n3 1 --probes 500` | 121 ms | 101 ms | 1.4 s | 1,000 |
+| cubenxnxn default (`timing-200.tsv`) | 950 ms | 748 ms | 6.6 s | 200 |
 
 The time column in `n3-2000-results.tsv` is not a timing: that run solved
 several cubes at once (`--parallel`).
@@ -92,7 +92,7 @@ File: `default-results.tsv`. Cubes solved one at a time.
 | Solver | Joint phase | Phase 3 | 3x3x3 | Total | Min | Max |
 |---|---|---|---|---|---|---|
 | TPR (phases 1+2: 12.574) | | 12.362 | 19.638 | 44.574 | 40 | 48 |
-| cube444 default | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
+| cubenxnxn default | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
 
 Length histogram: 37: 2, 38: 8, 39: 73, 40: 286, 41: 500, 42: 128, 43: 3.
 
@@ -160,8 +160,8 @@ File: `default-results.tsv` (replaces the earlier run). Cubes solved one at a ti
 | Solver | Joint phase | Phase 3 | 3x3x3 | Total | Min | Max |
 |---|---|---|---|---|---|---|
 | TPR (phases 1+2: 12.574) | | 12.362 | 19.638 | 44.574 | 40 | 48 |
-| cube444, previous default (8 s limit) | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
-| cube444, new default (4 s limit) | 12.802 | 10.809 | 16.986 | 40.597 | 37 | 44 |
+| cubenxnxn, previous default (8 s limit) | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
+| cubenxnxn, new default (4 s limit) | 12.802 | 10.809 | 16.986 | 40.597 | 37 | 44 |
 
 Length histogram: 37: 1, 38: 13, 39: 89, 40: 311, 41: 467, 42: 112, 43: 4, 44: 3.
 
@@ -192,10 +192,10 @@ checked on the sticker model:
 | Solver | Phase A | Phase B | Total | Mean time | Max time |
 |---|---|---|---|---|---|
 | cube555, phases 1 + 2 | 10.22 | 8.06 | 18.28 | | |
-| cube444 `bench5 --extra 0` | 9.63 | 8.56 | 18.19 | 43 ms | 1.1 s |
-| cube444 `bench5 --extra 1 --time 300` | 10.11 | 7.47 | 17.58 | 0.23 s | 0.82 s |
-| cube444 `bench5 --extra 1` (no limit) | 10.25 | 7.11 | 17.36 | 0.92 s | 23 s |
-| cube444 `bench5 --extra 2 --time 2000` | 10.60 | 6.50 | 17.10 | 1.5 s | 2.1 s |
+| cubenxnxn `bench5 --extra 0` | 9.63 | 8.56 | 18.19 | 43 ms | 1.1 s |
+| cubenxnxn `bench5 --extra 1 --time 300` | 10.11 | 7.47 | 17.58 | 0.23 s | 0.82 s |
+| cubenxnxn `bench5 --extra 1` (no limit) | 10.25 | 7.11 | 17.36 | 0.92 s | 23 s |
+| cubenxnxn `bench5 --extra 2 --time 2000` | 10.60 | 6.50 | 17.10 | 1.5 s | 2.1 s |
 
 `--extra` is how many moves past the shortest phase A are searched; each
 phase-A solution is completed by an optimal phase B from its exact table.
@@ -211,9 +211,9 @@ model. The machine was busy with other work during these runs (load average
 | Solver | Centres | Edges (three phases) | 3x3x3 | Total | Mean time | Max time | Cubes |
 |---|---|---|---|---|---|---|---|
 | cube555 + min2phase | 10.22 + 8.06 | 6.34 + 12.66 + 14.05 | 19.23 | 70.58 | 1.08 s | 4.6 s | 200 |
-| cube444 `--mode fast` | 10.37 + 8.21 | 7.02 + 12.55 + 14.10 | 17.93 | 70.17 | 0.44 s | 2.3 s | 200 |
-| cube444, default | 10.51 + 8.02 | 7.08 + 12.48 + 13.72 | 17.16 | 68.98 | 2.2 s | 4.9 s | 200 |
-| cube444 `--mode full` | 10.50 + 7.95 | 7.62 + 12.43 + 13.50 | 16.20 | 68.20 | 8.7 s | 26 s | first 40 |
+| cubenxnxn `--mode fast` | 10.37 + 8.21 | 7.02 + 12.55 + 14.10 | 17.93 | 70.17 | 0.44 s | 2.3 s | 200 |
+| cubenxnxn, default | 10.51 + 8.02 | 7.08 + 12.48 + 13.72 | 17.16 | 68.98 | 2.2 s | 4.9 s | 200 |
+| cubenxnxn `--mode full` | 10.50 + 7.95 | 7.62 + 12.43 + 13.50 | 16.20 | 68.20 | 8.7 s | 26 s | first 40 |
 
 Cube by cube against cube555 (its mean on the first 40 cubes is 70.85):
 
@@ -239,4 +239,4 @@ What the pieces were worth, on the first 40 cubes:
 | + edge-against-centre tables for phases P and E | 68.83 | about 1 s |
 | 20 times wider (`--c-keep 10000 --p-keep 10000 --e-keep 1000 --staged 1000`) | 68.20 | about 10 s |
 
-Reproduce with `cube444 bench5 bench/scrambles555-200.txt [--mode fast|full] [--limit 40]`.
+Reproduce with `cubenxnxn bench5 bench/scrambles555-200.txt [--mode fast|full] [--limit 40]`.

@@ -521,7 +521,11 @@ fn gen_sigma(pl: &[[u8; 12]; 17], phinv: &[[u8; 12]; 17]) -> Vec<u8> {
 }
 
 pub(crate) fn table_dir() -> PathBuf {
-    std::env::var_os("CUBE444_TABLES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("tables"))
+    // `CUBE444_TABLES` is the name from before the project was renamed.
+    std::env::var_os("CUBENXNXN_TABLES")
+        .or_else(|| std::env::var_os("CUBE444_TABLES"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("tables"))
 }
 
 pub(crate) fn load_or_gen_quiet(path: &Path, len: usize, gen: &dyn Fn() -> Vec<u8>) -> Bytes {

@@ -220,7 +220,7 @@ impl Solver {
             }
         }
 
-        let debug = std::env::var_os("CUBE444_DEBUG").is_some();
+        let debug = std::env::var_os("CUBENXNXN_DEBUG").is_some();
         let t_start = std::time::Instant::now();
         let limit = std::time::Duration::from_millis(p.time_limit_ms);
         let mut found: Vec<P2Cand> = if p.joint {
@@ -309,7 +309,7 @@ impl Solver {
         }
         found.sort_by_key(|c| c.value);
         let t_12 = t_start.elapsed();
-        if std::env::var_os("CUBE444_DEBUG").is_some() {
+        if std::env::var_os("CUBENXNXN_DEBUG").is_some() {
             let mut by_len = std::collections::BTreeMap::new();
             for c in &found {
                 *by_len.entry(c.len12).or_insert(0usize) += 1;
@@ -420,7 +420,7 @@ impl Solver {
                 items.push(Item { red: ri, len123: c2.len12 as usize + moves3.len(), c3 });
             }
         }
-        if std::env::var_os("CUBE444_DEBUG").is_some() {
+        if std::env::var_os("CUBENXNXN_DEBUG").is_some() {
             let mut by_len = std::collections::BTreeMap::new();
             for it in &items {
                 *by_len.entry(it.len123).or_insert(0usize) += 1;
@@ -510,7 +510,7 @@ impl Solver {
                     break;
                 }
             }
-            if std::env::var_os("CUBE444_DEBUG").is_some() {
+            if std::env::var_os("CUBENXNXN_DEBUG").is_some() {
                 let mut opt_hist = std::collections::BTreeMap::new();
                 for h in hits.lock().unwrap().iter() {
                     *opt_hist.entry(h.2.len()).or_insert(0usize) += 1;

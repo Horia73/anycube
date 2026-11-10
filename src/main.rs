@@ -1,12 +1,12 @@
-use cube444::cube::{format_moves, parse_moves, Cube};
-use cube444::solver::{Params, Solver};
+use cubenxnxn::cube::{format_moves, parse_moves, Cube};
+use cubenxnxn::solver::{Params, Solver};
 use rayon::prelude::*;
 use std::io::Write;
 use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cube444 solve <moves...> [--size 2|3|4|5] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cube444 solve --state <24, 54, 96 or 150 facelets> [search flags]   solve a cube from 2x2x2 to 5x5x5 given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cube444 bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cube444 facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96 or 150 facelets> [search flags]   solve a cube from 2x2x2 to 5x5x5 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -22,11 +22,12 @@ fn main() {
         Some("facelets") => facelets(&args[1..]),
         Some("verify") => verify(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
+        Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
-        Some("selftest5") => cube444::edges5::Edges5::load().self_test(),
+        Some("selftest5") => cubenxnxn::edges5::Edges5::load().self_test(),
         Some("gen-edges5") => {
             let t = Instant::now();
-            cube444::edges5::Edges5::load();
+            cubenxnxn::edges5::Edges5::load();
             eprintln!("5x5x5 edge tables ready in {:.1} s", t.elapsed().as_secs_f64());
         }
         _ => usage(),
@@ -80,7 +81,7 @@ fn move_text(args: &[String]) -> String {
 }
 
 fn solve5(state: Option<&str>, args: &[String]) {
-    use cube444::c5::tables5;
+    use cubenxnxn::c5::tables5;
     let g = &tables5().geometry;
     let facelets = match state {
         Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
@@ -93,7 +94,7 @@ fn solve5(state: Option<&str>, args: &[String]) {
     };
     let p = params5(args);
     let t0 = Instant::now();
-    let solver = cube444::solver5::Solver5::load();
+    let solver = cubenxnxn::solver5::Solver5::load();
     let t1 = Instant::now();
     match solver.solve(&facelets, &p) {
         Ok(sol) => {
@@ -116,8 +117,8 @@ fn solve5(state: Option<&str>, args: &[String]) {
     }
 }
 
-fn params5(args: &[String]) -> cube444::solver5::Params5 {
-    use cube444::solver5::Params5;
+fn params5(args: &[String]) -> cubenxnxn::solver5::Params5 {
+    use cubenxnxn::solver5::Params5;
     let d = match opt(args, "--mode") {
         Some("fast") => Params5::fast(),
         Some("full") => Params5::full(),
@@ -130,6 +131,11 @@ fn params5(args: &[String]) -> cube444::solver5::Params5 {
     Params5 {
         staged: num("--staged", d.staged),
         stage_extra: num("--extra", d.stage_extra),
+        joint_extra: match opt(args, "--joint") {
+            None => d.joint_extra,
+            Some("off") => None,
+            Some(n) => Some(n.parse().unwrap_or_else(|_| usage())),
+        },
         labellings: num("--labellings", d.labellings),
         c_keep: num("--c-keep", d.c_keep),
         p_keep: num("--p-keep", d.p_keep),
@@ -142,14 +148,14 @@ fn params5(args: &[String]) -> cube444::solver5::Params5 {
 
 fn solve2(cube: &Cube) {
     let t0 = Instant::now();
-    let t = cube444::c2::T2::load();
+    let t = cubenxnxn::c2::T2::load();
     let sol = t.solve(cube);
     println!("{}", format_moves(&sol));
     eprintln!("{} moves, optimal, {:.0} ms", sol.len(), t0.elapsed().as_secs_f64() * 1e3);
 }
 
 fn solve3(cube: &Cube, args: &[String]) {
-    use cube444::c3::{C3, T3};
+    use cubenxnxn::c3::{C3, T3};
     let c3 = cube
         .with_home_centres()
         .and_then(|c| C3::from_cube(&c))
@@ -163,8 +169,8 @@ fn solve3(cube: &Cube, args: &[String]) {
     if mode == "full" {
         // Exact search on all cores; falls back to the two-phase solution at the time limit.
         let secs = opt(args, "--time").and_then(|s| s.parse::<u64>().ok()).unwrap_or(120_000);
-        let big = cube444::big2::Big2::load(&t);
-        let o = cube444::opt3::Opt3::new(&t, &big);
+        let big = cubenxnxn::big2::Big2::load(&t);
+        let o = cubenxnxn::opt3::Opt3::new(&t, &big);
         let res = o.solve_optimal(&o.prepare(&c3), Instant::now() + std::time::Duration::from_millis(secs));
         note = match res.solution {
             Some(s) => {
@@ -368,9 +374,9 @@ fn bench(args: &[String]) {
 
 /// Development aid: speed of the exact 3x3x3 search on random outer-move scrambles.
 fn probe333(args: &[String]) {
-    use cube444::big2::Big2;
-    use cube444::c3::{C3, T3};
-    use cube444::opt3::{Opt3, Outcome};
+    use cubenxnxn::big2::Big2;
+    use cubenxnxn::c3::{C3, T3};
+    use cubenxnxn::opt3::{Opt3, Outcome};
     use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
     let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(10);
     let max_len: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(15);
@@ -410,8 +416,8 @@ fn probe333(args: &[String]) {
 
 /// Generates the exact centre table (2.37 GB) and checks a few lookups.
 fn gen_centres() {
-    use cube444::ctab::{Ctab, GOAL_RL, GOAL_UD};
-    use cube444::tables::{axis_masks, Tabs};
+    use cubenxnxn::ctab::{Ctab, GOAL_RL, GOAL_UD};
+    use cubenxnxn::tables::{axis_masks, Tabs};
     let tabs = Tabs::load();
     let t0 = Instant::now();
     let ctab = Ctab::load(&tabs.bp, &tabs.ranks);
@@ -426,28 +432,28 @@ fn gen_centres() {
 
 /// Development aid: where the start-up time goes.
 fn startup() {
-    use cube444::tables::Tabs;
+    use cubenxnxn::tables::Tabs;
     let lap = |name: &str, t: Instant| eprintln!("{:28} {:7.1} ms", name, t.elapsed().as_secs_f64() * 1e3);
     let t = Instant::now();
-    cube444::cube::tables();
+    cubenxnxn::cube::tables();
     lap("cube model", t);
     let t = Instant::now();
     let tabs = Tabs::load();
     lap("phase tables", t);
     let t = Instant::now();
-    let t3 = cube444::c3::T3::new();
+    let t3 = cubenxnxn::c3::T3::new();
     lap("3x3x3 tables", t);
     let t = Instant::now();
-    let _b1 = cube444::big1::Big1::load(&t3);
+    let _b1 = cubenxnxn::big1::Big1::load(&t3);
     lap("domino table (map)", t);
     let t = Instant::now();
-    let _b2 = cube444::big2::Big2::load(&t3);
+    let _b2 = cubenxnxn::big2::Big2::load(&t3);
     lap("slice table (map + small)", t);
     let t = Instant::now();
-    let _c = cube444::ctab::Ctab::load(&tabs.bp, &tabs.ranks);
+    let _c = cubenxnxn::ctab::Ctab::load(&tabs.bp, &tabs.ranks);
     lap("centre table (map + index)", t);
     let t = Instant::now();
-    let _n = cube444::ctab::Near::new(&tabs.bp);
+    let _n = cubenxnxn::ctab::Near::new(&tabs.bp);
     lap("near-goal centre table", t);
 }
 
@@ -457,7 +463,7 @@ fn facelets(args: &[String]) {
     if !(2..=7).contains(&n) {
         fail("supported sizes: 2 to 7");
     }
-    let g = cube444::cuben::Geometry::new(n);
+    let g = cubenxnxn::cuben::Geometry::new(n);
     let tokens: Vec<&str> =
         args.iter().map(String::as_str).filter(|a| !a.starts_with("--") && *a != n.to_string()).collect();
     let moves = g.parse_moves(&tokens.join(" ")).unwrap_or_else(|e| fail(&e));
@@ -472,7 +478,7 @@ fn verify(args: &[String]) {
     let n = opt(args, "--size").and_then(|s| s.parse::<usize>().ok()).unwrap_or_else(|| usage());
     let path = args.iter().find(|a| !a.starts_with("--") && **a != n.to_string()).unwrap_or_else(|| usage());
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
-    let g = cube444::cuben::Geometry::new(n);
+    let g = cubenxnxn::cuben::Geometry::new(n);
     let only_facelets = args.iter().any(|a| a == "--facelets");
     let (mut ok, mut total, mut moves) = (0usize, 0usize, 0usize);
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -503,8 +509,8 @@ fn verify(args: &[String]) {
 
 /// 5x5x5 centre staging on a scramble file: lengths and times.
 fn stage5(args: &[String]) {
-    use cube444::c5::{tables5, Cube5};
-    use cube444::stage5::Stage5;
+    use cubenxnxn::c5::{tables5, Cube5};
+    use cubenxnxn::stage5::Stage5;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
@@ -554,8 +560,8 @@ fn stage5(args: &[String]) {
 
 /// 5x5x5 on a scramble file: full solves, lengths per stage and times.
 fn bench5(args: &[String]) {
-    use cube444::c5::tables5;
-    use cube444::solver5::Solver5;
+    use cubenxnxn::c5::tables5;
+    use cubenxnxn::solver5::Solver5;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
@@ -614,4 +620,43 @@ fn bench5(args: &[String]) {
         times[times.len() - 1]
     );
     println!("length histogram: {:?}", hist);
+}
+
+/// 5x5x5 centres in one step, on a scramble file: lengths, bounds and times.
+fn centres5(args: &[String]) {
+    use cubenxnxn::c5::{tables5, Cube5};
+    use cubenxnxn::centres5::{Budget, Centres5};
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (limit, extra, time) = (num("--limit", usize::MAX), num("--extra", 0), num("--time", 0));
+    let t0 = Instant::now();
+    let c5 = Centres5::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let g = &tables5().geometry;
+    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit).enumerate() {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let cube = Cube5::from_facelets(&f).unwrap_or_else(|e| fail(&e));
+        let t = Instant::now();
+        let deadline = (time > 0).then(|| t + std::time::Duration::from_millis(time as u64));
+        let sols = c5.stage(&cube, &Budget { max_len: 30, extra, cap: 100_000, deadline });
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        for s in &sols {
+            let mut c = cube;
+            c.apply_seq(s);
+            if !cubenxnxn::stage5::Stage5::is_staged(&c) {
+                fail(&format!("cube {}: a result does not stage the centres", i));
+            }
+        }
+        println!(
+            "cube {:3}: bounds {:?}, shortest {:?}, {} results, {:.0} ms",
+            i,
+            c5.bounds(&cube),
+            sols.first().map(|s| s.len()),
+            sols.len(),
+            ms
+        );
+    }
 }

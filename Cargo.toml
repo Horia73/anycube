@@ -1,8 +1,8 @@
 [package]
-name = "cube444"
+name = "cubenxnxn"
 version = "0.1.0"
 edition = "2021"
-description = "4x4x4 Rubik's cube solver aiming for shorter solutions than three-phase reduction"
+description = "Rubik's cube solver for 2x2x2 to 5x5x5 (larger sizes planned) aiming for shorter solutions than the existing reduction solvers"
 license = "MIT"
 
 [dependencies]
@@ -10,7 +10,7 @@ rayon = "1"
 memmap2 = "0.9"
 
 [[bin]]
-name = "cube444"
+name = "cubenxnxn"
 path = "src/main.rs"
 
 [profile.release]
