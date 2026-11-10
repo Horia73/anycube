@@ -118,13 +118,13 @@ pub struct Tabs {
     pub bp: BitPerm,
     pub ranks: Ranks,
     /// Phase 1 distance, indexed by the 24-bit mask of R/L-coloured centres.
-    pub p1: Vec<u8>,
+    pub p1: Bytes,
     /// The same for the U/D colours onto U/D and the F/B colours onto F/B.
-    pub stage: [Vec<u8>; 2],
+    pub stage: [Bytes; 2],
     /// Phase 2 distance over (U/D-vs-F/B pattern, R-vs-L pattern, wing parity).
-    pub p2: Vec<u8>,
+    pub p2: Bytes,
     /// Phase 3 centre distance over (U, F, R patterns, parity).
-    pub ct3: Vec<u8>,
+    pub ct3: Bytes,
     /// Phase 3 pairing distance over the dedge pairing permutation.
     pub sigma: Bytes,
     /// Per phase-3 move: slot permutation of the low and (inverted) high wings.
@@ -358,11 +358,17 @@ fn gen_p2(bp: &BitPerm, ranks: &Ranks, ct3: &[u8]) -> Vec<u8> {
 /// True when every dedge class has one wing in each half and the number of
 /// swapped classes is even, i.e. phase 3 can pair the dedges into a valid 3x3x3.
 pub fn edges_pairable(c: &Cube) -> bool {
+    wings_pairable(&c.ep)
+}
+
+/// `edges_pairable` on the wing permutation alone.
+#[inline(always)]
+pub fn wings_pairable(ep: &[u8; 24]) -> bool {
     let mut seen = 0u32;
     let mut flips = 0u8;
     for s in 0..12 {
-        seen |= 1 << (c.ep[s] % 12);
-        flips ^= c.ep[s] / 12;
+        seen |= 1 << (ep[s] % 12);
+        flips ^= ep[s] / 12;
     }
     seen == 0xFFF && flips == 0
 }
@@ -507,7 +513,15 @@ pub(crate) fn table_dir() -> PathBuf {
     std::env::var_os("CUBE444_TABLES").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("tables"))
 }
 
+fn load_or_gen_quiet(path: &Path, len: usize, gen: &dyn Fn() -> Vec<u8>) -> Bytes {
+    load_or_gen_inner(path, len, gen, false)
+}
+
 pub(crate) fn load_or_gen(path: &Path, len: usize, gen: impl FnOnce() -> Vec<u8>) -> Bytes {
+    load_or_gen_inner(path, len, gen, true)
+}
+
+fn load_or_gen_inner(path: &Path, len: usize, gen: impl FnOnce() -> Vec<u8>, announce: bool) -> Bytes {
     if let Ok(f) = fs::File::open(path) {
         if f.metadata().map(|m| m.len() as usize == len).unwrap_or(false) {
             // Read-only private mapping of a file this program wrote.
@@ -516,7 +530,9 @@ pub(crate) fn load_or_gen(path: &Path, len: usize, gen: impl FnOnce() -> Vec<u8>
             }
         }
     }
-    eprintln!("generating {} ...", path.display());
+    if announce {
+        eprintln!("generating {} ...", path.display());
+    }
     let v = gen();
     assert_eq!(v.len(), len);
     if let Some(dir) = path.parent() {
@@ -534,10 +550,16 @@ impl Tabs {
     pub fn load() -> Tabs {
         let bp = BitPerm::new();
         let ranks = Ranks::new();
-        let p1 = gen_p1(&bp, P1_GOAL);
-        let stage = [gen_p1(&bp, 0x0000FF), gen_p1(&bp, 0x00FF00)];
-        let ct3 = gen_ct3(&bp, &ranks);
-        let p2 = gen_p2(&bp, &ranks, &ct3);
+        // Small tables are saved too: rebuilding them costs a quarter of a second per start.
+        let dir = table_dir();
+        let small = |name: &str, len: usize, gen: &dyn Fn() -> Vec<u8>| load_or_gen_quiet(&dir.join(name), len, gen);
+        let p1 = small("stage-rl.bin", 1 << 24, &|| gen_p1(&bp, P1_GOAL));
+        let stage = [
+            small("stage-ud.bin", 1 << 24, &|| gen_p1(&bp, 0x0000FF)),
+            small("stage-fb.bin", 1 << 24, &|| gen_p1(&bp, 0x00FF00)),
+        ];
+        let ct3 = small("phase3-centres.bin", N_CT3, &|| gen_ct3(&bp, &ranks));
+        let p2 = small("phase2.bin", N_P2, &|| gen_p2(&bp, &ranks, &ct3));
         let (pl, phinv) = sigma_perms();
         let sigma = load_or_gen(&table_dir().join("pairing.bin"), N_SIGMA, || gen_sigma(&pl, &phinv));
         Tabs { bp, ranks, p1, stage, p2, ct3, sigma, pl, phinv }

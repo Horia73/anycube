@@ -8,9 +8,12 @@ Cifrele măsurate sunt în `bench/RESULTS.md`.
 | Mod | Medie | Timp mediu | Măsurat pe |
 |---|---|---|---|
 | TPR (referință) | 44,57 | 0,15 s | 1.000 de cuburi |
-| `--mode fast` | 41,82 | 0,34 s | primele 100 |
-| implicit | 40,67 | 3,7 s | 1.000 de cuburi |
-| `--mode full` | vezi `bench/RESULTS.md` | ~14 s | primele 100 |
+| `--mode fast` | 41,54 | 0,36 s | primele 100 |
+| implicit | 40,64 | 2,6 s | primele 100 |
+| `--mode full` | 40,00 | 15,9 s | primele 30 |
+
+Alte mărimi: 2x2x2 se rezolvă optim în ~2 ms; 3x3x3 cu two-phase în ~10 ms sau
+optim cu `--mode full`. Pornirea durează ~25 ms.
 
 ## De ce nu am schimbat structura fazei 3
 
@@ -60,15 +63,25 @@ Idei rămase, în ordinea în care le-aș încerca:
 
 ## Viteză
 
-Unde se duce timpul în modul implicit: faza unită ~40%, faza 3 ~25%, 3x3x3 ~35%.
+Făcut pe 2026-11-10:
 
-| Pas | Câștig așteptat |
+| Pas | Efect măsurat |
 |---|---|
-| Tabelele mici salvate pe disc (acum se refac la fiecare pornire) | pornire din ~0,5 s în ~0,05 s |
-| Urmărirea muchiilor în faza unită, în loc de reaplicarea secvenței la capăt | faza unită de ~1,5 ori mai rapidă |
-| Tabel de împerechere redus prin simetrie (240 MB → 30 MB, în cache) | faza 3 de ~2 ori mai rapidă |
-| Mod fără tabelul de centre (fazele 1 și 2 separate) | 3 MB de tabele în loc de 4,9 GB |
-| Proces rezident sau bibliotecă, pentru rezolvări în serie | fără cost de pornire |
+| Tabelele mici salvate pe disc | pornire din ~540 ms în ~25 ms |
+| Faza 1 a 3x3x3 verificată cu tabelul exact | etapa 3x3x3 de ~5 ori mai rapidă |
+| Ultima mutare a fazei unite testată întâi pe muchii | faza unită de 2–3 ori mai rapidă |
+| Mutări care îndepărtează centrele, sărite când nu e loc de ele | inclus în cifra de mai sus |
+
+Efectul pe ansamblu: aceeași lungime ca înainte (40,6) în 2,6 s în loc de 3,7 s,
+iar modul full ajunge la ~40,0 fiindcă își permite de 15 ori mai multe capete.
+
+Ce a mai rămas:
+
+- Faza unită e în continuare ~60% din timp. Nodurile ei sunt răspândite pe
+  toate nivelurile (nu doar la frunze), deci următorul câștig cere un test pe
+  muchii cu două mutări înainte de capăt, nu doar cu una.
+- Tabel de împerechere redus prin simetrie (240 MB → 30 MB), pentru faza 3.
+- Mod fără tabelul de centre, pentru mașini cu puțină memorie.
 
 ## Moduri
 
@@ -77,27 +90,65 @@ Unde se duce timpul în modul implicit: faza unită ~40%, faza 3 ~25%, 3x3x3 ~35
 - **full** (~14 s): implicit plus căutare exactă 3x3x3. Există.
 - De făcut: un mod **tiny**, fără tabelele mari, pentru mașini cu puțină memorie.
 
-## Spre NxNxN
+## 5x5x5: unde stau ceilalți și ce am pregătit
 
-Ce se generalizează și ce nu:
+**Chen Shuang (cube555), citit din cod.** Cinci faze de reducere, apoi min2phase:
 
-- **Se păstrează:** etapa 3x3x3 (two-phase și exact), ideea de lot de reduceri
-  comparat după lungimea totală, variantele de orientare, limita de timp.
-- **Se rescrie:** modelul de cub și fazele de reducere. Acum sunt scrise de
-  mână pentru 4x4x4, după numerotarea TPR.
+| Fază | Ce rezolvă | Mutări permise |
+|---|---|---|
+| 1 | centrele x și t de culoare R/L ajung pe fețele R/L | toate cele 36 |
+| 2 | centrele U/D pe U/D, paritatea wings | 22 |
+| 3 | R față de L pe fețele R/L, wings împărțite high/low, orientarea muchiilor centrale | 24 |
+| 4 | patru muchii complete așezate, centre parțial | 16 |
+| 5 | ultimele opt muchii și toate centrele | 14 |
 
-Pași propuși:
+- Rezultat publicat: 51–52 de mutări pentru reducere, 1–2 s, tabele de 240 MB.
+  Cu 3x3x3 (~19,6) iese ~71 în total. dwalton76 raportează ~77–79.
+- Unde pierde mutări, după cod:
+  - etapa 3x3x3 se rezolvă o singură dată, după prima reducere găsită;
+  - mutările nu se anulează la trecerea dintre faze;
+  - doar faza 5 vede tot lotul de candidați (500); fazele dinainte taie lacom;
+  - fazele 1 și 2 sunt separate, ca la TPR înainte să le unim noi;
+  - nu încearcă scramble-ul invers și nici altă axă după faza 1.
 
-1. **Model generic.** Piesele pe orbite (colțuri, muchii centrale, perechi de
-   wings, orbite de centre), cu mutările generate din geometrie, nu din liste.
-2. **5x5x5.** Are două orbite de centre de câte 24 (ca la 4x4x4), 24 de wings
-   și 12 muchii centrale care fixează orientarea. Fără paritatea de la 4x4x4.
-3. **6x6x6 și 7x7x7.** Apar centrele oblice; aici dwalton76 e singura referință.
-4. **N general.** Reducere pe orbite, cu tabele doar pentru orbitele mici.
+**Ce se transferă direct de la 4x4x4:**
 
-Avertisment: tabelul exact de centre (9,5 miliarde de stări) e posibil doar
-pentru o orbită. La 5x5x5 sunt două orbite care trebuie rezolvate împreună,
-deci va fi nevoie de alte faze, nu doar de tabele mai mari.
+- Lotul de reduceri comparat după lungimea totală (la 4x4x4 a adus ~2 mutări).
+- Tabelul exact de centre: centrele x de la 5x5x5 se mișcă exact ca centrele
+  de la 4x4x4, deci `centres-exact.bin` se refolosește ca atare. Centrele t au
+  nevoie de un tabel propriu de aceeași mărime.
+- Testul pe muchii la ultima mutare și căutarea pe trei axe deodată.
+
+**Ce e diferit:**
+
+- Centrele sunt fixe, deci cubul nu poate fi terminat în 24 de orientări; rămân
+  doar cele 3 alegeri de axă.
+- Două orbite de centre trebuie așezate împreună; pragul de căutare va fi
+  maximul celor două tabele exacte, nu un singur tabel perfect.
+- Muchiile centrale fixează orientarea, deci nu există paritatea de la 4x4x4,
+  dar faza de muchii are trei piese pe muchie în loc de două.
+
+**Pregătit acum:** `src/cuben.rs`, un model pe stickere pentru orice mărime,
+construit doar din geometrie și verificat mutare cu mutare față de modelul de
+4x4x4. Aplică scramble-uri și verifică soluții pentru 5x5x5, 6x6x6, 7x7x7.
+
+**Pași următori pentru 5x5x5:**
+
+1. Set fix de scramble-uri și măsurătoare cube555 pe Mac-ul tău, pe faze.
+2. Model pe piese (centre x, centre t, muchii centrale, wings, colțuri) și
+   tabelul exact pentru centrele t.
+3. Faza unită de centre pentru ambele orbite, apoi fazele de muchii după
+   cube555, cu lotul de reduceri și etapa 3x3x3 de la 4x4x4.
+4. Abia apoi: unirea fazelor de muchii, unde cred că e câștigul cel mai mare.
+
+Țintă realistă pentru prima versiune: sub 66 de mutări (cube555: ~71).
+E o estimare din ce am câștigat la 4x4x4, nu o măsurătoare.
+
+## Spre mărimi mai mari
+
+- 6x6x6 și 7x7x7 au centre oblice; singura referință e dwalton76.
+- Pentru N general: reducere pe orbite, cu tabele exacte doar pentru orbitele
+  mici. Modelul pe stickere acoperă deja orice N.
 
 ## Despre tabelele lui dwalton76
 

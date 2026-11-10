@@ -62,7 +62,7 @@ impl Default for Params {
             k1: 500,
             n2: 10_000,
             k3: 10_000,
-            probes333: 3000,
+            probes333: 10_000,
             n3: 2000,
             extra3: 1,
             exact_nodes: 0,
@@ -70,7 +70,7 @@ impl Default for Params {
             joint: true,
             joint_nodes: 1_000_000_000,
             refine: 16,
-            time_limit_ms: 8000,
+            time_limit_ms: 4000,
             far_g: 0,
             far_k: 300,
             far_n: 20_000,
@@ -79,23 +79,32 @@ impl Default for Params {
 }
 
 impl Params {
-    /// About 0.4 s per cube on an M1 Pro.
+    /// About 0.35 s per cube on an M1 Pro.
     pub fn fast() -> Params {
         Params {
             n2: 300,
             k3: 300,
             joint_nodes: 20_000_000,
-            probes333: 1000,
-            refine: 1,
+            probes333: 3000,
+            refine: 4,
             n3: 200,
             time_limit_ms: 1000,
             ..Params::default()
         }
     }
 
-    /// About 14 s per cube: the default plus an exact 3x3x3 search over the reductions.
+    /// About 16 s per cube: fifteen times as many endpoints as the default, plus an
+    /// exact 3x3x3 search over the reductions.
     pub fn full() -> Params {
-        Params { exact_nodes: 100_000_000, exact_cap: 16, time_limit_ms: 30_000, ..Params::default() }
+        Params {
+            n2: 150_000,
+            k3: 150_000,
+            joint_nodes: 20_000_000_000,
+            exact_nodes: 60_000_000,
+            exact_cap: 16,
+            time_limit_ms: 20_000,
+            ..Params::default()
+        }
     }
 }
 
@@ -432,7 +441,7 @@ impl Solver {
             .par_iter()
             .map(|it| {
                 let probes = if std::time::Instant::now() > pass1_end { 1 } else { p.probes333 };
-                self.t3.solve(&it.c3, probes)
+                self.t3.solve(&it.c3, probes, Some(&self.big))
             })
             .collect();
         // Then a much deeper search on the reductions that came out best.
@@ -442,7 +451,7 @@ impl Solver {
             order.truncate((items.len() / 16).max(24).min(items.len()));
             let deeper: Vec<(usize, Vec<u8>)> = order
                 .par_iter()
-                .map(|&k| (k, self.t3.solve(&items[k].c3, p.probes333 * p.refine)))
+                .map(|&k| (k, self.t3.solve(&items[k].c3, p.probes333 * p.refine, Some(&self.big))))
                 .collect();
             for (k, sol) in deeper {
                 if sol.len() < two[k].len() {

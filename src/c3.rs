@@ -4,6 +4,8 @@
 //! so no convention mapping is needed. Edge flip is "low slot holds a high
 //! wing": quarter turns of R and L flip, everything else does not.
 
+use crate::big1::Big1;
+use crate::cache::{Reader, Writer};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 
 pub const N_TWIST: usize = 2187;
@@ -15,6 +17,7 @@ const N_SPERM: usize = 24;
 const G1_MOVES: [u8; 10] = [0, 1, 2, 9, 10, 11, 4, 13, 7, 16];
 const SLICE_GOAL_MASK: usize = 0xF00;
 const UNREACHED: u8 = 255;
+const CACHE_FILE: &str = "cube333.bin";
 pub const UNBOUNDED: usize = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -167,12 +170,92 @@ fn bfs2<const M: usize>(
 }
 
 impl T3 {
+    /// Loads the tables from the cache, or builds and caches them.
     pub fn new() -> T3 {
-        let ct = cube_tables();
+        if let Some(t) = T3::from_cache() {
+            return t;
+        }
+        let t = T3::build();
+        let mut w = Writer::new();
+        w.put(&t.twist_mv);
+        w.put(&t.flip_mv);
+        w.put(&t.slice_mv);
+        w.put(&t.slice_rank);
+        w.put(&t.slice_unrank);
+        w.put(&t.cperm_mv);
+        w.put(&t.uperm_mv);
+        w.put(&t.sperm_mv);
+        w.put(&t.p_ts);
+        w.put(&t.p_fs);
+        w.put(&t.p_tf);
+        w.put(&t.p_cs);
+        w.put(&t.p_us);
+        w.save(CACHE_FILE);
+        t
+    }
+
+    fn from_cache() -> Option<T3> {
+        let mut r = Reader::open(CACHE_FILE)?;
+        let twist_mv = r.get(N_TWIST)?;
+        let flip_mv = r.get(N_FLIP)?;
+        let slice_mv = r.get(N_SLICE)?;
+        let slice_rank: Vec<u16> = r.get(4096)?;
+        let slice_unrank = r.get(N_SLICE)?;
+        let cperm_mv = r.get(N_PERM)?;
+        let uperm_mv = r.get(N_PERM)?;
+        let sperm_mv = r.get(N_SPERM)?;
+        let p_ts = r.get(N_TWIST * N_SLICE)?;
+        let p_fs = r.get(N_FLIP * N_SLICE)?;
+        let p_tf = r.get(N_TWIST * N_FLIP)?;
+        let p_cs = r.get(N_PERM * N_SPERM)?;
+        let p_us = r.get(N_PERM * N_SPERM)?;
+        let slice_goal = slice_rank[SLICE_GOAL_MASK] as usize;
+        Some(T3 {
+            moves: T3::base_moves(),
+            twist_mv,
+            flip_mv,
+            slice_mv,
+            slice_rank,
+            slice_unrank,
+            cperm_mv,
+            uperm_mv,
+            sperm_mv,
+            p_ts,
+            p_fs,
+            p_tf,
+            p_cs,
+            p_us,
+            slice_goal,
+            frames: T3::base_frames(),
+        })
+    }
+
+    fn base_moves() -> [C3; 18] {
         let mut moves = [C3::identity(); 18];
         for m in 0..18 {
             moves[m] = C3::from_cube(&Cube::from_moves(&[m as u8])).unwrap();
         }
+        moves
+    }
+
+    fn base_frames() -> Vec<(usize, C3, C3)> {
+        let ct = cube_tables();
+        // Frames: identity and the two rotations about the URF-DBL diagonal.
+        let x = [21u8, 32];
+        let y = [18u8, 29];
+        let c1: Vec<u8> = x.iter().chain(y.iter()).copied().collect();
+        let c2: Vec<u8> = c1.iter().chain(c1.iter()).copied().collect();
+        let mut frames = Vec::new();
+        for seq in [vec![], c1, c2] {
+            let r = ct.rot_index(&seq);
+            let rot = C3::from_cube(&ct.rots[r].state).unwrap();
+            frames.push((r, rot.inverse(), rot));
+        }
+        frames
+    }
+
+    fn build() -> T3 {
+        let moves = T3::base_moves();
         // Phase 1 coordinates.
         let mut twist_mv = vec![[0u16; 18]; N_TWIST];
         for t in 0..N_TWIST {
@@ -267,17 +350,7 @@ impl T3 {
         let spm = |a: usize, m: usize| sperm_mv[a][m] as usize;
         let p_cs = bfs2::<10>(N_PERM, N_SPERM, cm, spm, (0, 0));
         let p_us = bfs2::<10>(N_PERM, N_SPERM, um, spm, (0, 0));
-        // Frames: identity and the two rotations about the URF-DBL diagonal.
-        let x = [21u8, 32];
-        let y = [18u8, 29];
-        let c1: Vec<u8> = x.iter().chain(y.iter()).copied().collect();
-        let c2: Vec<u8> = c1.iter().chain(c1.iter()).copied().collect();
-        let mut frames = Vec::new();
-        for seq in [vec![], c1, c2] {
-            let r = ct.rot_index(&seq);
-            let rot = C3::from_cube(&ct.rots[r].state).unwrap();
-            frames.push((r, rot.inverse(), rot));
-        }
+        let frames = T3::base_frames();
         T3 {
             moves,
             twist_mv,
@@ -320,13 +393,16 @@ impl T3 {
 
     /// Finds a short solution (outer moves, 0..18). `probes` is the minimum
     /// number of phase-2 attempts before the best solution so far is returned.
-    pub fn solve(&self, cube: &C3, probes: u64) -> Vec<u8> {
-        self.solve_bounded(cube, UNBOUNDED, probes).expect("3x3x3 state must be solvable")
+    ///
+    /// With `exact`, the table of exact distances to the domino subgroup, the
+    /// first phase follows only sequences that really reach the subgroup in time.
+    pub fn solve(&self, cube: &C3, probes: u64, exact: Option<&Big1>) -> Vec<u8> {
+        self.solve_bounded(cube, UNBOUNDED, probes, exact).expect("3x3x3 state must be solvable")
     }
 
     /// Like `solve`, but only accepts solutions of at most `max_len` moves and
     /// gives up after `probes` phase-2 attempts without one.
-    pub fn solve_bounded(&self, cube: &C3, max_len: usize, probes: u64) -> Option<Vec<u8>> {
+    pub fn solve_bounded(&self, cube: &C3, max_len: usize, probes: u64, exact: Option<&Big1>) -> Option<Vec<u8>> {
         let ct = cube_tables();
         let mut variants = Vec::new();
         for (r, rinv, rot) in &self.frames {
@@ -336,6 +412,7 @@ impl T3 {
         }
         let mut s = Search {
             t: self,
+            big: exact,
             start: C3::identity(),
             path: [0; 40],
             best: None,
@@ -356,9 +433,13 @@ impl T3 {
                 if self.h1(tw, fl, sl) as usize > d1 {
                     continue;
                 }
+                let d = exact.map_or(0, |big| big.exact(self, tw, fl, sl));
+                if d as usize > d1 {
+                    continue;
+                }
                 s.start = *c;
                 s.best = None;
-                s.phase1(tw, fl, sl, d1, 255, 0);
+                s.phase1(tw, fl, sl, d, d1, 255, 0);
                 if let Some(mut sol) = s.best.take() {
                     if *inverse {
                         sol = crate::cube::inv_seq(&sol);
@@ -379,6 +460,7 @@ impl T3 {
 
 struct Search<'a> {
     t: &'a T3,
+    big: Option<&'a Big1>,
     start: C3,
     path: [u8; 40],
     best: Option<Vec<u8>>,
@@ -391,7 +473,7 @@ struct Search<'a> {
 }
 
 impl Search<'_> {
-    fn phase1(&mut self, tw: usize, fl: usize, sl: usize, rem: usize, last: u8, depth: usize) {
+    fn phase1(&mut self, tw: usize, fl: usize, sl: usize, d: u8, rem: usize, last: u8, depth: usize) {
         if self.stop {
             return;
         }
@@ -408,6 +490,10 @@ impl Search<'_> {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
+            // The last move of the first phase must leave the domino subgroup's moves.
+            if rem == 1 && G1_MOVES.contains(&m) {
+                continue;
+            }
             let (a, b, c) = (
                 t.twist_mv[tw][m as usize] as usize,
                 t.flip_mv[fl][m as usize] as usize,
@@ -416,8 +502,17 @@ impl Search<'_> {
             if t.h1(a, b, c) as usize > rem - 1 {
                 continue;
             }
+            // The small tables let some dead ends through; the exact table does not.
+            let mut dc = 0;
+            if let Some(big) = self.big {
+                let v = big.get(Big1::index(a, b, c));
+                dc = d + (v + 3 - (d + 2) % 3) % 3 - 1;
+                if dc as usize > rem - 1 {
+                    continue;
+                }
+            }
             self.path[depth] = m;
-            self.phase1(a, b, c, rem - 1, m, depth + 1);
+            self.phase1(a, b, c, dc, rem - 1, m, depth + 1);
             if self.stop {
                 return;
             }
@@ -497,7 +592,7 @@ mod tests {
             let seq = parse_moves(scr).unwrap();
             let cube = Cube::from_moves(&seq);
             let c3 = C3::from_cube(&cube).unwrap();
-            let sol = t.solve(&c3, 200);
+            let sol = t.solve(&c3, 200, None);
             let mut c = cube;
             c.apply_seq(&sol);
             assert_eq!(c, Cube::solved(), "scramble {}", scr);

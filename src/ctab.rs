@@ -329,20 +329,52 @@ impl Ctab {
 /// almost all nodes are, never touches the big table and never tries a move
 /// that cannot work.
 pub struct Near {
-    /// `key << 8 | distance`, or `EMPTY`.
-    slots: Vec<u64>,
-    /// Bit `m` set: move `m` decreases the distance.
-    closer: Vec<u32>,
+    /// Open-addressing table; a slot is free when its key is `EMPTY`.
+    slots: Vec<NearSlot>,
     mask: usize,
+    /// One bit per hash value: most states are not in the table, and this
+    /// small filter says so without touching the table itself.
+    filter: Vec<u64>,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct NearSlot {
+    /// `rl << 24 | ud`.
+    key: u64,
+    /// Bit `m` set: move `m` decreases the distance.
+    closer: u32,
+    /// Bit `m` set: move `m` keeps the distance.
+    same: u32,
+    dist: u32,
 }
 
 pub const NEAR: usize = 5;
 const EMPTY: u64 = u64::MAX;
+const NEAR_SIZE: usize = 1 << 18;
+const FILTER_BITS: usize = 1 << 22;
+/// States within `NEAR` moves of the goal.
+const NEAR_STATES: usize = 131_491;
 
 impl Near {
+    /// Loads the table from the cache, or builds and caches it.
     pub fn new(bp: &BitPerm) -> Near {
-        let size = 1 << 19;
-        let mut near = Near { slots: vec![EMPTY; size], closer: vec![0; size], mask: size - 1 };
+        if let Some(mut r) = crate::cache::Reader::open("centres-near.bin") {
+            if let (Some(slots), Some(filter)) = (r.get(NEAR_SIZE), r.get(FILTER_BITS / 64)) {
+                return Near { slots, mask: NEAR_SIZE - 1, filter };
+            }
+        }
+        let near = Near::build(bp);
+        let mut w = crate::cache::Writer::new();
+        w.put(&near.slots);
+        w.put(&near.filter);
+        w.save("centres-near.bin");
+        near
+    }
+
+    fn build(bp: &BitPerm) -> Near {
+        let free = NearSlot { key: EMPTY, closer: 0, same: 0, dist: 0 };
+        let mut near = Near { slots: vec![free; NEAR_SIZE], mask: NEAR_SIZE - 1, filter: vec![0; FILTER_BITS / 64] };
         near.insert(GOAL_RL, GOAL_UD, 0);
         let mut all = vec![(GOAL_RL, GOAL_UD)];
         let mut start = 0;
@@ -360,19 +392,22 @@ impl Near {
             }
             start = end;
         }
-        assert_eq!(all.len(), 131_491);
+        assert_eq!(all.len(), NEAR_STATES);
         for &(rl, ud) in &all {
-            let (d, _) = near.get(rl, ud).unwrap();
-            let mut bits = 0u32;
+            let (d, _, _) = near.get(rl, ud).unwrap();
+            let (mut closer, mut same) = (0u32, 0u32);
             for &m in &P1_MOVES {
-                if let Some((e, _)) = near.get(bp.apply(m, rl), bp.apply(m, ud)) {
+                if let Some((e, _, _)) = near.get(bp.apply(m, rl), bp.apply(m, ud)) {
                     if e + 1 == d {
-                        bits |= 1 << m;
+                        closer |= 1 << m;
+                    } else if e == d {
+                        same |= 1 << m;
                     }
                 }
             }
             let i = near.find(rl, ud).unwrap();
-            near.closer[i] = bits;
+            near.slots[i].closer = closer;
+            near.slots[i].same = same;
         }
         near
     }
@@ -385,31 +420,43 @@ impl Near {
     fn insert(&mut self, rl: u32, ud: u32, d: u8) {
         let key = (rl as u64) << 24 | ud as u64;
         let mut i = self.slot(key);
-        while self.slots[i] != EMPTY {
+        while self.slots[i].key != EMPTY {
             i = (i + 1) & self.mask;
         }
-        self.slots[i] = key << 8 | d as u64;
+        self.slots[i] = NearSlot { key, closer: 0, same: 0, dist: d as u32 };
+        let bit = Self::filter_bit(key);
+        self.filter[bit >> 6] |= 1 << (bit & 63);
+    }
+
+    #[inline(always)]
+    fn filter_bit(key: u64) -> usize {
+        (key.wrapping_mul(0xD6E8_FEB8_6659_FD93) >> 42) as usize & (FILTER_BITS - 1)
     }
 
     #[inline(always)]
     fn find(&self, rl: u32, ud: u32) -> Option<usize> {
         let key = (rl as u64) << 24 | ud as u64;
+        let bit = Self::filter_bit(key);
+        if (self.filter[bit >> 6] >> (bit & 63)) & 1 == 0 {
+            return None;
+        }
         let mut i = self.slot(key);
         loop {
-            let s = self.slots[i];
+            let s = self.slots[i].key;
             if s == EMPTY {
                 return None;
             }
-            if s >> 8 == key {
+            if s == key {
                 return Some(i);
             }
             i = (i + 1) & self.mask;
         }
     }
 
-    /// The exact distance if it is at most `NEAR`, and the moves that decrease it.
+    /// The exact distance if it is at most `NEAR`, the moves that decrease it and
+    /// the moves that keep it.
     #[inline(always)]
-    pub fn get(&self, rl: u32, ud: u32) -> Option<(u8, u32)> {
-        self.find(rl, ud).map(|i| (self.slots[i] as u8, self.closer[i]))
+    pub fn get(&self, rl: u32, ud: u32) -> Option<(u8, u32, u32)> {
+        self.find(rl, ud).map(|i| (self.slots[i].dist as u8, self.slots[i].closer, self.slots[i].same))
     }
 }

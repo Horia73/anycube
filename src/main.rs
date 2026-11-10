@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cube444 solve <moves...> [search flags]   solve a scramble given as moves\n  cube444 solve --state <96 facelets> [search flags]   solve a cube given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cube444 solve <moves...> [--size 2|3|4] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cube444 solve --state <24, 54 or 96 facelets> [search flags]   solve a 2x2x2, 3x3x3 or 4x4x4 given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cube444 facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -18,28 +18,95 @@ fn main() {
         Some("bench") => bench(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
         Some("gen-centres") => gen_centres(),
+        Some("startup") => startup(),
+        Some("facelets") => facelets(&args[1..]),
         _ => usage(),
     }
 }
 
 fn solve(args: &[String]) {
-    let cube = if args.first().map(String::as_str) == Some("--state") {
-        match args.get(1).map(|s| Cube::from_facelets(s)) {
-            Some(Ok(c)) => c,
-            Some(Err(e)) => fail(&e),
-            None => usage(),
-        }
-    } else {
-        let moves: Vec<&str> = args.iter().map(String::as_str).take_while(|a| !a.starts_with("--")).collect();
-        match parse_moves(&moves.join(" ")) {
-            Ok(m) => Cube::from_moves(&m),
-            Err(e) => fail(&e),
+    let state = opt(args, "--state");
+    let size = match (opt(args, "--size"), state.map(|s| s.trim().len())) {
+        (Some(n), _) => n.parse::<usize>().unwrap_or_else(|_| usage()),
+        (None, Some(24)) => 2,
+        (None, Some(54)) => 3,
+        _ => 4,
+    };
+    let cube = match state {
+        Some(s) if size == 4 => Cube::from_facelets(s).unwrap_or_else(|e| fail(&e)),
+        Some(s) => Cube::from_small_facelets(s).unwrap_or_else(|e| fail(&e)),
+        None => {
+            // Everything that is neither a flag nor a flag's value is a move.
+            let mut tokens: Vec<&str> = Vec::new();
+            let mut i = 0;
+            while i < args.len() {
+                if args[i].starts_with("--") {
+                    i += if matches!(args[i].as_str(), "--split" | "--parallel") { 1 } else { 2 };
+                } else {
+                    tokens.push(&args[i]);
+                    i += 1;
+                }
+            }
+            let moves = parse_moves(&tokens.join(" ")).unwrap_or_else(|e| fail(&e));
+            if size < 4 && moves.iter().any(|&m| m >= 18) {
+                fail("wide moves need a 4x4x4");
+            }
+            Cube::from_moves(&moves)
         }
     };
+    match size {
+        2 => solve2(&cube),
+        3 => solve3(&cube, args),
+        4 => solve4(&cube, args),
+        _ => fail("supported sizes: 2, 3 and 4"),
+    }
+}
+
+fn solve2(cube: &Cube) {
+    let t0 = Instant::now();
+    let t = cube444::c2::T2::load();
+    let sol = t.solve(cube);
+    println!("{}", format_moves(&sol));
+    eprintln!("{} moves, optimal, {:.0} ms", sol.len(), t0.elapsed().as_secs_f64() * 1e3);
+}
+
+fn solve3(cube: &Cube, args: &[String]) {
+    use cube444::c3::{C3, T3};
+    let c3 = cube
+        .with_home_centres()
+        .and_then(|c| C3::from_cube(&c))
+        .unwrap_or_else(|| fail("not a 3x3x3 state"));
+    let mode = opt(args, "--mode").unwrap_or("normal");
+    let t0 = Instant::now();
+    let t = T3::new();
+    let probes = if mode == "fast" { 500 } else { 30_000 };
+    let mut sol = t.solve(&c3, probes, None);
+    let mut note = "two-phase search".to_string();
+    if mode == "full" {
+        // Exact search on all cores; falls back to the two-phase solution at the time limit.
+        let secs = opt(args, "--time").and_then(|s| s.parse::<u64>().ok()).unwrap_or(120_000);
+        let big = cube444::big2::Big2::load(&t);
+        let o = cube444::opt3::Opt3::new(&t, &big);
+        let res = o.solve_optimal(&o.prepare(&c3), Instant::now() + std::time::Duration::from_millis(secs));
+        note = match res.solution {
+            Some(s) => {
+                sol = s;
+                "optimal".to_string()
+            }
+            None => format!("not proven optimal: no solution shorter than {} moves", res.proven_lower_bound),
+        };
+    } else if mode != "fast" && mode != "normal" {
+        usage();
+    }
+    println!("{}", format_moves(&sol));
+    eprintln!("{} moves, {}, {:.0} ms", sol.len(), note, t0.elapsed().as_secs_f64() * 1e3);
+}
+
+fn solve4(cube: &Cube, args: &[String]) {
     let t0 = Instant::now();
     let solver = Solver::new();
     let t1 = Instant::now();
-    match solver.solve(&cube, &params(args)) {
+    match solver.solve(cube, &params(args)) {
         Ok(sol) => {
             println!("{}", format_moves(&sol.moves));
             eprintln!(
@@ -240,7 +307,7 @@ fn probe333(args: &[String]) {
     for i in 0..n {
         let moves: Vec<u8> = (0..40).map(|_| (rnd() % 18) as u8).collect();
         let c3 = C3::from_cube(&Cube::from_moves(&moves)).unwrap();
-        let two = t.solve(&c3, 500).len();
+        let two = t.solve(&c3, 500, None).len();
         let budget = AtomicI64::new(i64::MAX);
         let t0 = Instant::now();
         let root = o.prepare(&c3);
@@ -277,4 +344,46 @@ fn gen_centres() {
         let m = axis_masks(&c);
         println!("{:40} distance {}", scr, ctab.exact(&tabs.bp, &tabs.ranks, m[2], m[0]));
     }
+}
+
+/// Development aid: where the start-up time goes.
+fn startup() {
+    use cube444::tables::Tabs;
+    let lap = |name: &str, t: Instant| eprintln!("{:28} {:7.1} ms", name, t.elapsed().as_secs_f64() * 1e3);
+    let t = Instant::now();
+    cube444::cube::tables();
+    lap("cube model", t);
+    let t = Instant::now();
+    let tabs = Tabs::load();
+    lap("phase tables", t);
+    let t = Instant::now();
+    let t3 = cube444::c3::T3::new();
+    lap("3x3x3 tables", t);
+    let t = Instant::now();
+    let _b1 = cube444::big1::Big1::load(&t3);
+    lap("domino table (map)", t);
+    let t = Instant::now();
+    let _b2 = cube444::big2::Big2::load(&t3);
+    lap("slice table (map + small)", t);
+    let t = Instant::now();
+    let _c = cube444::ctab::Ctab::load(&tabs.bp, &tabs.ranks);
+    lap("centre table (map + index)", t);
+    let t = Instant::now();
+    let _n = cube444::ctab::Near::new(&tabs.bp);
+    lap("near-goal centre table", t);
+}
+
+/// Prints the facelets of a scrambled cube of any size.
+fn facelets(args: &[String]) {
+    let n = opt(args, "--size").and_then(|s| s.parse::<usize>().ok()).unwrap_or_else(|| usage());
+    if !(2..=7).contains(&n) {
+        fail("supported sizes: 2 to 7");
+    }
+    let g = cube444::cuben::Geometry::new(n);
+    let tokens: Vec<&str> =
+        args.iter().map(String::as_str).filter(|a| !a.starts_with("--") && *a != n.to_string()).collect();
+    let moves = g.parse_moves(&tokens.join(" ")).unwrap_or_else(|e| fail(&e));
+    let mut f = g.solved();
+    g.apply_seq(&mut f, &moves);
+    println!("{}", g.to_string(&f));
 }

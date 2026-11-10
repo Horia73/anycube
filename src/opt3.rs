@@ -7,7 +7,9 @@ use crate::big1::Big1;
 use crate::big2::Big2;
 use crate::c3::{C3, T3};
 use crate::cube::{skip_move, tables as cube_tables};
-use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering::Relaxed};
+use std::time::Instant;
 
 pub struct Opt3<'a> {
     t: &'a T3,
@@ -33,6 +35,9 @@ struct Ctx<'a> {
     nodes: u64,
     budget: &'a AtomicI64,
     aborted: bool,
+    /// Set by another thread that found a solution, or checked against a deadline.
+    stop: Option<&'a AtomicBool>,
+    deadline: Option<Instant>,
 }
 
 impl<'a> Opt3<'a> {
@@ -61,13 +66,106 @@ impl<'a> Opt3<'a> {
         Root { cube: *cube, st, d }
     }
 
+    /// One move from a node, without pruning.
+    fn child(&self, st: &[[u16; 3]; 3], d: &[u8; 3], m: u8) -> ([[u16; 3]; 3], [u8; 3]) {
+        let mut nst = [[0u16; 3]; 3];
+        let mut nd = [0u8; 3];
+        for a in 0..3 {
+            let mm = self.axis_move[a][m as usize] as usize;
+            let c = [
+                self.t.twist_mv[st[a][0] as usize][mm],
+                self.t.flip_mv[st[a][1] as usize][mm],
+                self.big.ss_mv[st[a][2] as usize][mm],
+            ];
+            let v = self.big.get(self.big.index(c[0] as usize, c[1] as usize, c[2] as usize));
+            nd[a] = d[a] + (v + 3 - (d[a] + 2) % 3) % 3 - 1;
+            nst[a] = c;
+        }
+        (nst, nd)
+    }
+
+    /// The optimal solution, searched on all cores, length by length, until `deadline`.
+    pub fn solve_optimal(&self, root: &Root, deadline: Instant) -> Optimal {
+        if root.cube == C3::identity() {
+            return Optimal { solution: Some(Vec::new()), proven_lower_bound: 0 };
+        }
+        let budget = AtomicI64::new(i64::MAX);
+        let mut lower = root.lower_bound().max(1);
+        for len in lower..=20 {
+            // Split the search two moves deep; the first piece to find a solution stops the rest.
+            let mut jobs = Vec::new();
+            for m1 in 0..18u8 {
+                let (s1, d1) = self.child(&root.st, &root.d, m1);
+                if bound(&d1) > len - 1 {
+                    continue;
+                }
+                if len == 1 {
+                    jobs.push((vec![m1], s1, d1));
+                    continue;
+                }
+                for m2 in 0..18u8 {
+                    if skip_move(m1, m2) {
+                        continue;
+                    }
+                    let (s2, d2) = self.child(&s1, &d1, m2);
+                    if bound(&d2) <= len - 2 {
+                        jobs.push((vec![m1, m2], s2, d2));
+                    }
+                }
+            }
+            let stop = AtomicBool::new(false);
+            let found = jobs.par_iter().find_map_any(|(prefix, st, d)| {
+                let mut ctx = Ctx {
+                    o: self,
+                    root: root.cube,
+                    path: [0; 32],
+                    nodes: 0,
+                    budget: &budget,
+                    aborted: false,
+                    stop: Some(&stop),
+                    deadline: Some(deadline),
+                };
+                ctx.path[..prefix.len()].copy_from_slice(prefix);
+                let rem = len - prefix.len();
+                let hit = if rem == 0 {
+                    ctx.solved(len)
+                } else {
+                    ctx.dfs(st, d, rem, prefix[prefix.len() - 1], prefix.len())
+                };
+                if hit {
+                    stop.store(true, Relaxed);
+                    Some(ctx.path[..len].to_vec())
+                } else {
+                    None
+                }
+            });
+            if found.is_some() {
+                return Optimal { solution: found, proven_lower_bound: len };
+            }
+            if Instant::now() > deadline {
+                break;
+            }
+            lower = len + 1;
+        }
+        Optimal { solution: None, proven_lower_bound: lower }
+    }
+
     /// Shortest solution with `min_len..=max_len` moves, assuming none is shorter than `min_len`.
     /// `budget` is a shared node allowance; the search aborts when it is used up.
     pub fn solve(&self, root: &Root, min_len: usize, max_len: usize, budget: &AtomicI64) -> Outcome {
         if root.cube == C3::identity() {
             return Outcome::Solved(Vec::new());
         }
-        let mut ctx = Ctx { o: self, root: root.cube, path: [0; 32], nodes: 0, budget, aborted: false };
+        let mut ctx = Ctx {
+            o: self,
+            root: root.cube,
+            path: [0; 32],
+            nodes: 0,
+            budget,
+            aborted: false,
+            stop: None,
+            deadline: None,
+        };
         for len in root.lower_bound().max(min_len).max(1)..=max_len.min(31) {
             if ctx.dfs(&root.st, &root.d, len, 255, 0) {
                 return Outcome::Solved(ctx.path[..len].to_vec());
@@ -96,6 +194,14 @@ pub fn domino_distance(t: &T3, big: &Big1, cube: &C3, cap: u8) -> Option<u8> {
         }
     }
     best
+}
+
+/// Result of `Opt3::solve_optimal`.
+pub struct Optimal {
+    /// The shortest solution, if one was found before the deadline.
+    pub solution: Option<Vec<u8>>,
+    /// Every shorter length than this was searched completely without a solution.
+    pub proven_lower_bound: usize,
 }
 
 pub struct Root {
@@ -152,7 +258,11 @@ impl Ctx<'_> {
                 continue;
             }
             self.nodes += 1;
-            if self.nodes % BATCH == 0 && self.budget.fetch_sub(BATCH as i64, Relaxed) < 0 {
+            if self.nodes % BATCH == 0
+                && (self.budget.fetch_sub(BATCH as i64, Relaxed) < 0
+                    || self.stop.is_some_and(|s| s.load(Relaxed))
+                    || self.deadline.is_some_and(|d| Instant::now() > d))
+            {
                 self.aborted = true;
                 return false;
             }

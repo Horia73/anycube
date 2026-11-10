@@ -125,3 +125,30 @@ up to 16 moves is what pays, and that costs about 2 s per reduction.
 
 Dropping endpoints and reductions whose last move the next stage could make
 itself changed nothing measurable (40.73 against 40.67 on the first 30 cubes).
+
+## Speed work, 2x2x2 and 3x3x3 (2026-11-10)
+
+Start-up (all tables already on disk): 540 ms before, about 25 ms after
+saving the small tables.
+
+4x4x4, cubes solved one at a time:
+
+| Configuration | Cubes | Mean length | Mean time | Max time |
+|---|---|---|---|---|
+| before, `--time 4000` | first 40 | 40.83 | 3.03 s | 4.1 s |
+| after, `--time 4000 --probes 10000` (new default) | first 100 | 40.64 | 2.55 s | 3.8 s |
+| after, `--mode fast` | first 100 | 41.54 | 0.36 s | 1.0 s |
+| after, 150,000 endpoints, 20 s limit | first 30 | 40.03 | 9.2 s | 12.3 s |
+| after, the same plus exact 3x3x3 (`--mode full`) | first 30 | 40.00 | 15.9 s | 22.3 s |
+
+Per-stage time of the old default (30 cubes): joint phase 2.1 s, phase 3
+0.35 s, 3x3x3 1.3 s. Checking the 3x3x3 first phase against the exact domino
+table brought the 3x3x3 stage down to 0.25 s for the same effort.
+
+Tried and reverted: running phase 3 per endpoint instead of level by level
+(worse in fast mode: 42.14 against 41.79), and a near-goal centre table one
+move larger (no gain).
+
+Other sizes: a 2x2x2 solve takes 1–3 ms including start-up and is always
+optimal. A 3x3x3 two-phase solve takes about 7 ms; an 18-move scramble with a
+17-move optimum was solved optimally in 7 s while another job was running.

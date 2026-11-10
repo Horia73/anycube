@@ -385,6 +385,41 @@ impl Cube {
         Ok(c)
     }
 
+    /// Reads a 2x2x2 (24 facelets) or 3x3x3 (54 facelets) in URFDLB order into
+    /// the 4x4x4 model: a 3x3x3 becomes a cube with paired dedges and solved
+    /// centres, a 2x2x2 a cube whose corners are the only meaningful part.
+    pub fn from_small_facelets(s: &str) -> Result<Cube, String> {
+        let b = s.trim().as_bytes();
+        let n = match b.len() {
+            24 => 2,
+            54 => 3,
+            len => return Err(format!("expected 24 or 54 facelets, got {}", len)),
+        };
+        // Each 4x4x4 row and column takes its sticker from this small-cube row or column.
+        let map: [usize; 4] = if n == 2 { [0, 0, 1, 1] } else { [0, 1, 1, 2] };
+        let mut big = [0u8; 96];
+        for (i, cell) in big.iter_mut().enumerate() {
+            let (face, r, c) = (i / 16, i / 4 % 4, i % 4);
+            *cell = b[face * n * n + map[r] * n + map[c]];
+        }
+        if n == 3 {
+            return Cube::from_facelets(std::str::from_utf8(&big).unwrap());
+        }
+        // 2x2x2: only the corner stickers of the stretched picture are real.
+        let mut solved = Cube::solved().to_facelets().into_bytes();
+        for cf in &CORNER_FACELET {
+            for &k in cf {
+                solved[k as usize] = big[k as usize];
+            }
+        }
+        let mut c = Cube::from_facelets(std::str::from_utf8(&solved).unwrap())?;
+        c.ct = SOLVED_CT;
+        for (i, e) in c.ep.iter_mut().enumerate() {
+            *e = i as u8;
+        }
+        Ok(c)
+    }
+
     pub fn to_facelets(&self) -> String {
         let mut f = [0u8; 96];
         for i in 0..24 {
@@ -580,6 +615,20 @@ mod tests {
             a.apply_seq(&seq);
             assert_eq!(a, s.after_rotation(&r.state));
         }
+    }
+
+    #[test]
+    fn small_facelets() {
+        let seq = parse_moves("R U2 F' D L2 B U' R2 F D' L").unwrap();
+        let big = Cube::from_moves(&seq);
+        let f = big.to_facelets().into_bytes();
+        let pick = |rows: &[usize]| -> String {
+            let n = rows.len();
+            (0..6 * n * n).map(|i| f[i / (n * n) * 16 + rows[i / n % n] * 4 + rows[i % n]] as char).collect()
+        };
+        assert_eq!(Cube::from_small_facelets(&pick(&[0, 1, 3])).unwrap(), big);
+        let two = Cube::from_small_facelets(&pick(&[0, 3])).unwrap();
+        assert_eq!((two.cp, two.co), (big.cp, big.co));
     }
 
     #[test]
