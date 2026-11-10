@@ -61,6 +61,29 @@ Idei rămase, în ordinea în care le-aș încerca:
 3. Tabel de împerechere pentru 4–5 perechi sub toate mutările, ca faza liberă
    să poată cere „k perechi deja făcute": −0,5 estimat, muncă multă.
 
+## Banc cu reduceri de lungime cunoscută (2026-11-10)
+
+`cubenxnxn known --walk K`: un cub redus aleator primește K mutări aleatoare
+din toate cele 36, deci există o reducere de cel mult K mutări. Cifrele sunt
+în `bench/RESULTS.md`; pe scurt, 30 de cuburi pe lungime:
+
+| K | Cea mai scurtă reducere găsită | Peste cea cunoscută |
+|---|---|---|
+| 14 | 18,00 | +4,0 |
+| 16 | 20,90 | +4,9 |
+| 18 | 22,43 | +4,4 |
+| 20 | 22,73 | +2,7 |
+| cuburi aleatoare | 23,10 | necunoscut |
+
+- La K = 20 cubul e aproape aleator pentru solver (22,73 față de 23,10), iar
+  reducerea în trei faze e cu 2,7 mutări mai lungă decât una care există
+  sigur. Asta susține estimarea de ~20,5 pentru o reducere liberă.
+- La K = 14 solverul fie găsește reducerea cunoscută (12 din 30), fie ajunge
+  la 21–24, ca pe un cub aleator: apropierea de un cub redus nu îl ajută
+  decât dacă drumul scurt se potrivește cu fazele.
+- Bancul e măsura pentru orice căutare liberă a reducerii: o idee nouă
+  trebuie să găsească ≤ K aici înainte să fie încercată pe cuburi aleatoare.
+
 ## Viteză
 
 Făcut pe 2026-11-10:

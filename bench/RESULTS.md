@@ -312,3 +312,48 @@ checked on the sticker model. dwalton76 spends about 38 moves on the same job
 
 Staging the R/L inner x centres and both oblique orbits in one search with
 the three exact orbit tables as bound did not finish one cube in ten minutes.
+
+## 4x4x4: cubes with a known short reduction (2026-11-10)
+
+`cubenxnxn known --walk K --count 30 --time 30000`: a random 3x3x3 state on
+the 4x4x4 (40 random face turns) gets K random moves out of all 36, so a
+reduction of at most K moves exists: the walk undone. The walk starts with a
+wide move, keeps face turns off the axis of its first moves and never has two
+opposite wide moves in a row, so the known reduction cannot be shortened at
+sight. It is still only an upper bound: on a few cubes the solver found a
+shorter one. Every known solution and every solver solution was checked.
+
+"Shortest found" is the shortest reduction the search came across; the
+solution may use a longer one with a shorter 3x3x3. The known total is the
+walk plus a two-phase 3x3x3 solution of the base, which is not optimised.
+Files: `known444-wK.tsv` (cube, K, 3x3x3 of the base, shortest reduction
+found, reduction used, 3x3x3 used, total, ms, base, walk, solution).
+
+| Walk K | Known reduction | Shortest found | Found minus known | Known total | Solver total |
+|---|---|---|---|---|---|
+| 14 | at most 14 | 18.00 | +4.0 | 32.80 | 35.77 |
+| 16 | at most 16 | 20.90 | +4.9 | 34.47 | 38.47 |
+| 18 | at most 18 | 22.43 | +4.4 | 36.70 | 39.80 |
+| 20 | at most 20 | 22.73 | +2.7 | 38.93 | 40.00 |
+| 60 (random cubes) | unknown | 23.10 | | | 40.27 |
+
+Found minus known, cube by cube:
+
+| Walk K | Shorter | Equal | 1 to 3 longer | 4 to 6 longer | 7 to 10 longer |
+|---|---|---|---|---|---|
+| 14 | 3 | 9 | 3 | 3 | 12 |
+| 16 | 2 | 4 | 1 | 10 | 13 |
+| 18 | 0 | 2 | 2 | 26 | 0 |
+| 20 | 0 | 0 | 26 | 4 | 0 |
+
+- A cube 20 moves from a reduced cube is almost a random cube to the solver:
+  22.73 against 23.10. On those the three-phase reduction is 2.7 moves longer
+  than one that is known to exist.
+- At 14 moves the result splits in two: the solver either finds the known
+  reduction (12 of 30) or lands at 21 to 24, no better than on a random cube.
+  Being close to a reduced cube does not help unless the short path happens to
+  fit the phases.
+
+The machine was busy during these runs (load average 25 to 32 on 8 cores).
+The time limit was raised to 30 s so that the endpoint counts, not the clock,
+end each stage; solves took 3 to 4.5 s on average.
