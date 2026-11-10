@@ -107,9 +107,13 @@ Ce a mai rămas:
 - Unde pierde mutări, după cod:
   - etapa 3x3x3 se rezolvă o singură dată, după prima reducere găsită;
   - mutările nu se anulează la trecerea dintre faze;
-  - doar faza 5 vede tot lotul de candidați (500); fazele dinainte taie lacom;
   - fazele 1 și 2 sunt separate, ca la TPR înainte să le unim noi;
-  - nu încearcă scramble-ul invers și nici altă axă după faza 1.
+  - nu încearcă scramble-ul invers.
+- Corectare (2026-11-10, după ce am citit `Search.java` și `PhaseSearch.java`):
+  scrisesem aici că fazele lui taie lacom și că nu încearcă alte axe. Nu e
+  așa. Fiecare fază pornește din 200–500 de soluții ale fazei dinainte,
+  ordonate după lungimea totală, în 3 axe, iar faza 4 în două variante de
+  felie. De aici vine o bună parte din rezultatul lui.
 
 **Ce se transferă direct de la 4x4x4:**
 
@@ -146,19 +150,48 @@ Ce a mai rămas:
 | normal | sub 5 s |
 | full | fără limită |
 
-Așezarea centrelor are deja limită de timp; bugetele pe mod se împart când
-există și fazele de muchii.
+Sunt implementate la 5x5x5 (`--mode`). Timpul se împarte pe faze: centre până
+la 15% din buget, faza C până la 40%, P până la 70%, E până la 90%; o fază
+întârziată se oprește doar după ce are destule soluții pentru următoarea.
 
-**Pași următori pentru 5x5x5:**
+**Solverul complet (2026-11-10), `src/edges5.rs` și `src/solver5.rs`:**
 
-1. Fazele de muchii (3, 4, 5 la cube555), întâi ca la el, cu tabelele lui ca
-   reper pentru numărul de stări.
-2. Etapa 3x3x3 cu lotul de reduceri, ca la 4x4x4. De aici vine câștigul sigur.
-3. Abia apoi: unirea fazelor de muchii, unde cred că e câștigul cel mai mare.
-4. Cele trei moduri, cu bugetele de timp de mai sus.
+| Mod | Lungime medie | Timp mediu | Cuburi |
+|---|---|---|---|
+| cube555 | 70,58 | 1,1 s | 200 |
+| fast | 70,17 | 0,44 s | 200 |
+| normal | 68,98 | 2,2 s (max 4,9 s) | 200 |
+| full | 68,20 | 8,7 s | primele 40 |
 
-Țintă realistă pentru prima versiune completă: sub 66 de mutări (cube555:
-70,58). E o estimare din ce am câștigat la 4x4x4, nu o măsurătoare.
+- Prima încercare (faze C, D în doi pași, E; fiecare fază pornită din câteva
+  soluții) a dat 73,0, mai slab decât cube555.
+- Ce a adus rezultatul de acum:
+  - faza P, ca faza 4 de la cube555, dar cu tabel exact pentru toate cele 12
+    piese ale celor patru muchii (198 de milioane de stări) și tabele muchii
+    contra centre; fără ele faza dura 5 s, cu ele 0,15 s;
+  - fiecare fază pornește din toate soluțiile fazei dinainte și păstrează
+    continuările cele mai scurte în total;
+  - șase orientări pentru muchii (3 axe × 2 felii);
+  - etapa 3x3x3 rezolvată pentru zeci sau sute de reduceri.
+- Pe faze, modul normal față de cube555: centre 18,53 față de 18,28; muchii
+  33,28 față de 33,05; 3x3x3 17,16 față de 19,23. Deci reducerea e la fel de
+  lungă ca a lui; tot câștigul vine din etapa 3x3x3 aleasă din lot. Ținta de
+  66 pe care o scrisesem aici nu e atinsă.
+- Lățimea căutării ajută puțin: de 20 de ori mai lat aduce 0,6 mutări.
+
+**Pași următori pentru 5x5x5, în ordinea câștigului estimat:**
+
+1. Centrele într-o singură fază (x și t împreună, cu tabelele exacte pe
+   orbită ca prag). Numărătoarea de stări spune ~16 mutări în loc de 18,5.
+   Căutarea e grea: pragul e maximul a două tabele, nu un tabel comun.
+2. Tabelul fazei C redus prin simetrie (2,77 GB → ~0,2 GB). Nu scurtează
+   soluțiile, dar scade memoria la jumătate și timpul primului solve; pe un
+   Mac ocupat, tabelul de acum e scos din memorie și faza C trece de la
+   50 ms la 1–2 s.
+3. Fazele P și E: soluțiile bune se găsesc la 2–4 mutări peste prag, deci
+   tabele comune muchii+centre mai mari ar grăbi căutarea și ar permite un
+   lot mai lat în același timp.
+4. Unirea fazelor E și 3x3x3 pentru ultimele mutări, ca la 4x4x4.
 
 ## Spre mărimi mai mari
 

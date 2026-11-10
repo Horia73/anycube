@@ -28,7 +28,9 @@ pub struct Params5 {
     pub c_keep: usize,
     pub p_keep: usize,
     pub e_keep: usize,
-    /// Effort of the 3x3x3 solver on each reduced cube.
+    /// Reduced cubes whose 3x3x3 gets the full effort, after a quick solve
+    /// of all of them, and that effort.
+    pub pool: usize,
     pub probes: u64,
     /// Time the solve aims at, in milliseconds; 0 for no limit. Each step
     /// stops widening when its share is used up, but always finishes.
@@ -38,12 +40,32 @@ pub struct Params5 {
 impl Params5 {
     /// Under a second per cube.
     pub fn fast() -> Params5 {
-        Params5 { staged: 100, stage_extra: 0, labellings: 4, c_keep: 100, p_keep: 100, e_keep: 8, probes: 200, time_ms: 700 }
+        Params5 {
+            staged: 200,
+            stage_extra: 1,
+            labellings: 4,
+            c_keep: 300,
+            p_keep: 300,
+            e_keep: 50,
+            pool: 16,
+            probes: 500,
+            time_ms: 800,
+        }
     }
 
     /// Under five seconds per cube.
     pub fn normal() -> Params5 {
-        Params5 { staged: 400, stage_extra: 1, labellings: 8, c_keep: 500, p_keep: 500, e_keep: 40, probes: 3000, time_ms: 4000 }
+        Params5 {
+            staged: 400,
+            stage_extra: 1,
+            labellings: 8,
+            c_keep: 2000,
+            p_keep: 2000,
+            e_keep: 200,
+            pool: 60,
+            probes: 3000,
+            time_ms: 4000,
+        }
     }
 
     /// As long as it takes.
@@ -54,7 +76,8 @@ impl Params5 {
             labellings: 16,
             c_keep: 5000,
             p_keep: 5000,
-            e_keep: 400,
+            e_keep: 1000,
+            pool: 400,
             probes: 20000,
             time_ms: 0,
         }
@@ -148,6 +171,8 @@ impl Solver5 {
             cap: keep * 8,
             per_node,
             deadline: until(share),
+            // Even when late, leave the next step something to choose from.
+            floor: (keep / 8).clamp(4, 64),
         };
         // Continues each start's partial solution with what a phase found.
         let extend = |from: &[Partial], found: Vec<crate::edges5::Found>| -> Vec<Partial> {
@@ -176,7 +201,7 @@ impl Solver5 {
         };
         let shortest = |x: &[Partial]| x.iter().map(|p| p.moves.len()).min().unwrap_or(0);
         // Centres.
-        let staged = self.stage.stage(facelets, p.stage_extra, 100_000, p.staged, until(0.08))?;
+        let staged = self.stage.stage(facelets, p.stage_extra, 100_000, p.staged, until(0.15))?;
         lap("centres", staged.len(), staged.first().map_or(0, |s| s.moves.len()));
         // Phase C, along each axis.
         let from: Vec<Partial> = staged
@@ -185,7 +210,7 @@ impl Solver5 {
                 (0..3).map(move |axis| Partial { moves: s.moves.clone(), frame: 2 * axis, ends: vec![s.len_a, s.moves.len()] })
             })
             .collect();
-        let found = self.edges.phase_c(&starts_of(&from), p.labellings, &limits(p.c_keep, 10, 0.2));
+        let found = self.edges.phase_c(&starts_of(&from), p.labellings, &limits(p.c_keep, 10, 0.4));
         let after_c = extend(&from, found);
         lap("phase C", after_c.len(), shortest(&after_c));
         // Phase P, with either of the two other axes turning freely.
@@ -195,26 +220,44 @@ impl Solver5 {
                 (0..2).map(move |quarter| Partial { moves: x.moves.clone(), frame: x.frame + quarter, ends: x.ends.clone() })
             })
             .collect();
-        let found = self.edges.phase_p(&starts_of(&from), &limits(p.p_keep, 10, 0.6));
+        let found = self.edges.phase_p(&starts_of(&from), &limits(p.p_keep, 10, 0.7));
         let after_p = extend(&from, found);
         lap("phase P", after_p.len(), shortest(&after_p));
         // Phase E.
-        let found = self.edges.phase_e(&starts_of(&after_p), &limits(p.e_keep, 2, 0.85));
+        let found = self.edges.phase_e(&starts_of(&after_p), &limits(p.e_keep, 2, 0.9));
         let reduced = extend(&after_p, found);
         lap("phase E", reduced.len(), shortest(&reduced));
         // The 3x3x3 that is left.
-        let best = reduced
+        // A quick solve of every one, then the full effort on the most promising.
+        let mut quick: Vec<(usize, &Partial, C3, Vec<u8>)> = reduced
             .par_iter()
             .map(|x| {
                 let cube = start_in(x.frame, &x.moves).cube;
                 debug_assert!(is_reduced(&cube));
                 let c3 = C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo };
-                let sol = self.edges.t3.solve(&c3, p.probes, Some(&self.big));
-                (x.moves.len() + sol.len(), x, sol)
+                let sol = self.edges.t3.solve(&c3, 30, Some(&self.big));
+                (x.moves.len() + sol.len(), x, c3, sol)
             })
-            .min_by_key(|r| r.0)
-            .ok_or("no reduction found")?;
-        let (_, x, sol3) = best;
+            .collect();
+        quick.sort_by_key(|r| r.0);
+        quick.truncate(p.pool);
+        let best = quick
+            .into_par_iter()
+            .map(|(len, x, c3, sol)| {
+                let better = self.edges.t3.solve(&c3, p.probes, Some(&self.big));
+                match better.len() < sol.len() {
+                    true => (x.moves.len() + better.len(), x, better),
+                    false => (len, x, sol),
+                }
+            })
+            .min_by_key(|r| r.0);
+        let Some((_, x, sol3)) = best else {
+            // A step cut short by the clock left the next one nothing to work with.
+            return match p.time_ms {
+                0 => Err("no reduction found".to_string()),
+                _ => self.solve(facelets, &Params5 { time_ms: 0, ..p.clone() }),
+            };
+        };
         lap("3x3x3", 1, x.moves.len() + sol3.len());
         let to_orig = &self.frames[x.frame].to_orig;
         let moves: Vec<u8> = x.moves.iter().copied().chain(sol3.iter().map(|&m| to_orig[m as usize])).collect();

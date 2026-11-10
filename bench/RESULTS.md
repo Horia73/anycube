@@ -201,3 +201,42 @@ checked on the sticker model:
 phase-A solution is completed by an optimal phase B from its exact table.
 Two extra moves without a time limit gave 16.85 on the first 20 cubes, at
 15 s per cube.
+
+## 5x5x5: complete solver (2026-11-10)
+
+All 200 cubes of `scrambles555-200.txt`, every solution checked on the sticker
+model. The machine was busy with other work during these runs (load average
+15 to 26 on 8 cores), so the times are upper estimates.
+
+| Solver | Centres | Edges (three phases) | 3x3x3 | Total | Mean time | Max time | Cubes |
+|---|---|---|---|---|---|---|---|
+| cube555 + min2phase | 10.22 + 8.06 | 6.34 + 12.66 + 14.05 | 19.23 | 70.58 | 1.08 s | 4.6 s | 200 |
+| cube444 `--mode fast` | 10.37 + 8.21 | 7.02 + 12.55 + 14.10 | 17.93 | 70.17 | 0.44 s | 2.3 s | 200 |
+| cube444, default | 10.51 + 8.02 | 7.08 + 12.48 + 13.72 | 17.16 | 68.98 | 2.2 s | 4.9 s | 200 |
+| cube444 `--mode full` | 10.50 + 7.95 | 7.62 + 12.43 + 13.50 | 16.20 | 68.20 | 8.7 s | 26 s | first 40 |
+
+Cube by cube against cube555 (its mean on the first 40 cubes is 70.85):
+
+| Mode | Shorter | Equal | Longer | Longest |
+|---|---|---|---|---|
+| fast | 102 | 40 | 58 | 73 |
+| default | 151 | 27 | 22 | 72 |
+| full (40 cubes) | 36 | 1 | 3 | 70 |
+
+Files: `fast555-results.tsv`, `normal555-results.tsv`, `full555-40.tsv`
+(cube, lengths per step, total, milliseconds, solution).
+
+The maximum of the fast mode is the first cube of the run, which reads the
+tables into memory; the median is 0.40 s.
+
+What the pieces were worth, on the first 40 cubes:
+
+| Version | Mean length | Mean time |
+|---|---|---|
+| first complete solver (phase D in two steps, a few starts per phase) | 73.03 | 4.2 s |
+| phase P with its exact table, same search | 72.5 (8 cubes) | 38 s |
+| + every phase from all results of the one before, six orientations | 68.83 | about 8 s |
+| + edge-against-centre tables for phases P and E | 68.83 | about 1 s |
+| 20 times wider (`--c-keep 10000 --p-keep 10000 --e-keep 1000 --staged 1000`) | 68.20 | about 10 s |
+
+Reproduce with `cube444 bench5 bench/scrambles555-200.txt [--mode fast|full] [--limit 40]`.

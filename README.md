@@ -1,7 +1,7 @@
 # cube444
 
-A Rubik's cube solver in Rust for 2x2x2, 3x3x3 and 4x4x4. The 4x4x4 solver
-aims for shorter solutions than the existing reduction solvers, within a few
+A Rubik's cube solver in Rust for 2x2x2 to 5x5x5. The 4x4x4 and 5x5x5 solvers
+aim for shorter solutions than the existing reduction solvers, within a few
 seconds per cube.
 
 Move counts are in OBTM: any face turn or wide turn counts as one move.
@@ -27,8 +27,42 @@ longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
 | 2x2x2 | always optimal | about 2 ms |
 | 3x3x3 | two-phase search; `--mode full` searches for the optimal solution | about 10 ms; seconds to minutes for optimal |
 | 4x4x4 | see above | |
-| 5x5x5 | centre staging only so far (`bench5`); no full solver yet | |
+| 5x5x5 | see below | |
 | 6x6x6, 7x7x7 | scrambles and checking only (`src/cuben.rs`) | |
+
+5x5x5 results on the fixed scrambles in `bench/scrambles555-200.txt`, measured
+on the same machine while it was busy with other work, so the times are on the
+high side:
+
+| Solver | Mean length | Mean time | Longest | Cubes |
+|---|---|---|---|---|
+| cube555 (Java) with min2phase | 70.58 | 1.1 s | 75 | 200 |
+| cube444 `--mode fast` | 70.17 | 0.44 s | 73 | 200 |
+| cube444, default | 68.98 | 2.2 s | 72 | 200 |
+| cube444 `--mode full` | 68.20 | 8.7 s | 70 | first 40 |
+
+With the defaults 151 of the 200 solutions are shorter than cube555's, 27 are
+equal and 22 are longer; the slowest solve took 4.9 s. The times assume the
+tables are in memory: the first solve of a process pays for reading them
+(about a second more), and a machine short of memory pays again and again.
+
+## How the 5x5x5 solver works
+
+- Centres (`src/stage5.rs`): the R/L centres go to the R and L faces with all
+  36 moves, then an exact table puts the U/D and F/B centres on their axes.
+- Edges (`src/edges5.rs`), three phases:
+  - C: every pair of wings gets one wing in each half of the wing positions,
+    matching the flip of its middle edge (face turns and wide half turns);
+  - P: four whole edges are built in the middle slice (F and B freely, half
+    turns elsewhere), with an exact table for the twelve pieces involved and
+    tables of those pieces against the centres;
+  - E: the other eight edges and all centres (U and D freely, half turns
+    elsewhere), with an exact pairing table.
+- The 3x3x3 that is left is solved for many reduced cubes; the shortest total
+  wins.
+- Each step starts from every result of the step before and keeps the
+  continuations that are shortest in total (`src/solver5.rs`). The edge phases
+  see the cube from six sides: three choices of axis, two of the slice.
 
 ## How the 4x4x4 solver works
 
@@ -76,7 +110,15 @@ cargo build --release
 ```
 
 ```bash
-./target/release/cube444 solve --state <24, 54 or 96 facelets in URFDLB order>
+./target/release/cube444 solve --size 5 "Rw U2 F' Uw L2 D Bw' R" --mode fast
+```
+
+```bash
+./target/release/cube444 solve --state <24, 54, 96 or 150 facelets in URFDLB order>
+```
+
+```bash
+./target/release/cube444 bench5 bench/scrambles555-200.txt
 ```
 
 ```bash
@@ -102,6 +144,24 @@ Generated on first use into `tables/` (set `CUBE444_TABLES` to move them),
 
 The 2x2x2 solver needs only `cube222.bin` (3.7 MB) and the 3x3x3 solver only
 `cube333.bin` (10 MB), plus `slice-exact.bin` for `--mode full`.
+
+The 5x5x5 solver has its own tables, 4.7 GB, generated in about two minutes on
+8 cores: `phase3-555.bin` (2.77 GB, phase C), `phase2-555.bin` (331 MB, centres),
+`phase4-555-*.bin` (850 MB, phase P), `phase5-555*.bin` (600 MB, phase E) and
+three small ones. It also uses `phase1-exact.bin` for the 3x3x3 step.
+
+### Search flags (5x5x5)
+
+`--mode fast|normal|full` sets all of them; each can be overridden.
+
+| Flag | fast | normal | full | Meaning |
+|---|---|---|---|---|
+| `--time` | 800 | 4000 | 0 | milliseconds the solve aims at; 0 is no limit |
+| `--staged` | 200 | 400 | 2000 | centre stagings kept |
+| `--labellings` | 4 | 8 | 16 | ways of splitting the wings tried per staging |
+| `--c-keep`, `--p-keep` | 300 | 2000 | 5000 | results phases C and P aim for |
+| `--e-keep` | 50 | 200 | 1000 | reduced cubes aimed for |
+| `--pool`, `--probes` | 16, 500 | 60, 3000 | 400, 20000 | reduced cubes given the full 3x3x3 effort, and that effort |
 
 ### Search flags (4x4x4)
 

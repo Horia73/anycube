@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cube444 solve <moves...> [--size 2|3|4] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cube444 solve --state <24, 54 or 96 facelets> [search flags]   solve a 2x2x2, 3x3x3 or 4x4x4 given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cube444 facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cube444 solve <moves...> [--size 2|3|4|5] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cube444 solve --state <24, 54, 96 or 150 facelets> [search flags]   solve a cube from 2x2x2 to 5x5x5 given as URFDLB facelets\n  cube444 bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cube444 bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cube444 facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -21,8 +21,8 @@ fn main() {
         Some("startup") => startup(),
         Some("facelets") => facelets(&args[1..]),
         Some("verify") => verify(&args[1..]),
+        Some("stage5") => stage5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
-        Some("solve5") => solve5(&args[1..]),
         Some("selftest5") => cube444::edges5::Edges5::load().self_test(),
         Some("gen-edges5") => {
             let t = Instant::now();
@@ -39,24 +39,17 @@ fn solve(args: &[String]) {
         (Some(n), _) => n.parse::<usize>().unwrap_or_else(|_| usage()),
         (None, Some(24)) => 2,
         (None, Some(54)) => 3,
+        (None, Some(150)) => 5,
         _ => 4,
     };
+    if size == 5 {
+        return solve5(state, args);
+    }
     let cube = match state {
         Some(s) if size == 4 => Cube::from_facelets(s).unwrap_or_else(|e| fail(&e)),
         Some(s) => Cube::from_small_facelets(s).unwrap_or_else(|e| fail(&e)),
         None => {
-            // Everything that is neither a flag nor a flag's value is a move.
-            let mut tokens: Vec<&str> = Vec::new();
-            let mut i = 0;
-            while i < args.len() {
-                if args[i].starts_with("--") {
-                    i += if matches!(args[i].as_str(), "--split" | "--parallel") { 1 } else { 2 };
-                } else {
-                    tokens.push(&args[i]);
-                    i += 1;
-                }
-            }
-            let moves = parse_moves(&tokens.join(" ")).unwrap_or_else(|e| fail(&e));
+            let moves = parse_moves(&move_text(args)).unwrap_or_else(|e| fail(&e));
             if size < 4 && moves.iter().any(|&m| m >= 18) {
                 fail("wide moves need a 4x4x4");
             }
@@ -67,7 +60,83 @@ fn solve(args: &[String]) {
         2 => solve2(&cube),
         3 => solve3(&cube, args),
         4 => solve4(&cube, args),
-        _ => fail("supported sizes: 2, 3 and 4"),
+        _ => fail("supported sizes: 2, 3, 4 and 5"),
+    }
+}
+
+/// The moves on a command line: everything that is neither a flag nor a flag's value.
+fn move_text(args: &[String]) -> String {
+    let mut tokens: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        if args[i].starts_with("--") {
+            i += if matches!(args[i].as_str(), "--split" | "--parallel") { 1 } else { 2 };
+        } else {
+            tokens.push(&args[i]);
+            i += 1;
+        }
+    }
+    tokens.join(" ")
+}
+
+fn solve5(state: Option<&str>, args: &[String]) {
+    use cube444::c5::tables5;
+    let g = &tables5().geometry;
+    let facelets = match state {
+        Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
+        None => {
+            let moves = g.parse_moves(&move_text(args)).unwrap_or_else(|e| fail(&e));
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &moves);
+            f
+        }
+    };
+    let p = params5(args);
+    let t0 = Instant::now();
+    let solver = cube444::solver5::Solver5::load();
+    let t1 = Instant::now();
+    match solver.solve(&facelets, &p) {
+        Ok(sol) => {
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            println!("{}", names.join(" "));
+            eprintln!(
+                "{} moves (centres {} + {}, edges {} + {} + {}, 3x3x3 {}), tables {:.0} ms, search {:.0} ms",
+                sol.moves.len(),
+                sol.lens[0],
+                sol.lens[1],
+                sol.lens[2],
+                sol.lens[3],
+                sol.lens[4],
+                sol.lens[5],
+                (t1 - t0).as_secs_f64() * 1e3,
+                t1.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+fn params5(args: &[String]) -> cube444::solver5::Params5 {
+    use cube444::solver5::Params5;
+    let d = match opt(args, "--mode") {
+        Some("fast") => Params5::fast(),
+        Some("full") => Params5::full(),
+        Some("normal") | None => Params5::normal(),
+        Some(_) => usage(),
+    };
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    Params5 {
+        staged: num("--staged", d.staged),
+        stage_extra: num("--extra", d.stage_extra),
+        labellings: num("--labellings", d.labellings),
+        c_keep: num("--c-keep", d.c_keep),
+        p_keep: num("--p-keep", d.p_keep),
+        e_keep: num("--e-keep", d.e_keep),
+        pool: num("--pool", d.pool),
+        probes: num("--probes", d.probes as usize) as u64,
+        time_ms: num("--time", d.time_ms as usize) as u64,
     }
 }
 
@@ -433,7 +502,7 @@ fn verify(args: &[String]) {
 }
 
 /// 5x5x5 centre staging on a scramble file: lengths and times.
-fn bench5(args: &[String]) {
+fn stage5(args: &[String]) {
     use cube444::c5::{tables5, Cube5};
     use cube444::stage5::Stage5;
     let Some(path) = args.first() else { usage() };
@@ -484,29 +553,13 @@ fn bench5(args: &[String]) {
 }
 
 /// 5x5x5 on a scramble file: full solves, lengths per stage and times.
-fn solve5(args: &[String]) {
+fn bench5(args: &[String]) {
     use cube444::c5::tables5;
-    use cube444::solver5::{Params5, Solver5};
+    use cube444::solver5::Solver5;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
-    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
-    let limit = num("--limit", usize::MAX);
-    let d = match opt(args, "--mode") {
-        Some("fast") => Params5::fast(),
-        Some("full") => Params5::full(),
-        Some("normal") | None => Params5::normal(),
-        Some(other) => fail(&format!("unknown mode {}", other)),
-    };
-    let p = Params5 {
-        staged: num("--staged", d.staged),
-        stage_extra: num("--extra", d.stage_extra),
-        labellings: num("--labellings", d.labellings),
-        c_keep: num("--c-keep", d.c_keep),
-        p_keep: num("--p-keep", d.p_keep),
-        e_keep: num("--e-keep", d.e_keep),
-        probes: num("--probes", d.probes as usize) as u64,
-        time_ms: num("--time", d.time_ms as usize) as u64,
-    };
+    let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let p = params5(args);
     let t0 = Instant::now();
     let solver = Solver5::load();
     eprintln!("tables ready in {:.2} s; {:?}", t0.elapsed().as_secs_f64(), p);

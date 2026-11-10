@@ -842,8 +842,9 @@ pub struct Limits {
     pub cap: usize,
     /// Solutions kept per start and length.
     pub per_node: usize,
-    /// Past this moment, stop as soon as there is a solution.
+    /// Past this moment, stop as soon as there are `floor` solutions.
     pub deadline: Option<Instant>,
+    pub floor: usize,
 }
 
 /// State shared by the searches of one phase.
@@ -891,7 +892,9 @@ impl Search<'_> {
         if self.run.stop.load(Relaxed) {
             return true;
         }
-        if self.run.count.load(Relaxed) > 0 && self.run.limits.deadline.is_some_and(|d| Instant::now() > d) {
+        if self.run.count.load(Relaxed) >= self.run.limits.floor
+            && self.run.limits.deadline.is_some_and(|d| Instant::now() > d)
+        {
             self.run.stop.store(true, Relaxed);
             return true;
         }
@@ -982,11 +985,19 @@ impl Edges5 {
                     s.out.into_iter().map(move |moves| Found { start: n.start, moves })
                 })
                 .collect();
+            if std::env::var_os("CUBE5_GAPS").is_some() && !found.is_empty() {
+                let mut gaps = [0usize; 8];
+                for f in &found {
+                    let est = nodes[..live].iter().filter(|n| n.start == f.start).map(|n| n.est).min().unwrap();
+                    gaps[(total - est).min(7)] += 1;
+                }
+                eprintln!("    total {} (first {}): {} live nodes, solutions by gap {:?}", total, first, live, gaps);
+            }
             out.extend(found);
             if out.len() >= limits.keep || run.stop.load(Relaxed) {
                 break;
             }
-            if !out.is_empty() && limits.deadline.is_some_and(|d| Instant::now() > d) {
+            if out.len() >= limits.floor.max(1) && limits.deadline.is_some_and(|d| Instant::now() > d) {
                 break;
             }
         }
@@ -1213,7 +1224,7 @@ impl Edges5 {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             (seed >> 33) as usize % n
         };
-        let limits = Limits { keep: 1, cap: 1, per_node: 1, deadline: None };
+        let limits = Limits { keep: 1, cap: 1, per_node: 1, deadline: None, floor: 1 };
         for round in 0..4 {
             let mut c = Cube5::solved();
             for _ in 0..40 {
