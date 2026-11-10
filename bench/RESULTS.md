@@ -84,3 +84,20 @@ Options tried and left off (first 30 cubes, against 40.67–40.97 without them):
 
 Runs differ by a few hundredths from one to the next: the parallel searches
 stop at a count or a deadline, so which candidates they collect varies.
+
+## Default configuration on all 1,000 cubes (2026-11-10)
+
+File: `default-results.tsv`. Cubes solved one at a time.
+
+| Solver | Joint phase | Phase 3 | 3x3x3 | Total | Min | Max |
+|---|---|---|---|---|---|---|
+| TPR (phases 1+2: 12.574) | | 12.362 | 19.638 | 44.574 | 40 | 48 |
+| cube444 default | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
+
+Length histogram: 37: 2, 38: 8, 39: 73, 40: 286, 41: 500, 42: 128, 43: 3.
+
+Against TPR on the same cube: 3.90 moves shorter on average, equal on 10
+cubes, longer on none.
+
+Time per solve: mean 3.67 s, median 3.30 s, 99th percentile 8.07 s, max
+9.07 s. 12 cubes took more than the 8 s soft limit, none more than 10 s.

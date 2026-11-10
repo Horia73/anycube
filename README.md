@@ -9,13 +9,15 @@ Move counts are in OBTM: any face turn or wide turn counts as one move.
 
 Work in progress. Measured on the fixed scrambles in
 `bench/scrambles-1000.txt` (Apple M1 Pro); details in `bench/RESULTS.md`.
+With the defaults no solution is longer than TPR's for the same cube, the
+longest is 43 moves and the slowest solve took 9.1 s.
 
 | Solver | Mean length | Mean time | Cubes |
 |---|---|---|---|
 | TPR (Java) | 44.57 | 146 ms | 1,000 |
 | cube444, phases as in TPR, fast | 44.84 | 121 ms | 1,000 |
 | cube444, phases as in TPR, many reductions compared | 42.92 | 0.95 s | 1,000 |
-| cube444, default | 40.67 | 3.9 s | first 30 |
+| cube444, default | 40.67 | 3.7 s | 1,000 |
 
 ## How it works
 

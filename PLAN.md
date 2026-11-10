@@ -11,7 +11,7 @@ Cifrele măsurate sunt în `bench/RESULTS.md`.
 | Aceleași faze în Rust, mod rapid | făcut, cu 0,26 peste TPR | 44,84 |
 | Multe reduceri comparate după lungimea totală | făcut | 42,92 |
 | Fazele 1 și 2 unite, cu tabel exact pentru centre | făcut | ~41,0 |
-| Mai multe capete, căutare 3x3x3 adâncită pe cele mai bune reduceri | făcut | ~40,7 |
+| Mai multe capete, căutare 3x3x3 adâncită pe cele mai bune reduceri | făcut | 40,67 pe toate cele 1.000 |
 | Limită de timp pe cub | făcut (`--time`, implicit 8 s) | |
 | Solver 3x3x3 exact | făcut și validat, oprit implicit | fără câștig la cost rezonabil |
 | Reduceri mai lungi, apropiate de subgrupul domino | făcut, oprit implicit | −0,07, în marja de zgomot |
@@ -26,7 +26,7 @@ Cifrele măsurate sunt în `bench/RESULTS.md`.
    decât two-phase. Un tabel de 10 ori mai rapid nu ar schimba concluzia.
 3. **Fiecare buget suplimentar aduce tot mai puțin.** De la 3.000 la 10.000 de
    capete: −0,15. Încă un nivel de reduceri: −0,1 până la −0,2, la de 3 ori timpul.
-4. **Lungimile pe etape acum:** faza unită ~12,9, faza 3 ~10,8, 3x3x3 ~17,0.
+4. **Lungimile pe etape acum:** faza unită 12,78, faza 3 10,90, 3x3x3 17,00.
 
 Concluzie: cu structura actuală suntem pe la 40,6–40,8. Sub 40 cere încă o
 schimbare de structură, nu mai mult buget.
