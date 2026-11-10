@@ -568,6 +568,16 @@ impl Solver {
         })
     }
 
+    /// The length of the shortest phase-3 solution of a cube phase 3 can start from.
+    pub fn phase3_length(&self, cube: &Cube, max: usize) -> Option<usize> {
+        let (sg, mask, par) = (sigma_of(cube), ct3_mask(cube), ct3_parity(cube));
+        (0..=max).find(|&d| {
+            let (mut path, mut out) = ([0u8; 64], Vec::new());
+            self.dfs3(&sg, mask, par, d, 255, 0, &mut path, 0, &mut out, 1);
+            !out.is_empty()
+        })
+    }
+
     /// Enumerates phase-1 solutions of exactly `rem` more moves. Returns true when `limit` is reached.
     fn dfs1(
         &self,

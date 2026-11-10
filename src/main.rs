@@ -17,6 +17,9 @@ fn main() {
         Some("solve") => solve(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("known") => known(&args[1..]),
+        Some("free3") => free3(&args[1..]),
+        Some("free-features") => free_features(&args[1..]),
+        Some("free-beam") => free_beam(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
         Some("gen-centres") => gen_centres(),
         Some("startup") => startup(),
@@ -375,6 +378,120 @@ fn bench(args: &[String]) {
     }
 }
 
+/// A cube for `known`: the moves of its base and of the walk away from it.
+fn known_cube(rnd: &mut impl FnMut(usize) -> usize, walk: usize, from_solved: bool) -> (Vec<u8>, Vec<u8>) {
+    use cubenxnxn::cube::skip_move;
+    // The base: a 3x3x3 state on the 4x4x4, from 40 random face turns.
+    let mut base: Vec<u8> = Vec::new();
+    while !from_solved && base.len() < 40 {
+        let m = rnd(18) as u8;
+        if base.last().is_none_or(|&l| !skip_move(l, m)) {
+            base.push(m);
+        }
+    }
+    // The walk. Undone, it must be a reduction that cannot be shortened at sight:
+    // its last move is wide, and no face turn can be commuted to its end. So face
+    // turns wait until the walk has left the axis of its first move. Two opposite
+    // wide moves in a row are one wide move and a rotation, so they are left out.
+    let mut steps: Vec<u8> = Vec::new();
+    while steps.len() < walk {
+        let m = rnd(36) as u8;
+        let axis = m / 3 % 3;
+        let one_axis = steps.iter().all(|&s| s / 3 % 3 == axis);
+        let wide_before = steps.iter().rev().take_while(|&&s| s / 3 % 3 == axis).any(|&s| s >= 18);
+        if (m < 18 && one_axis && !from_solved)
+            || (m >= 18 && wide_before)
+            || steps.last().is_some_and(|&l| skip_move(l, m))
+        {
+            continue;
+        }
+        steps.push(m);
+    }
+    (base, steps)
+}
+
+/// Experiment: beam search for a reduction with all moves, on the cubes of
+/// `known --walk K` (same seed, same cubes). `--solver file` is the result
+/// file of `known` for the same K, to put the solver's reductions next to it.
+fn free_beam(args: &[String]) {
+    use cubenxnxn::free::{is_reduced, Ball, Beam};
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count) = (num("--walk", 14), num("--count", 10));
+    let mut seed = num("--seed", 4000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let theirs: Option<Vec<usize>> = opt(args, "--solver").map(|p| {
+        std::fs::read_to_string(p)
+            .unwrap_or_else(|e| fail(&format!("{}: {}", p, e)))
+            .lines()
+            .map(|l| l.split('\t').nth(3).and_then(|v| v.parse().ok()).unwrap_or_else(|| fail("bad result file")))
+            .collect()
+    });
+    let t0 = Instant::now();
+    let ball = Ball::build(num("--ball", 6) as u8);
+    let solver = Solver::new();
+    eprintln!("ball {:?} and tables ready in {:.1} s", ball.levels, t0.elapsed().as_secs_f64());
+    let beam = Beam {
+        ball: &ball,
+        solver: &solver,
+        width: num("--width", 300_000),
+        w_stage: num("--w-stage", 2) as i32,
+        w_paired: num("--w-paired", 1) as i32,
+        max_depth: num("--depth", walk.saturating_sub(4)),
+    };
+    let (mut found, mut sum, mut sum_theirs, mut within, mut ms) = (0usize, 0usize, 0usize, 0usize, 0.0);
+    for i in 0..count {
+        let (base, steps) = known_cube(&mut rnd, walk, false);
+        let mut cube = Cube::from_moves(&base);
+        cube.apply_seq(&steps);
+        let t = Instant::now();
+        let (path, looked) = beam.reduce(&cube);
+        let secs = t.elapsed().as_secs_f64();
+        ms += secs * 1e3;
+        let len = path.as_ref().map(|p| {
+            let mut c = cube;
+            c.apply_seq(p);
+            if !is_reduced(&c) {
+                fail(&format!("cube {}: the beam's reduction does not reduce the cube", i));
+            }
+            p.len()
+        });
+        let s = theirs.as_ref().map(|t| t[i]);
+        println!(
+            "cube {:2}: known {}, beam {:?}, solver {:?}, {:.1} M cubes, {:.1} s",
+            i,
+            walk,
+            len,
+            s,
+            looked as f64 / 1e6,
+            secs
+        );
+        if let Some(l) = len {
+            found += 1;
+            sum += l;
+            sum_theirs += s.unwrap_or(0);
+            within += (l <= walk) as usize;
+        }
+    }
+    println!(
+        "{} cubes, {} moves from a reduced cube, width {}: beam found a reduction on {}, at most {} moves on {}",
+        count, walk, beam.width, found, walk, within
+    );
+    if found > 0 {
+        println!(
+            "on those {}: beam {:.2}, solver {:.2}; mean time {:.1} s",
+            found,
+            sum as f64 / found as f64,
+            sum_theirs as f64 / found as f64,
+            ms / 1e3 / count as f64
+        );
+    }
+}
+
 /// 4x4x4 cubes with a known short answer. A random reduced cube (or the solved
 /// cube with `--base solved`) gets `--walk` random moves out of all 36, so a
 /// reduction (or a solution) of at most that many moves exists: the walk
@@ -382,7 +499,7 @@ fn bench(args: &[String]) {
 /// with the known ones.
 fn known(args: &[String]) {
     use cubenxnxn::c3::C3;
-    use cubenxnxn::cube::{inv_seq, skip_move};
+    use cubenxnxn::cube::inv_seq;
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -415,32 +532,7 @@ fn known(args: &[String]) {
     let mut gap_hist = std::collections::BTreeMap::new();
     let mut times = Vec::new();
     for i in 0..count {
-        // The base: a 3x3x3 state on the 4x4x4, from 40 random face turns.
-        let mut base: Vec<u8> = Vec::new();
-        while !from_solved && base.len() < 40 {
-            let m = rnd(18) as u8;
-            if base.last().is_none_or(|&l| !skip_move(l, m)) {
-                base.push(m);
-            }
-        }
-        // The walk. Undone, it must be a reduction that cannot be shortened at sight:
-        // its last move is wide, and no face turn can be commuted to its end. So face
-        // turns wait until the walk has left the axis of its first move. Two opposite
-        // wide moves in a row are one wide move and a rotation, so they are left out.
-        let mut steps: Vec<u8> = Vec::new();
-        while steps.len() < walk {
-            let m = rnd(36) as u8;
-            let axis = m / 3 % 3;
-            let one_axis = steps.iter().all(|&s| s / 3 % 3 == axis);
-            let wide_before = steps.iter().rev().take_while(|&&s| s / 3 % 3 == axis).any(|&s| s >= 18);
-            if (m < 18 && one_axis && !from_solved)
-                || (m >= 18 && wide_before)
-                || steps.last().is_some_and(|&l| skip_move(l, m))
-            {
-                continue;
-            }
-            steps.push(m);
-        }
+        let (base, steps) = known_cube(&mut rnd, walk, from_solved);
         let base_cube = Cube::from_moves(&base);
         let mut cube = base_cube;
         cube.apply_seq(&steps);
@@ -506,6 +598,163 @@ fn known(args: &[String]) {
         times[times.len() / 2],
         times[times.len() - 1]
     );
+}
+
+/// Experiment: is phase 3 longer than it has to be? A reduced cube gets `--walk`
+/// random phase-3 moves; the shortest phase-3 solution is compared with the
+/// shortest reduction that may use any move, found exactly up to
+/// `--forward` + `--ball` moves.
+fn free3(args: &[String]) {
+    use cubenxnxn::cube::skip_move;
+    use cubenxnxn::free::{is_reduced, key, Ball};
+    use cubenxnxn::tables::P3_MOVES;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count, forward, depth) = (num("--walk", 9), num("--count", 20), num("--forward", 4), num("--ball", 5));
+    let mut seed = num("--seed", 3000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+
+    // The key must not change when face turns and rotations are done first, and
+    // must tell a reduced cube from one with a parity the 3x3x3 cannot fix.
+    let ct = cubenxnxn::cube::tables();
+    let reduced_key = key(&Cube::solved());
+    for _ in 0..2000 {
+        let w: Vec<u8> = (0..rnd(12)).map(|_| rnd(36) as u8).collect();
+        let mut h: Vec<u8> = ct.rots[rnd(24)].seq.clone();
+        h.extend((0..rnd(30)).map(|_| rnd(18) as u8));
+        let k = key(&Cube::from_moves(&w));
+        h.extend(&w);
+        if key(&Cube::from_moves(&h)) != k {
+            fail("the class key changed under face turns and rotations done first");
+        }
+        if (k == reduced_key) != is_reduced(&Cube::from_moves(&w)) {
+            fail("the class key and the reduced test disagree");
+        }
+    }
+    let swapped = Cube::from_moves(&parse_moves("Uw2 Rw2 U2 Rw2 R2 U2 Rw2 Uw2").unwrap());
+    if is_reduced(&swapped) || key(&swapped) == reduced_key || swapped.with_home_centres().is_none() {
+        fail("two swapped dedges pass for a reduced cube");
+    }
+
+    let t0 = Instant::now();
+    let ball = Ball::build(depth as u8);
+    eprintln!("classes by distance from a reduced cube: {:?}, {:.1} s", ball.levels, t0.elapsed().as_secs_f64());
+    let solver = Solver::new();
+    let mut table = std::collections::BTreeMap::new();
+    let (mut sum3, mut sum_free, mut both) = (0usize, 0usize, 0usize);
+    let t0 = Instant::now();
+    for i in 0..count {
+        let mut steps: Vec<u8> = Vec::new();
+        while steps.len() < walk {
+            let m = P3_MOVES[rnd(P3_MOVES.len())];
+            if steps.last().is_none_or(|&l| !skip_move(l, m)) {
+                steps.push(m);
+            }
+        }
+        let cube = Cube::from_moves(&steps);
+        let d3 = solver.phase3_length(&cube, walk).unwrap_or_else(|| fail(&format!("cube {}: phase 3 found nothing", i)));
+        let free = ball.shortest(&cube, forward).map(|path| {
+            let mut c = cube;
+            c.apply_seq(&path);
+            if !is_reduced(&c) {
+                fail(&format!("cube {}: the free reduction does not reduce the cube", i));
+            }
+            path.len()
+        });
+        if let Some(f) = free {
+            sum3 += d3;
+            sum_free += f;
+            both += 1;
+        }
+        *table.entry((d3, free)).or_insert(0usize) += 1;
+    }
+    println!("{} cubes, {} phase-3 moves away from a reduced cube; {:.1} s", count, walk, t0.elapsed().as_secs_f64());
+    println!("(phase-3 length, shortest reduction with all moves; None = more than {}): cubes", forward + depth);
+    for (k, v) in &table {
+        println!("  {:?}: {}", k, v);
+    }
+    if both > 0 {
+        println!(
+            "where both are known ({} cubes): phase 3 {:.2}, all moves {:.2}",
+            both,
+            sum3 as f64 / both as f64,
+            sum_free as f64 / both as f64
+        );
+    }
+}
+
+/// A walk of `len` moves out of the 27 that matter, away from a reduced cube:
+/// it starts with a wide move and keeps face turns off the axis of its first moves,
+/// so that undoing it is a reduction that cannot be shortened at sight.
+fn free_walk(rnd: &mut impl FnMut(usize) -> usize, len: usize) -> Vec<u8> {
+    let mut steps: Vec<u8> = Vec::new();
+    while steps.len() < len {
+        let m = rnd(27) as u8;
+        let one_axis = steps.iter().all(|&s| s / 3 % 3 == m / 3 % 3);
+        if (m < 18 && one_axis) || steps.last().is_some_and(|&l| cubenxnxn::cube::skip_move(l, m)) {
+            continue;
+        }
+        steps.push(m);
+    }
+    steps
+}
+
+/// Experiment: what a cube K moves away from a reduced cube looks like, for
+/// several K: staging distance of the centres (best orientation), dedges
+/// already paired, dedges with one wing in each half (best frame).
+fn free_features(args: &[String]) {
+    use cubenxnxn::tables::axis_masks;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let count = num("--count", 200);
+    let mut seed = num("--seed", 77) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let solver = Solver::new();
+    println!("K      stage (mean, share <= 6, <= 8)   paired   split");
+    for k in [4usize, 6, 8, 10, 12, 14, 16, 18, 20, 60] {
+        let (mut stage, mut le6, mut le8, mut paired, mut split) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        for _ in 0..count {
+            let cube = Cube::from_moves(&free_walk(&mut rnd, k));
+            let variants = solver.variant_cubes(&cube);
+            let st = variants
+                .iter()
+                .map(|(v, _)| {
+                    let m = axis_masks(v);
+                    solver.ctab.exact(&solver.tabs.bp, &solver.tabs.ranks, m[2], m[0])
+                })
+                .min()
+                .unwrap() as usize;
+            let sp = variants
+                .iter()
+                .map(|(v, _)| (0..12).fold(0u32, |a, s| a | 1 << (v.ep[s] % 12)).count_ones())
+                .max()
+                .unwrap() as usize;
+            let pr = (0..12).filter(|&s| cube.ep[s + 12] == (cube.ep[s] + 12) % 24).count();
+            stage += st;
+            le6 += (st <= 6) as usize;
+            le8 += (st <= 8) as usize;
+            paired += pr;
+            split += sp;
+        }
+        let n = count as f64;
+        println!(
+            "{:2}     {:5.2}  {:4.2}  {:4.2}                {:5.2}    {:5.2}",
+            k,
+            stage as f64 / n,
+            le6 as f64 / n,
+            le8 as f64 / n,
+            paired as f64 / n,
+            split as f64 / n
+        );
+    }
 }
 
 /// Development aid: speed of the exact 3x3x3 search on random outer-move scrambles.
