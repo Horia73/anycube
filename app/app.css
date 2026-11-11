@@ -1244,16 +1244,33 @@ textarea.bad {
   gap: 10px;
   align-items: start;
 }
-/* The small drawing of what to do with the cube. */
+/* The small drawings of what to do with the cube: one, or two with "then" between them. */
+.cam-sign {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--ink);
+}
 .cam-sign svg {
   display: block;
-  width: 40px;
-  height: 40px;
+  width: 46px;
+  height: 44px;
   fill: none;
-  stroke: var(--ink);
-  stroke-width: 2;
+  stroke: currentColor;
+  stroke-width: 2.4;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+.cam-sign svg .head {
+  fill: currentColor;
+  stroke-width: 1.2;
+}
+.cam-sign i {
+  font: 600 0.62rem/1 var(--sans);
+  font-style: normal;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
 }
 .cam-text.warn {
   color: var(--danger);
@@ -1294,6 +1311,13 @@ textarea.bad {
 .cam-shots li i {
   border-radius: 1px;
   background: var(--cube-blank);
+}
+.cam-shots li {
+  cursor: pointer;
+}
+.cam-shots li:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .cam-shots li.taken {
   opacity: 1;

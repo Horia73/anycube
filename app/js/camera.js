@@ -36,20 +36,24 @@ const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
 // the order, nor the way up: the six pictures are put together afterwards
 // the way they make a cube (scan-fit.js). `sign` is the small drawing.
 export const SCAN_STEPS = [
-  { face: 2, sign: "hold", text: "Hold any face to the camera, the cube level. Note which face is on top." },
-  { face: 1, sign: "round", text: "Turn the cube a quarter turn sideways. The top stays on top." },
-  { face: 5, sign: "round", text: "Another quarter turn the same way, top still on top." },
-  { face: 4, sign: "round", text: "And once more the same way." },
-  { face: 0, sign: "tip", text: "Now tip the cube so that its top faces the camera." },
-  { face: 3, sign: "tip2", text: "Last, tip it the other way: the bottom faces the camera." },
+  { face: 2, signs: ["hold"], text: "Hold any face to the camera, the cube level. Note which face is on top." },
+  { face: 1, signs: ["round"], text: "Turn the cube a quarter turn sideways. The top stays on top." },
+  { face: 5, signs: ["round"], text: "Another quarter turn the same way, top still on top." },
+  { face: 4, signs: ["round"], text: "And once more the same way." },
+  { face: 0, via: 2, signs: ["round", "tip"], text: "Two moves: once more sideways, back to the first face. Then tip the top towards the camera." },
+  { face: 3, via: 2, signs: ["up", "up"], text: "Two moves the other way: tip back to the first face, then on, until the bottom faces the camera." },
 ];
 
-// The small drawings: a cube face, and an arrow for how the cube is turned to bring it round.
+// The small drawings: the face held to the camera, and an arrow for how
+// the cube is turned to bring the next one round. Two of them side by side
+// where it takes two moves.
+const HEAD = (x, y, turn) => `<path class="head" d="M-4.5 -3.5 4 0 -4.5 3.5z" transform="translate(${x} ${y}) rotate(${turn})"/>`;
+const FACE = '<rect x="11" y="9" width="18" height="18" rx="3.5"/>';
 const SIGNS = {
-  hold: '<rect x="7" y="7" width="18" height="18" rx="3"/><path d="M11 13h10M11 16h10M11 19h10" opacity=".35"/>',
-  round: '<rect x="9" y="9" width="14" height="14" rx="3"/><path d="M4 27c6 4 18 4 24 0"/><path d="M24.5 29.5 28 27l-3-3"/>',
-  tip: '<rect x="9" y="9" width="14" height="14" rx="3"/><path d="M27 4c4 6 4 18 0 24"/><path d="M29.5 24.5 27 28l-3-3"/>',
-  tip2: '<rect x="9" y="9" width="14" height="14" rx="3"/><path d="M27 28c4-6 4-18 0-24"/><path d="M29.5 7.5 27 4l-3 3"/>',
+  hold: `${FACE}<circle class="head" cx="20" cy="18" r="2.6"/>`,
+  round: `${FACE}<path d="M5 31c8 6 22 6 29 1"/>${HEAD(35, 31.5, -32)}`,
+  tip: `${FACE}<path d="M34 4c6 7 6 19 1 26"/>${HEAD(34.5, 31, 122)}`,
+  up: `${FACE}<path d="M34 32c6 -7 6 -19 1 -26"/>${HEAD(34.5, 5, -122)}`,
 };
 
 // The grid takes this much of the picture's shorter side.
@@ -232,6 +236,7 @@ export class CameraScanner {
     this.step = 0;
     this.faces.fill(null);
     this.again = -1;
+    this.jumped = false;
     await this.feed.open();
     this.#opened();
     this.#layout();
@@ -264,10 +269,18 @@ export class CameraScanner {
     this.grid.style.setProperty("--n", n);
     this.grid.replaceChildren(...Array.from({ length: n * n }, () => el("i")));
     this.shots.replaceChildren(
-      ...SCAN_STEPS.map(({ face }) => {
-        const li = el("li", { "data-face": face, title: FACE_NAMES[face] });
+      ...SCAN_STEPS.map(({ face }, k) => {
+        // Each is a button: pressing a face goes to it, and takes it back if it was captured.
+        const li = el("li", { "data-face": face, role: "button", tabindex: "0" });
         li.style.setProperty("--n", n);
-        for (let k = 0; k < n * n; k++) li.append(el("i"));
+        for (let i = 0; i < n * n; i++) li.append(el("i"));
+        const go = () => this.#goTo(k);
+        li.addEventListener("click", go);
+        li.addEventListener("keydown", (e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          go();
+        });
         return li;
       }),
     );
@@ -275,21 +288,27 @@ export class CameraScanner {
 
   #show() {
     const done = this.step >= SCAN_STEPS.length;
-    const { face, text, sign } = SCAN_STEPS[Math.min(this.step, SCAN_STEPS.length - 1)];
+    const { face, text, signs, via } = SCAN_STEPS[Math.min(this.step, SCAN_STEPS.length - 1)];
     this.heading.textContent = done ? "All six faces captured" : `Face ${this.step + 1} of 6: ${FACE_NAMES[face].toLowerCase()}`;
-    this.text.textContent = done ? "" : text;
+    // A face gone back to is not the next one round: it is shown as the cube in the panel shows it.
+    const again = this.jumped && !done;
+    this.text.textContent = done ? "" : again ? `Show the ${FACE_NAMES[face].toLowerCase()} face again, held as the cube here shows it: the framed face to the camera.` : text;
     this.text.classList.remove("warn");
-    this.sign.innerHTML = `<svg viewBox="0 0 32 32">${SIGNS[sign]}</svg>`;
+    this.sign.innerHTML = (again ? ["hold"] : signs).map((name) => `<svg viewBox="0 0 40 38">${SIGNS[name]}</svg>`).join("<i>then</i>");
     this.again = -1;
     this.capture.disabled = done;
-    this.back.disabled = this.step === 0;
+    this.back.disabled = !this.faces.some(Boolean);
     [...this.shots.children].forEach((li, k) => {
       const colours = this.faces[SCAN_STEPS[k].face];
       li.classList.toggle("current", k === this.step);
       li.classList.toggle("taken", !!colours);
+      const name = FACE_NAMES[SCAN_STEPS[k].face].toLowerCase();
+      li.title = colours ? `Take the ${name} face again` : `Go to the ${name} face`;
+      li.setAttribute("aria-label", li.title);
       [...li.children].forEach((cell, i) => (cell.style.background = colours ? css(colours[i]) : ""));
     });
-    if (!done) this.hooks.onstep?.(face);
+    // The face asked for, and the face the cube passes on its way there when it takes two moves.
+    if (!done) this.hooks.onstep?.(face, again ? undefined : via);
   }
 
   // Looks for the face in the picture of the moment: the middle square of
@@ -426,7 +445,11 @@ export class CameraScanner {
     const face = SCAN_STEPS[this.step].face;
     this.faces[face] = this.live;
     this.hooks.onface?.(face, this.live);
-    this.step++;
+    // On to the first face not captured yet: the next one as a rule, another after one was taken again.
+    const open = SCAN_STEPS.findIndex((step) => !this.faces[step.face]);
+    // In turn when it is the face after the one just captured; otherwise it is one gone back to.
+    this.jumped = open !== this.step + 1 && open >= 0;
+    this.step = open < 0 ? SCAN_STEPS.length : open;
     this.#show();
     if (this.step === SCAN_STEPS.length) {
       const samples = this.faces.flat();
@@ -440,9 +463,9 @@ export class CameraScanner {
   #shownBefore(colours) {
     const nn = this.n * this.n;
     const mid = (nn - 1) / 2;
-    for (let k = 0; k < this.step; k++) {
+    for (let k = 0; k < SCAN_STEPS.length; k++) {
       const was = this.faces[SCAN_STEPS[k].face];
-      if (!was) continue;
+      if (!was || k === this.step) continue;
       if (this.n % 2 === 1) {
         if (unalike(colours[mid], was[mid]) < 2.5) return k;
       } else {
@@ -454,12 +477,24 @@ export class CameraScanner {
     return -1;
   }
 
-  #retake() {
-    if (this.step === 0) return;
-    this.step--;
-    const face = SCAN_STEPS[this.step].face;
-    this.faces[face] = null;
-    this.hooks.onface?.(face, null);
+  // Goes to a face: to capture it, or, if it was captured, to take it away and capture it again.
+  #goTo(k) {
+    if (!this.running || k < 0 || k >= SCAN_STEPS.length) return;
+    const face = SCAN_STEPS[k].face;
+    if (this.faces[face]) {
+      this.faces[face] = null;
+      this.hooks.onface?.(face, null);
+    }
+    this.step = k;
+    this.jumped = true;
     this.#show();
+  }
+
+  // Retake: the face captured last before the one being asked for is taken away and asked for again.
+  #retake() {
+    let k = Math.min(this.step, SCAN_STEPS.length) - 1;
+    while (k >= 0 && !this.faces[SCAN_STEPS[k].face]) k--;
+    if (k < 0) k = SCAN_STEPS.findLastIndex((step) => this.faces[step.face]);
+    if (k >= 0) this.#goTo(k);
   }
 }

@@ -123,6 +123,7 @@ export class CubeView {
     this.blank = "#3b404c";
     this.raw = null; // a colour per facelet that overrides the palette where set
     this.marks = null; // facelets to ring: ones to look at again
+    this.frame = null; // a face to draw a frame round
     this.rot = HOME;
     // Layers `from` up to `to` under `face`, turned by `angle` radians clockwise seen from the face.
     this.turn = null;
@@ -331,6 +332,12 @@ export class CubeView {
     this.draw();
   }
 
+  /** A face to draw a frame round (the one being asked for), or null. */
+  setFrame(face) {
+    this.frame = face;
+    this.draw();
+  }
+
   // Facelets to ring (a number above 0.55 each), or null.
   setMarks(marks) {
     this.marks = marks;
@@ -368,9 +375,12 @@ export class CubeView {
     this.draw();
   }
 
-  // Turns the cube to show a face (or back to the usual view, with `null`).
-  look(face, ms = 450) {
-    const tilt = mul(rotX(0.3), rotY(-0.34));
+  // Turns the cube to show a face (or back to the usual view, with `null`):
+  // the face in front, seen a little from above and from the right, or
+  // with `from` "left" well from the left, so that the face beside it on
+  // that side is in view too.
+  look(face, ms = 450, from = "right") {
+    const tilt = from === "left" ? mul(rotX(0.44), rotY(0.62)) : mul(rotX(0.3), rotY(-0.34));
     const target = face === null ? HOME : mul(tilt, TO_FRONT[face]);
     if (reducedMotion() || ms <= 0) {
       this.rot = target;
@@ -667,6 +677,28 @@ export class CubeView {
             ctx.restore();
           }
         }
+      }
+    }
+    // A frame round one face, where it is in view: the face being asked for.
+    if (this.frame !== null && !(turn && turn.angle !== 0)) {
+      const { normal, right, down } = FACES[this.frame];
+      const m = this.rot;
+      if ((m[6] * normal[0] + m[7] * normal[1] + m[8] * normal[2]) * EYE > 1) {
+        const edge = 0.985;
+        ctx.beginPath();
+        [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b], i) => {
+          const v = [0, 1, 2].map((k) => normal[k] * 1.012 + right[k] * a * edge + down[k] * b * edge);
+          const [x, y] = this.#project(apply(m, v), f);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        ctx.closePath();
+        ctx.lineJoin = "round";
+        ctx.lineWidth = Math.max(5, size / 60);
+        ctx.strokeStyle = "rgba(0,0,0,0.75)";
+        ctx.stroke();
+        ctx.lineWidth = Math.max(3, size / 100);
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
       }
     }
     // The arrows of the move that is next. While its own layers turn they

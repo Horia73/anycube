@@ -769,8 +769,22 @@ export async function mount(root, options = {}) {
 
   // --------------------------------------------------------------- camera
 
+  let guiding = 0;
   const scanner = new CameraScanner($("camera-frame"), $("camera-side"), {
-    onstep: (face) => view.look(face),
+    // The cube in the panel shows what to hold up: the face asked for in
+    // front with a frame round it, seen from the side the faces already
+    // read are on, so that their colours say how to hold the cube. Where it
+    // takes two moves to bring the face round, the cube makes both.
+    onstep: (face, via) => {
+      clearTimeout(guiding);
+      view.setFrame(face);
+      if (via === undefined) {
+        view.look(face, 450, "left");
+      } else {
+        view.look(via, 420, "left");
+        guiding = setTimeout(() => view.look(face, 520, "left"), 560);
+      }
+    },
     onface: (face, colours) => {
       const nn = state.size * state.size;
       for (let i = 0; i < nn; i++) {
@@ -815,6 +829,8 @@ export async function mount(root, options = {}) {
     },
     onstop: () => {
       // What was read of an unfinished scan is dropped; the painted cube is as it was.
+      clearTimeout(guiding);
+      view.setFrame(null);
       state.scan = null;
       placeCube();
       setTouch();
@@ -837,7 +853,7 @@ export async function mount(root, options = {}) {
     placeCube();
     setTouch();
     show();
-    view.look(2);
+    view.look(2, 450, "left");
   });
 
   // ---------------------------------------------------------------- solve
