@@ -20,7 +20,6 @@
 <p align="center">
   <a href="#results">Results</a> ·
   <a href="#install">Install</a> ·
-  <a href="#run">Run</a> ·
   <a href="#usage">Usage</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="bench/README.md">Benchmarks</a> ·
@@ -99,98 +98,77 @@ One command, on macOS and Linux:
 curl -fsSL https://raw.githubusercontent.com/Horia73/anycube/main/install.sh | sh
 ```
 
-It puts the program in `~/.local/bin` and asks whether to add anycube to your
-applications, with its icon. It takes a ready-made program from the releases
-when there is one for your system and builds from source otherwise. Nothing
-is written outside your own directories, nothing needs `sudo`, and it says
-what it put where. `anycube app --uninstall` removes the entry among the
-applications; `./install.sh --uninstall` in a clone removes everything.
+It fetches anycube, builds it (or takes the ready-made program of a release
+when there is one for your system), puts it in `~/.local/bin` and offers to
+add it to your applications, with its icon. Nothing is written outside your
+own directories and nothing needs `sudo`. Building needs Rust: if it is not
+installed, the installer stops and names the one command that installs it.
+`--uninstall` after the same line (`... | sh -s -- --uninstall`) removes it
+all. On Windows, or by hand: `cargo build --release` in a clone.
 
-Building from source needs Rust. If `cargo --version` answers, it is there;
-if not, this is Rust's own installer:
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-Or by hand, on any system Rust builds for (on Windows this is the way, for
-now):
-
-```bash
-git clone https://github.com/Horia73/anycube.git && cd anycube && cargo build --release
-```
-
-That leaves the program at `target/release/anycube`; `./install.sh` in the
-clone installs it as above.
-
-## Run
+## Usage
 
 ```bash
 anycube app
 ```
 
 <p align="center">
-  <img src="docs/interface.png" width="700" alt="The interface: a 4x4x4 part of the way through its solution, with arrows on the layer to turn next">
+  <img src="docs/interface.png" width="800" alt="The interface: a 4x4x4 part of the way through its solution, an arrow on each row that turns next">
 </p>
 
-A window opens with a cube in it, of any size up to 50x50x50: scramble it,
-paint it, show it to a camera or turn its layers by hand, then solve it and
-follow the solution move by move. Everything runs on your machine; more in
-[`app/README.md`](app/README.md).
+That opens the interface: a cube of any size up to 50x50x50 to scramble,
+paint, show to a camera or turn by hand, then solve and follow move by move.
+[`app/README.md`](app/README.md) shows the other modes.
 
 The first solve of a size builds its lookup tables, once: a moment for 2x2x2
 and 3x3x3, about four minutes and 4.9 GB for 4x4x4, about 8.5 GB for every
-size together. The interface keeps them with your application data and shows
-the progress; the command line below keeps them in `tables/` where it is run.
-`ANYCUBE_TABLES` names one place for both.
+size together.
 
-## Usage
-
-A cube is given as it looks: its stickers face by face in the order U R F D
-L B, each face row by row, each sticker named by the face its colour belongs
-to. That is the order Kociemba's and dwalton76's solvers read, and the size
-is read from the number of stickers.
+On the command line, a cube is given as it looks: its stickers face by face
+in the order U R F D L B, each face row by row, each sticker named by the
+face its colour belongs to. That is the order Kociemba's and dwalton76's
+solvers read, and the size is read from the number of stickers.
 
 ```bash
 # 2x2x2
-./target/release/anycube solve --state BFRRDRRDUFLDUBDLUBFFULBL
+anycube solve --state BFRRDRRDUFLDUBDLUBFFULBL
 
 # 3x3x3
-./target/release/anycube solve --state LFUBUFUUFUURLRRULFLRRBFURLLBBFRDDFFLDDBFLUDBDBDBDBLDRR
+anycube solve --state LFUBUFUUFUURLRRULFLRRBFURLLBBFRDDFFLDDBFLUDBDBDBDBLDRR
 
 # 4x4x4
-./target/release/anycube solve --state FUDLLDRRLLBULBDULBUFFDBDRLURRDULFRFBULDRUFDDRLBBBDRUBBRBFRRFFDDBRFFDLUULFFBLRULDUFBDRFFBULURDBLU
+anycube solve --state FUDLLDRRLLBULBDULBUFFDBDRLURRDULFRFBULDRUFDDRLBBBDRUBBRBFRRFFDDBRFFDLUULFFBLRULDUFBDRFFBULURDBLU
 
 # 5x5x5
-./target/release/anycube solve --state RFBBRLFBRLFLUFBFBDBRRDDLBDBRFFUBLRRFBRULDFLFFUDUDFFRBBRFDRLBFDFRUFDBUBBUBULURLLFDLDRLLLDURUBDURDFFFLUBRLULFUUUDRLFLLUFRDLRDBLDUUUBBDULDUFBRRRLBDUDRDDB
+anycube solve --state RFBBRLFBRLFLUFBFBDBRRDDLBDBRFFUBLRRFBRULDFLFFUDUDFFRBBRFDRLBFDFRUFDBUBBUBULURLLFDLDRLLLDURUBDURDFFFLUBRLULFUUUDRLFLLUFRDLRDBLDUUUBBDULDUFBRRRLBDUDRDDB
 
 # 6x6x6
-./target/release/anycube solve --state FRDFLFRLDRRRDBDUDRURUFLLBBULUFDFLUULURDUBRDBUUULUDDFLLLUDLRRLLFLRLDULFFBRUURRFRFFLUFDUBRBFBFURUFRFDBDBBBDRDFRURBLLFLBBDFLLDUFFFDBLRDBBDUFRDBUDBLRBBBLBDRBRBDRFLBRLURBRBULUBLRDLDRBDUUURFUDFDFLDLBDRFUDBDFLFFFFFRLUUUBLDB
+anycube solve --state FRDFLFRLDRRRDBDUDRURUFLLBBULUFDFLUULURDUBRDBUUULUDDFLLLUDLRRLLFLRLDULFFBRUURRFRFFLUFDUBRBFBFURUFRFDBDBBBDRDFRURBLLFLBBDFLLDUFFFDBLRDBBDUFRDBUDBLRBBBLBDRBRBDRFLBRLURBRBULUBLRDLDRBDUUURFUDFDFLDLBDRFUDBDFLFFFFFRLUUUBLDB
 
 # 7x7x7
-./target/release/anycube solve --state LUFDFDUBLRLFFRBLUUDDFBUFUDUFBLFLRFRLRLDFUDFRDUFUFDBULUFRFLBUFRDFDFRRURDDLRLFBFDFUUULFUUDUFBDLBLLURRFBBLBLLRBBLDLUDFDDFLURRFBLFBRUUBRDBBBLLLLLBLLUDBBDBDBFRULURUFDRFDUBFDRFBDFFUULLRBBBBBDFFRLFRUFDFUDRRRRDDUBUURFBLBLFRBLLRLLFLFLDLBULULDDBBUUURFUDFUBRRRRFBRBLBRDRDRLDDRUDDBBRBBDRBDRUDLDBRDUUFDFRRUL
+anycube solve --state LUFDFDUBLRLFFRBLUUDDFBUFUDUFBLFLRFRLRLDFUDFRDUFUFDBULUFRFLBUFRDFDFRRURDDLRLFBFDFUUULFUUDUFBDLBLLURRFBBLBLLRBBLDLUDFDDFLURRFBLFBRUUBRDBBBLLLLLBLLUDBBDBDBFRULURUFDRFDUBFDRFBDFFUULLRBBBBBDFFRLFRUFDFUDRRRRDDUBUURFBLBLFRBLLRLLFLFLDLBULULDDBBUUURFUDFUBRRRRFBRBLBRDRDRLDDRUDDBBRBBDRBDRUDLDBRDUUFDFRRUL
 ```
 
 Or as the moves that scrambled it, with the size of the cube:
 
 ```bash
 # 3x3x3, 25 random moves
-./target/release/anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
+anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 
 # the same cube in the fewest moves there are: 18, after about 25 seconds
-./target/release/anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'" --mode full
+anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'" --mode full
 
 # 5x5x5, 60 random moves, the quick way
-./target/release/anycube solve --size 5 "Bw2 D2 L' F Dw R B U L2 F2 Dw L Dw2 Fw Lw' B' R' Dw Bw' D2 F Lw2 Dw R' B' Rw2 U2 Bw Uw Bw' R2 Dw Fw Dw L' Fw' Lw' Uw2 Bw Dw2 B' Dw2 Bw' L2 Dw' Bw' Lw2 Bw Lw2 U' L2 B2 Lw2 U2 R2 Uw Rw Fw' L2 Uw" --mode fast
+anycube solve --size 5 "Bw2 D2 L' F Dw R B U L2 F2 Dw L Dw2 Fw Lw' B' R' Dw Bw' D2 F Lw2 Dw R' B' Rw2 U2 Bw Uw Bw' R2 Dw Fw Dw L' Fw' Lw' Uw2 Bw Dw2 B' Dw2 Bw' L2 Dw' Bw' Lw2 Bw Lw2 U' L2 B2 Lw2 U2 R2 Uw Rw Fw' L2 Uw" --mode fast
 
 # 7x7x7, 100 random moves
-./target/release/anycube solve --size 7 "Rw2 3Uw 3Rw Uw' B2 3Uw2 3Fw2 R Fw' 3Uw' F2 D2 3Fw 3Dw2 Lw2 3Uw 3Bw' Lw2 3Uw' Rw' 3Uw2 3Lw' 3Bw' Uw' F2 Lw2 B' 3Rw Uw Fw' R' B' Lw2 U F' Dw 3Lw2 Uw2 Bw' Rw2 U R' F Uw2 B2 3Lw' Uw' Lw 3Uw' Bw2 U2 3Rw2 3Dw 3Bw' D2 3Bw Uw2 Bw2 Uw' 3Rw2 Bw U' Rw2 Fw2 3Rw Fw L2 3Fw U 3Bw L2 F Uw Rw2 Dw2 R2 3Bw Uw F 3Dw2 Fw2 3Rw Uw 3Bw Dw2 3Fw' 3Lw 3Bw Rw Uw B Rw Uw' F2 Lw' Dw B' 3Lw 3Bw U"
+anycube solve --size 7 "Rw2 3Uw 3Rw Uw' B2 3Uw2 3Fw2 R Fw' 3Uw' F2 D2 3Fw 3Dw2 Lw2 3Uw 3Bw' Lw2 3Uw' Rw' 3Uw2 3Lw' 3Bw' Uw' F2 Lw2 B' 3Rw Uw Fw' R' B' Lw2 U F' Dw 3Lw2 Uw2 Bw' Rw2 U R' F Uw2 B2 3Lw' Uw' Lw 3Uw' Bw2 U2 3Rw2 3Dw 3Bw' D2 3Bw Uw2 Bw2 Uw' 3Rw2 Bw U' Rw2 Fw2 3Rw Fw L2 3Fw U 3Bw L2 F Uw Rw2 Dw2 R2 3Bw Uw F 3Dw2 Fw2 3Rw Uw 3Bw Dw2 3Fw' 3Lw 3Bw Rw Uw B Rw Uw' F2 Lw' Dw B' 3Lw 3Bw U"
 
-# the first 21x21x21 of the benchmark, 1,050 random moves
-./target/release/anycube solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
+# the first 21x21x21 of the benchmark, 1,050 random moves (in a clone of the repository)
+anycube solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
 
 # the stickers of a scrambled cube, to pass to --state
-./target/release/anycube facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
+anycube facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 ```
 
 It prints the solution and, on a second line, what it took. The 4x4x4 state

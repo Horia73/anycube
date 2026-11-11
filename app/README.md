@@ -4,6 +4,24 @@
 to scramble, paint, show to a camera, turn by hand, solve and follow move
 by move. Everything runs on the machine it is started on.
 
+<p align="center">
+  <img src="../docs/interface.png" width="800" alt="A 4x4x4 part of the way through its solution, an arrow on each row that turns next">
+</p>
+
+Paint a cube sticker by sticker; the line above Solve says what is still
+missing or wrong, and Solve waits until the cube is one that exists:
+
+<p align="center">
+  <img src="../docs/interface-paint.png" width="800" alt="Paint: a 3x3x3 with seven stickers not painted yet">
+</p>
+
+Or hold it up to a camera, a face at a time (the picture never leaves the
+computer; this one is a drawing of a face, not a camera's):
+
+<p align="center">
+  <img src="../docs/interface-camera.png" width="800" alt="Camera: the first face of a 3x3x3 read, the second to come">
+</p>
+
 | Path | What it is |
 |---|---|
 | `index.html`, `app.css`, `js/` | The page: plain HTML, CSS and JavaScript modules, no build step, nothing loaded from anywhere else. Built into the program (`src/app/assets.rs`) |
@@ -30,7 +48,9 @@ by move. Everything runs on the machine it is started on.
   shows it under "Loading the tables". They go to `ANYCUBE_TABLES` if
   set, else `./tables` if that exists, else the user's application data
   (`~/Library/Application Support/anycube/tables` on macOS,
-  `~/.local/share/anycube/tables` on Linux).
+  `~/.local/share/anycube/tables` on Linux). The command line of an
+  installed program follows the same rule; a program run from the
+  repository it was built in keeps the solver's own default, `./tables`.
 - **The entry among the applications** (`anycube app --install`): on
   macOS `~/Applications/anycube.app`, a bundle with `Info.plist`, icon
   set and a launcher, made on the machine so that it opens without a
