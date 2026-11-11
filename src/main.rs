@@ -20,6 +20,7 @@ fn main() {
         Some("free3") => free3(&args[1..]),
         Some("free-features") => free_features(&args[1..]),
         Some("free-beam") => free_beam(&args[1..]),
+        Some("free-tail") => free_tail(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
         Some("gen-centres") => gen_centres(),
         Some("startup") => startup(),
@@ -375,6 +376,67 @@ fn bench(args: &[String]) {
     println!("length histogram: {:?}", hist);
     if tpr.is_some() {
         println!("TPR on the same cubes: mean length {:.3} (facelets and solutions cross-checked)", tpr_total as f64 / n);
+    }
+}
+
+/// Experiment: is the end of the solver's reduction as short as it could be?
+/// The cube is solved, the reduction of the solution is cut `j` moves before
+/// the end of the joint phase, and the rest (j moves of the joint phase plus
+/// phase 3) is compared with the shortest reduction from that point with all
+/// moves, exact up to 12 moves.
+fn free_tail(args: &[String]) {
+    use cubenxnxn::free::{is_reduced, Ball};
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (limit, max_back, forward) = (num("--limit", 20), num("--back", 3), num("--forward", 6));
+    let ball = Ball::build(6);
+    let solver = Solver::new();
+    let params = params(args);
+    // Per j: cubes where the rest is short enough to be decided, where it got shorter, moves saved.
+    let mut decided = vec![0usize; max_back + 1];
+    let mut shorter = vec![0usize; max_back + 1];
+    let mut saved = vec![0usize; max_back + 1];
+    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit).enumerate() {
+        let cube = Cube::from_moves(&parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+        let sol = solver.solve(&cube, &params).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        let (a, k) = (sol.lens[0] + sol.lens[1], sol.lens[2]);
+        let mut line = format!("cube {:2}: joint {} + phase 3 {}:", i, a, k);
+        for j in 0..=max_back.min(a) {
+            let rest = j + k;
+            let mut x = cube;
+            x.apply_seq(&sol.moves[..a - j]);
+            // Exact when the answer is at most forward + 6; the rest is known to be at most `rest`.
+            if rest > forward + 7 {
+                line += &format!("  j={} ?", j);
+                continue;
+            }
+            let free = ball.shortest(&x, forward).map(|p| {
+                let mut c = x;
+                c.apply_seq(&p);
+                if !is_reduced(&c) {
+                    fail("a free reduction does not reduce the cube");
+                }
+                p.len()
+            });
+            // None can only mean rest == forward + 7 and nothing shorter exists.
+            let f = free.unwrap_or(rest);
+            decided[j] += 1;
+            if f < rest {
+                shorter[j] += 1;
+                saved[j] += rest - f;
+            }
+            line += &format!("  j={} {}->{}", j, rest, f);
+        }
+        println!("{}", line);
+    }
+    for j in 0..=max_back {
+        println!(
+            "cut {} moves before the end of the joint phase: decided on {} cubes, shorter on {}, {} moves saved in all",
+            j, decided[j], shorter[j], saved[j]
+        );
     }
 }
 

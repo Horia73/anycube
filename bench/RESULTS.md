@@ -472,6 +472,26 @@ these runs, load average 20 to 30; full mode took 15.9 s on a quiet machine):
 
 Histogram of the last line: 38: 1, 39: 12, 40: 13, 41: 4.
 
+## 4x4x4: is the end of the reduction as short as it could be? (2026-11-11)
+
+`cubenxnxn free-tail bench/scrambles-1000.txt --limit 24 --back 3`: the cube
+is solved with the default flags, the reduction of the solution is cut j moves
+before the end of the joint phase, and what follows (j moves of the joint
+phase plus phase 3) is compared with the shortest reduction from that point
+with all moves, exact up to 12 moves (so decided when the rest is at most 13).
+
+| Cut j moves before the end of the joint phase | Cubes decided | Shorter with all moves | Moves saved |
+|---|---|---|---|
+| 0 | 23 | 2 | 2 |
+| 1 | 19 | 1 | 1 |
+| 2 | 12 | 1 | 1 |
+| 3 | 8 | 0 | 0 |
+
+The one cube that is shorter at j = 1 and j = 2 is one of the two at j = 0.
+So the last 12 to 13 moves of the solver's reduction are almost always as
+short as any reduction from that point: whatever the three-phase reduction
+loses against a free one, it loses in its first ten moves or so.
+
 ## 4x4x4: our solutions in single-layer quarter turns (2026-11-11)
 
 CayleyPy (arXiv 2502.13266) reports 4x4x4 results in the metric of the Kaggle

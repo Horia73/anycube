@@ -121,6 +121,13 @@ Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
   așezare a centrelor e 7,8 față de 9,1 la un cub aleator, iar muchiile
   împerecheate 1,4 față de 0,5. O căutare liberă are nevoie de un semnal
   care să vadă la 15 mutări distanță; semnalele făcute de mână nu văd.
+- Coada reducerii e deja optimă (`free-tail`, 24 de cuburi): tăiată cu 0–3
+  mutări înainte de sfârșitul fazei libere și refăcută exact cu toate
+  mutările, iese mai scurtă cu o mutare pe 2 cuburi din 23 și pe niciunul din
+  cele 8 la care s-au putut tăia 3 mutări. Ce pierde reducerea în trei faze
+  pierde în primele ~10 mutări, adică în direcția aleasă la început.
+- Rezolvarea cubului invers (soluția întoarsă începe cu 3x3x3): −0,4…−0,5 la
+  timp dublu; modul full pe cub și pe invers dă 39,67 pe 30 de cuburi.
 - Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
   cunoscută; bancul și tabelul dau etichete exacte până la 12 mutări). Câștigul
   maxim pe cuburi aleatoare e ~2 mutări, iar reușita nu e sigură.
