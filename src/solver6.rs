@@ -918,8 +918,14 @@ impl Run3<'_> {
 pub struct Params6 {
     /// Stagings carried from step to step in step 1.
     pub width: usize,
+    /// Results asked of the first step of the staging, and results of its
+    /// second step taken into the third (see `stage6::Wide`).
+    pub first: usize,
+    pub fan: usize,
     /// Stagings taken on to step 2, in each hold.
     pub tries: usize,
+    /// Wing splits of each staging that are taken through step 3.
+    pub splits: usize,
     /// Ways the cube is held (1 to 6). The cube has no fixed centres, so
     /// any pair of colours may lie on any axis, and the steps treat the
     /// axes differently: every hold is the same cube as another problem.
@@ -941,7 +947,7 @@ impl Params6 {
     /// more reductions than its own fast mode does.
     pub fn fast() -> Params6 {
         let outer = Params5 { e_keep: 200, pool: 60, time_ms: 1500, ..Params5::fast() };
-        Params6 { width: 4, tries: 3, holds: 1, finals: 24, budget: 0, beam: 50_000, outer }
+        Params6 { width: 4, first: 4, fan: 16, tries: 3, splits: 2, holds: 1, finals: 24, budget: 0, beam: 50_000, outer }
     }
 
     /// Wider, and the 5x5x5 with more reductions and more 3x3x3 searches
@@ -951,7 +957,7 @@ impl Params6 {
     pub fn normal() -> Params6 {
         let outer =
             Params5 { c_keep: 4000, p_keep: 4000, e_keep: 800, pool: 240, probes: 10_000, time_ms: 0, ..Params5::normal() };
-        Params6 { width: 8, tries: 6, holds: 1, finals: 64, budget: 0, beam: 100_000, outer }
+        Params6 { width: 8, first: 8, fan: 32, tries: 6, splits: 2, holds: 1, finals: 64, budget: 0, beam: 100_000, outer }
     }
 
     /// Wider everywhere, and no clock in the 5x5x5, whose last steps get
@@ -960,7 +966,7 @@ impl Params6 {
     /// cubes for less than a move.
     pub fn full() -> Params6 {
         let outer = Params5 { c_keep: 6000, p_keep: 6000, e_keep: 3000, pool: 800, probes: 10_000, time_ms: 0, ..Params5::normal() };
-        Params6 { width: 16, tries: 12, holds: 1, finals: 128, budget: 0, beam: 300_000, outer }
+        Params6 { width: 16, first: 16, fan: 64, tries: 12, splits: 2, holds: 1, finals: 128, budget: 0, beam: 300_000, outer }
     }
 }
 
@@ -1041,12 +1047,15 @@ impl Solver6 {
             })
             .collect();
         out.sort_by_key(|x| x.0);
+        // Splits that end in the same cube are one.
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|x| seen.insert(x.2.clone()));
         out.into_iter().map(|x| (x.1, x.2)).collect()
     }
 
     /// Steps 2 and 3 for one staging: the exact way within the budget, else
     /// the same by beam search, else (no beam, or it found nothing) the quick way.
-    pub(crate) fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64, beam: usize) -> Vec<Partial> {
+    pub(crate) fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64, beam: usize, splits: usize) -> Vec<Partial> {
         let mut out = Vec::new();
         if budget > 0 {
             if let Some((sp, f2)) = self.splits(f1, false).into_iter().next() {
@@ -1058,13 +1067,13 @@ impl Solver6 {
             }
         }
         if out.is_empty() && beam > 0 {
-            // The same step by beam search, from the two most promising splits.
+            // The same step by beam search, from the most promising splits.
             let t0 = crate::clock::cpu_ms();
-            let splits = self.splits(f1, false);
+            let found = self.splits(f1, false);
             if std::env::var_os("CUBE6_TRACE").is_some() {
-                eprintln!("    splits: {} in {:.0} ms of processor", splits.len(), crate::clock::cpu_ms() - t0);
+                eprintln!("    splits: {} different cubes in {:.0} ms of processor", found.len(), crate::clock::cpu_ms() - t0);
             }
-            for (i, (sp, f2)) in splits.into_iter().take(2).enumerate() {
+            for (i, (sp, f2)) in found.into_iter().take(splits).enumerate() {
                 let t0 = crate::clock::cpu_ms();
                 let reds = self.inner.reduce_beam(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), beam, 4, i as u32);
                 if std::env::var_os("CUBE6_TRACE").is_some() {
@@ -1119,15 +1128,19 @@ impl Solver6 {
         let mut cands: Vec<(usize, Partial)> = Vec::new();
         for hold in 0..p.holds.clamp(1, self.holds.len()) {
             let held = g.held(facelets, &self.holds[hold].0);
-            let staged = self.s6.stage(&self.outer.stage, &held, p.width);
+            let wide = crate::stage6::Wide { first: p.first, fan: p.fan, ..crate::stage6::Wide::plain(p.width) };
+            let staged = self.s6.stage_wide(&self.outer.stage, &held, &wide, 0..3);
             lap("staged");
             for st in &staged[..staged.len().min(p.tries)] {
-                let found = self.inner_steps(&st.moves, &self.apply(&held, &st.moves), p.budget, p.beam);
+                let found = self.inner_steps(&st.moves, &self.apply(&held, &st.moves), p.budget, p.beam, p.splits);
                 cands.extend(found.into_iter().map(|c| (hold, c)));
             }
             lap("reduced");
         }
         cands.sort_by_key(|c| c.1 .0.len());
+        // The same cube reached twice is one candidate.
+        let mut seen = std::collections::HashSet::new();
+        cands.retain(|c| seen.insert(c.1 .2.clone()));
         cands.truncate(p.finals);
         if cands.is_empty() {
             return Err("no reduction of the inner cube found".to_string());

@@ -48,6 +48,11 @@ const HOME_BUDGET: u64 = 1_000_000;
 /// an even cube as a 6x6x6.
 const SIX_BEAM: usize = 100_000;
 
+/// Wing splits tried there. The 6x6x6 solver reaches this step with many
+/// stagings and takes two splits of each; here there is one staging, and
+/// the shortest of more splits makes up for some of that.
+const SIX_SPLITS: usize = 6;
+
 pub struct SolverN {
     /// The 6x6x6 solver, whose parts are used one by one: its 4x4x4 and
     /// 5x5x5 solvers, its staging, and its inner steps.
@@ -403,7 +408,7 @@ impl SolverN {
             // deeper, which leave the rows nearer the rim matched.
             let layers = [0, half - 2, half - 1, half, half + 1, last];
             let sub = g.sub_facelets(&w.f, &layers);
-            let found = self.six.inner_steps(&[], &sub, 0, SIX_BEAM);
+            let found = self.six.inner_steps(&[], &sub, 0, SIX_BEAM, SIX_SPLITS);
             let best = found.iter().min_by_key(|c| c.0.len()).ok_or_else(|| none("reduction of the innermost ring", &layers))?;
             w.apply(&best.0, &[1, half - 1, half]);
             w.rehome(half - 1, half - 1)?;

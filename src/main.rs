@@ -162,7 +162,10 @@ fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
     };
     Params6 {
         width: num("--width", d.width),
+        first: num("--first", d.first),
+        fan: num("--fan", d.fan),
         tries: num("--tries", d.tries),
+        splits: num("--splits", d.splits),
         holds: num("--holds", d.holds),
         finals: num("--finals", d.finals),
         budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
@@ -924,6 +927,8 @@ fn stage6(args: &[String]) {
     let s6 = Stage6::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let (mut sums, mut total, mut ms, mut n, mut cpu) = ([0usize; 3], 0usize, 0.0, 0usize, 0.0);
+    // Stagings returned, and the lengths of the first eight of each cube.
+    let (mut kept, mut at, mut have) = (0usize, [0usize; 8], [0usize; 8]);
     for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
         let scramble = s6.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = s6.g.solved();
@@ -933,10 +938,17 @@ fn stage6(args: &[String]) {
             f = s6.g.held(&f, &s6.g.holds()[hold]);
         }
         let (t, c) = (Instant::now(), cubenxnxn::clock::cpu_ms());
-        let wide = cubenxnxn::stage6::Wide { width, fan: num("--fan", width), beam: num("--beam", 20_000) };
+        let wide = cubenxnxn::stage6::Wide {
+            width,
+            fan: num("--fan", width),
+            beam: num("--beam", 20_000),
+            first: num("--first", width),
+        };
         let found = s6.stage_wide(&s5, &f, &wide, 0..3);
-        if opt(args, "--each").is_some() {
-            eprintln!("cube {} hold {}: {:?}", n, hold, found.iter().map(|x| x.moves.len()).collect::<Vec<_>>());
+        kept += found.len();
+        for (k, x) in found.iter().enumerate().take(8) {
+            at[k] += x.moves.len();
+            have[k] += 1;
         }
         ms += t.elapsed().as_secs_f64() * 1e3;
         cpu += cubenxnxn::clock::cpu_ms() - c;
@@ -957,6 +969,11 @@ fn stage6(args: &[String]) {
         "mean length {:.2}  (steps {})",
         total as f64 / nf,
         sums.iter().map(|&s| format!("{:.2}", s as f64 / nf)).collect::<Vec<_>>().join(" + ")
+    );
+    println!(
+        "stagings per cube {:.1}; mean length of the first, second, ...: {}",
+        kept as f64 / nf,
+        (0..8).filter(|&k| have[k] > 0).map(|k| format!("{:.2}", at[k] as f64 / have[k] as f64)).collect::<Vec<_>>().join(" ")
     );
     println!("mean time {:.0} ms, processor time {:.0} ms", ms / nf, cpu / nf);
 }
