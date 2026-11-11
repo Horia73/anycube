@@ -483,6 +483,30 @@ export async function mount(root, options = {}) {
     readScramble();
   }
   $("random").addEventListener("click", randomScramble);
+
+  // The "i": what a random scramble is here and what may be typed. It lies
+  // over the panel by the buttons, and goes at the next click or Escape.
+  function setHelp(open) {
+    const box = $("help-text");
+    $("help").setAttribute("aria-expanded", String(open));
+    box.hidden = !open;
+    if (!open) return;
+    const panel = root.querySelector(".panel").getBoundingClientRect();
+    const row = $("help").getBoundingClientRect();
+    // Under the buttons where there is room on the screen, over them where there is not.
+    const under = row.bottom + 6 + box.offsetHeight <= window.innerHeight - 6;
+    box.style.top = `${Math.round((under ? row.bottom + 6 : row.top - 6 - box.offsetHeight) - panel.top)}px`;
+  }
+  $("help").addEventListener("click", (e) => {
+    e.stopPropagation();
+    setHelp($("help-text").hidden);
+  });
+  document.addEventListener("click", (e) => {
+    if (!$("help-text").hidden && !e.target.closest?.("#help-text")) setHelp(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") setHelp(false);
+  });
   $("clear").addEventListener("click", () => setScramble([]));
   $("undo").addEventListener("click", () => setScramble(state.scramble.moves.slice(0, -1)));
 

@@ -92,14 +92,13 @@ export const APP_HTML = `
     <div class="panels">
       <div role="tabpanel" id="panel-scramble" aria-labelledby="tab-scramble" class="tabpanel">
         <label class="sr" for="scramble">Scramble</label>
-        <textarea id="scramble" rows="3" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="R U R' U' F2 D L' B …"></textarea>
+        <textarea id="scramble" rows="6" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="R U R' U' F2 D L' B …"></textarea>
         <div class="row">
           <button type="button" class="button" id="random">Random scramble</button>
           <button type="button" class="button" id="undo" title="Take back the last move">Undo</button>
           <button type="button" class="button" id="clear">Clear</button>
+          <button type="button" class="button info" id="help" aria-expanded="false" aria-controls="help-text" aria-label="About scrambles and notation" title="About scrambles and notation">i</button>
         </div>
-        <p class="note" id="scramble-kind"></p>
-        <p class="note wide-only" id="notation"></p>
       </div>
 
       <div role="tabpanel" id="panel-paint" aria-labelledby="tab-paint" class="tabpanel" hidden>
@@ -127,6 +126,12 @@ export const APP_HTML = `
 
       <!-- On a narrow screen the solution lives here; app.js moves it. -->
       <div role="tabpanel" id="panel-moves" aria-labelledby="tab-moves" class="tabpanel" hidden></div>
+    </div>
+
+    <!-- What the scramble's "i" opens: it lies over the panel, and nothing moves for it. -->
+    <div class="help" id="help-text" role="note" hidden>
+      <p id="scramble-kind"></p>
+      <p id="notation"></p>
     </div>
 
     <!-- The lower part of the panel: the solution, or, while the camera reads a cube, the cube being filled in. -->
