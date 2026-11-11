@@ -20,6 +20,7 @@
 <p align="center">
   <a href="#results">Results</a> ·
   <a href="#install">Install</a> ·
+  <a href="#run">Run</a> ·
   <a href="#usage">Usage</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="bench/README.md">Benchmarks</a> ·
@@ -92,22 +93,56 @@ on the same scrambles: [`bench/README.md`](bench/README.md).
 
 ## Install
 
-It is built with Rust. If `cargo --version` answers, skip this; if not, this
-is Rust's own installer:
+One command, on macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Horia73/anycube/main/install.sh | sh
+```
+
+It puts the program in `~/.local/bin` and asks whether to add anycube to your
+applications, with its icon. It takes a ready-made program from the releases
+when there is one for your system and builds from source otherwise. Nothing
+is written outside your own directories, nothing needs `sudo`, and it says
+what it put where. `anycube app --uninstall` removes the entry among the
+applications; `./install.sh --uninstall` in a clone removes everything.
+
+Building from source needs Rust. If `cargo --version` answers, it is there;
+if not, this is Rust's own installer:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Then one line fetches anycube and builds it:
+Or by hand, on any system Rust builds for (on Windows this is the way, for
+now):
 
 ```bash
 git clone https://github.com/Horia73/anycube.git && cd anycube && cargo build --release
 ```
 
-The first solve of a size builds its lookup tables, once, into `tables/`:
-a moment for 2x2x2 and 3x3x3, about four minutes and 4.9 GB for 4x4x4, about
-8.5 GB for every size together.
+That leaves the program at `target/release/anycube`; `./install.sh` in the
+clone installs it as above.
+
+## Run
+
+```bash
+anycube app
+```
+
+<p align="center">
+  <img src="docs/interface.png" width="700" alt="The interface: a 4x4x4 part of the way through its solution, with arrows on the layer to turn next">
+</p>
+
+A window opens with a cube in it, of any size up to 50x50x50: scramble it,
+paint it, show it to a camera or turn its layers by hand, then solve it and
+follow the solution move by move. Everything runs on your machine; more in
+[`app/README.md`](app/README.md).
+
+The first solve of a size builds its lookup tables, once: a moment for 2x2x2
+and 3x3x3, about four minutes and 4.9 GB for 4x4x4, about 8.5 GB for every
+size together. The interface keeps them with your application data and shows
+the progress; the command line below keeps them in `tables/` where it is run.
+`ANYCUBE_TABLES` names one place for both.
 
 ## Usage
 
@@ -180,6 +215,7 @@ a sequence of small ones: groups of its layers behave like a 5x5x5, 6x6x6 or
 ## More
 
 - [How each solver works](docs/how-it-works.md), phase by phase
+- [The interface](app/README.md): `anycube app`, its page and its local server
 - [Commands](docs/commands.md) and [search flags](docs/search-flags.md)
 - [Lookup tables](docs/tables.md), file by file
 - [Benchmarks](bench/README.md), and [`bench/RESULTS.md`](bench/RESULTS.md):
