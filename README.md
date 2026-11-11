@@ -46,11 +46,12 @@ Release **v0.1.0** (commit `b2f038a`, 2026-11-11), default mode:
 | 20x20x20 | 1938.60 | 56.5 | 87.8 | 4.2 GB | 5 |
 | 21x21x21 | 2254.00 | 84.2 | 135 | 3.8 GB | 5 |
 
-Every release, the newest first: mean moves, and under them mean seconds per cube.
+Every release, the newest first: a row of mean moves and a row of mean seconds per cube.
 
-| Release | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **v0.1.0** | 8.8<br>0.00 s | 19.0<br>0.22 s | 40.7<br>2.8 s | 67.8<br>0.58 s | 108.8<br>8.4 s | 152.8<br>3.8 s | 235.7<br>12.9 s | 314.6<br>3.7 s | 406.1<br>16.6 s | 510.4<br>7.5 s | 619.8<br>21.7 s | 757.8<br>15.8 s | 888.4<br>30.4 s | 1031.8<br>21.4 s | 1185.6<br>40.3 s | 1392.0<br>37.0 s | 1548.0<br>45.8 s | 1763.8<br>49.5 s | 1938.6<br>56.5 s | 2254.0<br>84.2 s |
+| Release | | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **v0.1.0** | moves | 8.8 | 19.0 | 40.7 | 67.8 | 108.8 | 152.8 | 235.7 | 314.6 | 406.1 | 510.4 | 619.8 | 757.8 | 888.4 | 1031.8 | 1185.6 | 1392.0 | 1548.0 | 1763.8 | 1938.6 | 2254.0 |
+| | seconds | 0.00 | 0.22 | 2.8 | 0.58 | 8.4 | 3.8 | 12.9 | 3.7 | 16.6 | 7.5 | 21.7 | 15.8 | 30.4 | 21.4 | 40.3 | 37.0 | 45.8 | 49.5 | 56.5 | 84.2 |
 <!-- releases:end -->
 
 How to read it:
@@ -67,6 +68,9 @@ How to read it:
 - A release is measured with `scripts/release.py measure <name>` and the
   tables are written with `scripts/release.py readme`; the numbers are kept
   in `bench/releases.tsv`.
+
+How this compares with other solvers on the same scrambles is in
+[`bench/README.md`](bench/README.md).
 
 ## Install
 
@@ -108,29 +112,7 @@ Moves are written as on any cube: `U R F D L B` for the faces, `'` for a
 turn the other way, `2` for a half turn; `Rw` turns two layers and `3Rw`
 three.
 
-## Examples
-
-A 2x2x2, always solved in the fewest moves there are:
-
-```bash
-./target/release/cubenxnxn solve --size 2 "R U2 F' R2 U F R' U' F2 R"
-```
-
-```text
-R2 F' U R F2 R2 F U2 R'
-9 moves, optimal, 7 ms
-```
-
-A 3x3x3:
-
-```bash
-./target/release/cubenxnxn solve --size 3 "R U R' F2 D L B' U2 R2 D' F L2 U B2 R' D2 F' L U2 B"
-```
-
-```text
-D' R' L2 U' B2 D' B D2 B' L B' U2 R2 U D2 R2 F2 D R2 D'
-20 moves, two-phase search, 405 ms
-```
+### Examples
 
 A 4x4x4 scrambled with 100 random moves (the third line of the scramble
 file):
@@ -144,18 +126,7 @@ Fw R2 U' F Fw' Uw B U2 Rw2 F2 R Fw R F' R' D2 F' Fw2 Rw2 Fw2 R2 B' Uw2 B' F L2 B
 41 moves (phases [12, 0, 11, 18]), tables 28 ms, search 3247 ms
 ```
 
-A 7x7x7 scrambled with 200 random moves:
-
-```bash
-./target/release/cubenxnxn solve --size 7 "$(sed -n 1p bench/scrambles777-100.txt)"
-```
-
-```text
-Dw Rw 3Bw Rw2 D 3Dw2 3Lw2 3Bw 3Dw' 3Fw' L2 Lw' 3Bw2 Lw' 3Rw' 3Bw2 Uw 3Lw' R D Rw' Fw Lw Fw2 L' Bw Rw Uw' D2 3Rw' D' 3Lw ...
-154 moves (staging 51, matching 17, inner edges 34, outer edges 34, 3x3x3 18), tables 551 ms, search 7386 ms
-```
-
-And a 21x21x21 scrambled with 1,050 random moves:
+A 21x21x21 scrambled with 1,050 random moves:
 
 ```bash
 ./target/release/cubenxnxn solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
@@ -182,7 +153,7 @@ where they fit in memory. Three things keep the solutions short:
 - **Every symmetry is used**: the cube may end in any orientation and the
   phases may run along any axis.
 
-### Any size (`src/nnn.rs`)
+### Cubes of any size
 
 Some layers of a large cube, taken together, behave like a small cube: pick
 a few of them symmetrically and let every layer in between follow the picked
@@ -192,83 +163,30 @@ done as a sequence of small ones.
 
 ```mermaid
 flowchart LR
-    A["Scrambled<br/>NxNxN"] --> B["Stage the centres<br/>two oblique orbits at a time,<br/>each step a 6x6x6 or 7x7x7<br/>made of layers"]
+    A["Scrambled<br/>NxNxN"] --> B["Stage the centres<br/>one axis at a time, ring by ring,<br/>each step a 6x6x6 or 7x7x7<br/>made of layers"]
     B --> C["Match the centres<br/>row by row,<br/>from the rim inwards"]
     C --> D["Pair the edges<br/>orbit by orbit,<br/>each a 5x5x5<br/>made of layers"]
     D --> E["Last orbit and 3x3x3<br/>the whole cube<br/>as a 5x5x5"]
     E --> F["Solution,<br/>checked on the<br/>sticker model"]
 ```
 
-- Centres: staged one axis at a time, ring by ring from the middle
-  outwards. The rows of a ring are first made each of one kind (all of
-  the axis or none), two mirror orbits of oblique centres at a time, each
-  step a 6x6x6 or a 7x7x7 made of layers (with the staging of those
-  solvers); then the whole ring goes onto its faces in one step, as the x
-  and t centres of a 5x5x5. Then, row by row from the rim inwards, every
-  centre is made to agree in colour with the one under it
-  (`src/rings.rs`); the edge steps bring them home. A short row is matched
-  in one search; a long one from its middle outwards, the columns done so
-  far kept alike so that each step is a search of the same small size
-  whatever the length of the row. Should no matching be found, the centres
-  are brought home one step at a time instead (`src/axes.rs`).
-- Edges: orbit by orbit from the middle outwards, each a 5x5x5 whose middle
-  edges are the stretch already joined (a 4x4x4 for the innermost wings of
-  an even cube). The last one is the whole cube as a 5x5x5, solved to the end.
+The same code runs every size from 6 up; nothing in it knows the size. Each
+solver phase by phase, 4x4x4 to 7x7x7 included, is in
+[`docs/how-it-works.md`](docs/how-it-works.md).
 
-The same code runs every size from 6 up; nothing in it knows the size.
+## Tables
 
-### 4x4x4
+The solvers read lookup tables that are generated on first use into `tables/`
+(set `CUBENXNXN_TABLES` to move them) and kept:
 
-The phase structure started from Chen Shuang's
-[TPR solver](https://github.com/cs0x7f/TPR-4x4x4-Solver) (itself based on
-Tsai's 8-step method) and now has three stages:
+| For | Size on disk | Time to build, once |
+|---|---|---|
+| 2x2x2 and 3x3x3 | 14 MB | a moment |
+| 4x4x4 | 4.9 GB | about four minutes on 8 cores |
+| every size | about 8.5 GB | a few minutes more |
 
-1. **Joint phase** (all moves): stage every centre on a face of its own axis,
-   bring the R/L centres into a pattern the next phase can finish, make the
-   wing permutation even and the dedges pairable. This replaces TPR's phases
-   1 and 2. An exact table over all 9.47 billion centre states makes the centre
-   part of the search perfect. The last move is tested against the wings
-   first, which rejects almost all of them without looking at the centres.
-2. **Phase 3** (`U D F B R2 L2 Uw2 Rw2 Fw2`): pair the 12 dedges and solve the
-   centres, as in TPR, with an exact table of the pairing permutation.
-3. **3x3x3**: Kociemba's two-phase algorithm on the reduced cube, with an exact
-   table for its first phase.
-
-What keeps the solutions short:
-
-- Phases 1 and 2 of TPR are searched as one phase (about 1.2 moves).
-- The solver collects thousands of joint-phase endpoints and many reductions,
-  and the 3x3x3 stage picks the reduction with the shortest total (about 2
-  moves). The most promising reductions get a much deeper 3x3x3 search.
-- The cube has no fixed centres, so it may end in any of 24 orientations and
-  the phases may run along any of 3 axes. All 18 distinct combinations are
-  tried; one search serves the three axes.
-
-### 5x5x5
-
-- Centres (`src/stage5.rs`): the R/L centres go to the R and L faces with all
-  36 moves, then an exact table puts the U/D and F/B centres on their axes.
-  Staging all centres in one step (`src/centres5.rs`) is exact and shorter,
-  15 moves against 17 on the one cube measured, but took 340 s for it.
-- Edges (`src/edges5.rs`), three phases:
-  - C: every pair of wings gets one wing in each half of the wing positions,
-    matching the flip of its middle edge (face turns and wide half turns);
-  - P: four whole edges are built in the middle slice (F and B freely, half
-    turns elsewhere), with an exact table for the twelve pieces involved and
-    tables of those pieces against the centres;
-  - E: the other eight edges and all centres (U and D freely, half turns
-    elsewhere), with an exact pairing table.
-- The 3x3x3 that is left is solved for many reduced cubes; the shortest total
-  wins.
-- Each step starts from every result of the step before and keeps the
-  continuations that are shortest in total (`src/solver5.rs`). The edge phases
-  see the cube from six sides: three choices of axis, two of the slice.
-
-### 6x6x6 and 7x7x7
-
-How they work, what was tried and the per-step lengths are in
-`bench/RESULTS.md` (sources: `src/stage6.rs`, `src/solver6.rs`,
-`src/stage7.rs`, `src/solver7.rs`, `src/search.rs`).
+Sizes from 8 up need no tables of their own. File by file:
+[`docs/tables.md`](docs/tables.md).
 
 ## Commands
 
@@ -307,87 +225,7 @@ To make new scrambles or look at a cube:
 ./target/release/cubenxnxn facelets --size 5 "Uw R' F2"
 ```
 
-## Tables
-
-Generated on first use into `tables/` (set `CUBENXNXN_TABLES` to move them).
-The 4x4x4 set is 4.9 GB; its large files take about four minutes on 8 cores,
-once.
-
-| File | Size | Time on 8 cores | Contents |
-|---|---|---|---|
-| `centres-exact.bin` | 2.37 GB | 105 s | moves to stage all centres, every centre state |
-| `slice-exact.bin` | 1.72 GB | 55 s | 3x3x3 distance to "no twist, no flip, slice edges in place" |
-| `phase1-exact.bin` | 554 MB | 20 s | 3x3x3 distance to the domino subgroup |
-| `pairing.bin` | 240 MB | 20 s | moves to pair the dedges in phase 3 |
-| nine small files | 70 MB | under 1 s | everything else, so that start-up reads instead of rebuilding |
-
-The 2x2x2 solver needs only `cube222.bin` (3.7 MB) and the 3x3x3 solver only
-`cube333.bin` (10 MB), plus `slice-exact.bin` for `--mode full`.
-
-The 5x5x5 solver has its own tables, 2.1 GB, generated in about two minutes on
-8 cores: `phase4-555-*.bin` (850 MB, phase P), `phase5-555*.bin` (600 MB,
-phase E), `phase2-555.bin` (331 MB, centres), `phase3-555-sym.bin` (175 MB,
-phase C, one entry per class under its 16 symmetries) and four small ones. It
-also uses `phase1-exact.bin` for the 3x3x3 step, `stage555-near8.bin`
-(320 MB, 30 s: the first centre phase near its goal) and `phase2-333.bin`
-(57 MB, 3 s: corners and U/D edges of the 3x3x3 together, used by every size). `--joint` needs two more,
-`centres555-x.bin` and `centres555-t.bin` (300 MB each, 100 s to generate).
-
-The 6x6x6 and 7x7x7 solvers add about 0.7 GB (`axes-*.bin`, `stage666-*.bin`,
-`stage777-*.bin`).
-
-Sizes from 8 up need no tables of their own size: they use the ones above,
-and twelve small ones for matching rows of centres (`ring-*.bin`, 24 MB
-each), which every size shares. With everything generated the directory
-holds about 8.5 GB.
-
-## Search flags
-
-<details>
-<summary>5x5x5</summary>
-
-`--mode fast|normal|full` sets all of them; each can be overridden.
-
-| Flag | fast | normal | full | Meaning |
-|---|---|---|---|---|
-| `--time` | 800 | 4000 | 0 | milliseconds the solve aims at; 0 is no limit |
-| `--staged` | 400 | 1200 | 4000 | centre stagings kept |
-| `--extra` | 2 | 3 | 3 | lengths of the first centre phase searched past its shortest |
-| `--a-budget` | 200000 | 1000000 | 10000000 | positions each of those lengths may take from the second on; a length that does not fit is searched in part; 0 is no limit |
-| `--labellings` | 8 | 16 | 16 | ways of splitting the wings tried per staging |
-| `--c-keep` | 2000 | 6000 | 20000 | results phase C aims for |
-| `--p-keep` | 300 | 700 | 2000 | results phase P aims for |
-| `--e-keep` | 50 | 100 | 400 | reduced cubes aimed for |
-| `--pool`, `--probes` | 30, 1500 | 100, 5000 | 400, 20000 | reduced cubes given the full 3x3x3 effort, and that effort |
-| `--joint N` | off | off | off | also stage the centres in one step, exactly, N lengths past the shortest; minutes per cube |
-
-</details>
-
-<details>
-<summary>4x4x4</summary>
-
-| Flag | Meaning | Default |
-|---|---|---|
-| `--mode` | `fast`, `normal` or `full`; sets the flags below | normal |
-| `--time` | soft time limit per cube, in ms | 4000 |
-| `--n2` | joint-phase endpoints collected | 10000 |
-| `--joint-nodes` | node budget of the joint phase, in millions | 1000 |
-| `--k3` | endpoints tried in phase 3 | 10000 |
-| `--n3` | reductions compared by total length | 2000 |
-| `--extra3` | moves past the shortest reduction to keep collecting | 1 |
-| `--probes` | 3x3x3 two-phase effort per reduction | 10000 |
-| `--refine` | effort multiplier for the best sixteenth of the reductions | 16 |
-| `--split` | search phases 1 and 2 separately, as TPR does | off |
-| `--n1`, `--k1` | with `--split`: phase-1 solutions enumerated and kept | 10000, 500 |
-| `--exact` | node budget (millions) of the exact 3x3x3 search | 0 (off) |
-| `--exact-cap` | longest 3x3x3 solution the exact search looks for | 15 |
-| `--far-g` | also keep longer reductions this close to a domino subgroup | 0 (off) |
-
-`--mode full` collects fifteen times as many endpoints and adds the exact
-3x3x3 search (`src/opt3.rs`), which scans the reductions for 3x3x3 solutions
-of up to 16 moves that the two-phase search missed.
-
-</details>
+The flags behind `--mode` are in [`docs/search-flags.md`](docs/search-flags.md).
 
 ## Verification
 
@@ -407,10 +245,11 @@ returned. Beyond that:
 | Path | Contents |
 |---|---|
 | `src/` | the solvers; one file per phase or table family |
-| `bench/` | scramble sets, result files of every solver measured, and `RESULTS.md` |
+| `bench/` | scramble sets and result files of every solver measured; `bench/README.md` compares them |
 | `bench/releases.tsv` | the numbers behind the results table, one line per release and size |
 | `bench/RESULTS.md` | dated log: what was measured, what was tried, what did not pay |
 | `scripts/release.py` | measures a release and writes the results table |
+| `docs/` | how each solver works, the lookup tables, the search flags |
 | `FINDINGS.md` | what was learned so far, size by size |
 | `PLAN.md` | working notes (in Romanian) |
 

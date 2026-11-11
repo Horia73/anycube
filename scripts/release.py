@@ -107,16 +107,14 @@ def tables():
                 out.append("| %dx%dx%d | %s | %s | %s | %s | %s |"
                            % (n, n, n, r[5], secs(r[6]), secs(r[7]), memory(r[8]), r[4]))
         out.append("")
-        out.append("Every release, the newest first: mean moves, and under them mean seconds per cube.\n")
+        out.append("Every release, the newest first: a row of mean moves and a row of mean seconds per cube.\n")
         sizes = [n for n in SIZES if any((name, n) in by for name in names)]
-        out.append("| Release | " + " | ".join(str(n) for n in sizes) + " |")
-        out.append("|---|" + "---:|" * len(sizes))
+        out.append("| Release | | " + " | ".join(str(n) for n in sizes) + " |")
+        out.append("|---|---|" + "---:|" * len(sizes))
         for name in names:
-            cells = []
-            for n in sizes:
-                r = by.get((name, n))
-                cells.append("%s<br>%s s" % (("%.1f" % float(r[5])), secs(r[6])) if r else "")
-            out.append("| **%s** | " % name + " | ".join(cells) + " |")
+            found = [by.get((name, n)) for n in sizes]
+            out.append("| **%s** | moves | " % name + " | ".join("%.1f" % float(r[5]) if r else "" for r in found) + " |")
+            out.append("| | seconds | " + " | ".join(secs(r[6]) if r else "" for r in found) + " |")
     return "\n".join(out)
 
 
