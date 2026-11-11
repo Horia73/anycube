@@ -1127,6 +1127,8 @@ export async function mount(root, options = {}) {
       }
     }
     if (was.rot) view.rot = was.rot;
+    // The arrows of the move that was next are there as they were, not coming in afresh.
+    view.cueSince = -1e9;
     view.draw();
   }
 
@@ -1144,7 +1146,7 @@ export async function mount(root, options = {}) {
   // The kept cube is on screen already: with the arrows of the move that was next.
   if (page && arrows && page.position < page.moves.length) {
     const { face, layers, quarters } = page.model.info(page.moves[page.position]);
-    view.setCue({ face, from: 0, to: layers, quarters });
+    view.setCue({ face, from: 0, to: layers, quarters }, true);
   }
   renderSolution(null);
   await solver.loadConfig();

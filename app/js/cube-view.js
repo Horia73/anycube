@@ -128,7 +128,7 @@ export class CubeView {
     this.turn = null;
     // The move that comes next, shown as arrows: { face, from, to, quarters }.
     this.cue = null;
-    this.cueSince = 0; // when these arrows were put up
+    this.cueSince = -1e9; // when these arrows were put up
     this.calm = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? { matches: false };
     this.pending = false;
     // While true nothing is drawn: the page holds the picture back until
@@ -342,11 +342,12 @@ export class CubeView {
     this.draw();
   }
 
-  setCue(cue) {
+  /** The arrows of the move that is next, or none; `atOnce` puts them up without the moment they take to come in. */
+  setCue(cue, atOnce = false) {
     const was = this.cue;
     const same = cue && was && cue.face === was.face && cue.from === was.from && cue.to === was.to && cue.quarters === was.quarters;
     // Arrows for another move come in over a moment, not all at once.
-    if (cue && !same) this.cueSince = performance.now();
+    if (cue && !same) this.cueSince = atOnce ? -1e9 : performance.now();
     this.cue = cue;
     this.draw();
   }
