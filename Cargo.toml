@@ -7,11 +7,26 @@ license = "MIT"
 readme = "README.md"
 keywords = ["rubiks-cube", "rubiks-cube-solver", "nxnxn", "cube-solver", "kociemba"]
 categories = ["algorithms", "command-line-utilities"]
-exclude = ["/bench", "/PLAN.md"]
+exclude = ["/bench", "/PLAN.md", "/app/wasm", "/app/tests"]
+
+# `app` is the interface: `anycube app` serves it from this machine and
+# opens it in a window. A program that uses the solvers as a library can
+# leave it out with `default-features = false`.
+[features]
+default = ["app"]
+app = ["dep:tiny_http", "dep:serde_json"]
 
 [dependencies]
 rayon = "1"
 memmap2 = "0.9"
+tiny_http = { version = "0.12", optional = true }
+serde_json = { version = "1", optional = true }
+
+# The WebAssembly build of the 2x2x2 and 3x3x3 solvers, for pages that solve
+# in the browser. `cargo build` here still builds the solver alone.
+[workspace]
+members = ["app/wasm"]
+default-members = ["."]
 
 [[bin]]
 name = "anycube"
