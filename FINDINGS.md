@@ -141,8 +141,23 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
 ## State of the code
 
 - `together` (in the worktree of the 6x6x6 session) had `shorter-solutions`
-  (f8394fa) and `faster-555` merged at 15:36. Still to go in: `faster-777`,
-  `six-faster`, `known-reductions`, `public-cleanup`.
+  (f8394fa), `faster-555`, `faster-777` (as of 15:39) and `six-faster`
+  merged at 15:43 (cd09239). Still to go in: what `faster-777` committed
+  after 15:39, this file, `known-reductions`, `public-cleanup`.
+- `together` at cd09239, checked from a scratch worktree by the session of
+  the general solver: it builds without warnings, its 24 tests pass, and
+  the general solver solves three cubes of each size, every solution
+  applied on the sticker model:
+
+  | Size | `together`, first 3 cubes | `shorter-solutions`, first 5 cubes |
+  |---|---|---|
+  | 8x8x8 | 231.3 (235, 237, 222) | 251.0 |
+  | 9x9x9 | 319.0 (320, 325, 312) | 336.4 |
+  | 10x10x10 | 416.7 (398, 396, 456) | 427.8 |
+
+  So what the sessions did adds up on the large cubes. To look at: the
+  third 10x10x10 cube found no matching and took the long way (456 moves),
+  which did not happen on any of the 20 cubes on `shorter-solutions`.
 - Tried in a scratch worktree: on top of f8394fa the code of `faster-555`
   applies cleanly; `faster-777` then conflicts in `src/stage5.rs`, and
   `six-faster` in `src/edges5.rs` and `src/stage5.rs`. `src/nnn.rs` and
