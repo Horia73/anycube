@@ -440,59 +440,38 @@ three-phase search came across. Every reduction was checked. Logs:
 The machine was very busy during these runs (load average 50 to 95 on 8
 cores), so the times are upper estimates.
 
-## 4x4x4: solving the inverse cube as well (2026-11-11)
+## 4x4x4: the inverse cube and a wide move in front do NOT work (2026-11-11)
 
-A solution of the inverse cube, undone, solves the cube: its 3x3x3 moves come
-first and the reduction last. First 60 cubes of `scrambles-1000.txt`, default
-flags, cubes solved one at a time; the inverse scrambles were solved with the
-same `bench` command.
+Two ideas were measured by solving other cubes and counting lengths, and
+both were wrong. This section replaces the figures first written here
+(40.37 and 39.67 for "cube and inverse", 39.85 for "a wide move in front"):
+none of those is a real result.
 
-| Run | Mean length | Mean time |
-|---|---|---|
-| cube | 40.88 | 2.75 s |
-| inverse cube | 40.77 | 2.70 s |
-| shorter of the two | 40.37 | 5.45 s |
-| cube, twice the effort (`--time 8000 --n2 20000 --k3 20000 --n3 4000 --joint-nodes 2000`) | 40.57 | 4.42 s |
+- **Inverse cube**: the solution of the inverse scramble, undone, was taken
+  to solve the scramble.
+- **Wide move in front**: the solution of "w then scramble", followed by one
+  wide move, was taken to solve the scramble.
 
-The inverse was shorter on 23 cubes, equal on 18, longer on 19. The machine
-was quiet for the first two runs and became busy during the third (load
-average 40), which works against the double-effort run: the comparison of the
-last two lines is not clean.
+Applied to the real cubes with `cubenxnxn verify --size 4`:
 
-The same with `--mode full`, first 30 cubes (the machine became busy during
-these runs, load average 20 to 30; full mode took 15.9 s on a quiet machine):
-
-| Run | Mean length | Mean time |
-|---|---|---|
-| default, cube | 40.97 | 2.9 s |
-| default, shorter of cube and inverse | 40.43 | 5.5 s |
-| full, cube | 40.10 | 18.2 s |
-| full, inverse cube | 40.23 | 19.8 s |
-| full, shorter of the two | 39.67 | 38.0 s |
-
-Histogram of the last line: 38: 1, 39: 12, 40: 13, 41: 4.
-
-## 4x4x4: a wide move in front of the scramble (2026-11-11)
-
-If T solves the cube "w then scramble" for a wide move w, then T followed by
-one wide move solves the scramble: the 3x3x3 part of T ends before the last
-wide move. A face move in front changes nothing, so there are nine such cubes
-per scramble (Uw, Rw, Fw and their powers), and nine more for the inverse.
-First 20 cubes of `scrambles-1000.txt`, default flags, each of the 20 solves
-per cube run with the plain `bench` command; lengths include the extra move.
-
-| Solves per cube | Mean length |
+| Claimed solutions | Solve the cube |
 |---|---|
-| cube | 40.90 |
-| cube and inverse | 40.35 |
-| cube and its 9 cubes with a wide move in front | 40.25 |
-| all 20 | 39.85 |
+| plain solutions of the first 60 cubes (control) | 60 of 60 |
+| undone solutions of the 60 inverse scrambles | 0 of 60 |
+| 180 solutions of cubes with a wide move in front, each tried with all 18 wide moves as the last move | 0 of 3,240 |
 
-Against cube and inverse: one move shorter on 8 cubes, two on 1, the same on
-11. The 20 solves took 72 s per cube in all. The machine became busy during
-these runs (load average 35 to 70): the solves with a move in front averaged
-41.25 before the extra move, against 40.9 for the plain ones, so on a quiet
-machine the gain should be larger.
+The reason is that the four centres of a colour cannot be told apart. A
+solution of the inverse cube leaves every centre on a face of its colour but
+not in its own place; undone on the real cube, that hidden permutation of
+centres is carried through the scramble and comes out as centres on wrong
+faces (the wings and corners do end up solved). The same happens with a move
+in front. It would only work if the solver put every centre back in its own
+place, which is a much longer solve. For the same reason "does not try the
+inverse scramble" is not a loss of cube555 on the 5x5x5.
+
+What remains true from those runs: the default mode on the first 60 cubes
+gives 40.88 in 2.75 s, twice the effort in one direction 40.57 in 4.42 s, and
+`--mode full` 40.10 on the first 30 cubes (18.2 s on a busy machine).
 
 ## 4x4x4: is the end of the reduction as short as it could be? (2026-11-11)
 

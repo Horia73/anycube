@@ -126,19 +126,21 @@ Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
   mutările, iese mai scurtă cu o mutare pe 2 cuburi din 23 și pe niciunul din
   cele 8 la care s-au putut tăia 3 mutări. Ce pierde reducerea în trei faze
   pierde în primele ~10 mutări, adică în direcția aleasă la început.
-- Rezolvarea cubului invers (soluția întoarsă începe cu 3x3x3): −0,4…−0,5 la
-  timp dublu; modul full pe cub și pe invers dă 39,67 pe 30 de cuburi.
+- Rezolvarea cubului invers NU merge la 4x4x4 (verificat: 0 din 60 de soluții
+  întoarse rezolvă cubul real). Centrele de aceeași culoare nu se deosebesc,
+  iar permutarea lor ascunsă iese, după întoarcere, ca centre pe fețe greșite.
+  Cifrele 40,37 și 39,67 notate inițial aici nu erau rezultate reale.
 - Rețea mică încercată (`ml/`, 4,4 milioane de parametri, 192 de milioane de
   cuburi, 36 de minute pe GPU-ul Mac-ului): deosebește de ~10 ori mai bine
   decât scorul de mână, dar beam search-ul ghidat de ea găsește reduceri de
   27–30 de mutări pe o minoritate de cuburi aleatoare, față de 23 la solver.
   La scara asta nu merge; o încercare serioasă ar însemna de zeci de ori mai
   multă antrenare și lățimi de căutare mult mai mari, fără garanție.
-- O mutare W pusă înaintea amestecului dă un alt cub, a cărui soluție plus o
-  mutare W la sfârșit rezolvă cubul inițial (3x3x3 se termină înaintea
-  ultimei mutări W). Nouă astfel de cuburi pe direcție: cu toate cele 20 de
-  rezolvări, 39,85 față de 40,35 pentru cub plus invers (20 de cuburi, mod
-  implicit, mașină încărcată). Candidat pentru un mod fără limită de timp.
+- O mutare W pusă înaintea amestecului NU merge nici ea, din același motiv
+  (verificat: 0 din 3.240 de încercări rezolvă cubul real). Cifra de 39,85
+  notată inițial aici nu era un rezultat real.
+- Regulă de lucru de acum: o lungime contează doar dacă soluția a fost
+  aplicată pe cubul inițial și l-a rezolvat.
 - Cuburi puțin amestecate: 10 mutări → 10, 15 → 28, 20 → 42. De reparat cu un
   tabel în jurul cubului rezolvat (optim până la ~12–13 mutări).
 - Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
@@ -194,7 +196,8 @@ Ce a mai rămas:
   - etapa 3x3x3 se rezolvă o singură dată, după prima reducere găsită;
   - mutările nu se anulează la trecerea dintre faze;
   - fazele 1 și 2 sunt separate, ca la TPR înainte să le unim noi;
-  - nu încearcă scramble-ul invers.
+  - nu încearcă scramble-ul invers (corectat 2026-11-11: nu e o pierdere;
+    inversul nu merge pe cuburi cu centre care nu se deosebesc între ele).
 - Corectare (2026-11-10, după ce am citit `Search.java` și `PhaseSearch.java`):
   scrisesem aici că fazele lui taie lacom și că nu încearcă alte axe. Nu e
   așa. Fiecare fază pornește din 200–500 de soluții ale fazei dinainte,
