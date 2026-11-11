@@ -110,6 +110,29 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
   had, by more results of phase C, more labellings and more axes at the
   start; the widths of P and E will not bring them.
 
+### 5x5x5, a search for a shorter structure (`claude/five-shorter-dc1676`, night)
+
+Detail and numbers: the last section of `bench/RESULTS.md`.
+
+- Counted like the 4x4x4 in `PLAN.md`, every phase but the centre staging
+  is at what its own moves allow (the sum is about 65, measured 67.75). A
+  mean of 60 would take a search with all 36 moves that is close to the
+  shortest through the first forty moves.
+- `known5` makes cubes a known number of moves from a reduced cube. The
+  solver does not see that such a cube is close (18 moves away it finds a
+  reduction of 43), but that does not carry over to random cubes: a beam
+  search with all the pairing moves finds the short way on those cubes and
+  nothing shorter than phases P and E on random ones.
+- Did not work: the last edge phase with 20 moves instead of 14 (the same
+  length from its states); choosing reductions by the first-phase distance
+  of their 3x3x3 (0.2 moves per unit); the centres in one exact search
+  bounded by mixed tables of both orbits (they are weaker than the orbit
+  tables); beam searches for the pairing and for the centres; phase B and
+  phase C as one search (they share no moves: same length, a thousand
+  times the work).
+- More effort in the present phases buys tenths: full mode is 0.6 shorter
+  (12 cubes) for three to seven times the positions searched.
+
 ### 6x6x6 (`six-faster`)
 
 - Half of a beam search's time was one read of a large table per state.

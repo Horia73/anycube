@@ -1651,6 +1651,174 @@ What the two runs show together:
 - Sizes 11 to 21 needed no ring table that sizes 8 to 10 had not made:
   twelve files, 275 MB, for every size.
 
+
+## 5x5x5: a search for a shorter structure (2026-11-11, night, branch `claude/five-shorter-dc1676`)
+
+The aim was a mean of about 60 on `scrambles555-200.txt` (67.75 today; So
+Hirata's estimate of God's number is 58). Nothing tried here shortened the
+solutions, and the measurements say why. What stays in the code is the
+instrument, `known5`; everything else was removed again, tables included.
+
+Another session ran benchmarks on this machine the whole time (load average
+30 to 130 on 10 cores), so lengths are compared without a clock (`--time 0`)
+and times are only orders of magnitude.
+
+Baseline, first 40 cubes, `--time 0`: 67.98 (centres 11.60 + 6.20, edges
+7.15 + 11.75 + 14.05, 3x3x3 17.23). `--mode full` on the first 12: 67.17
+against 67.75 for the default on the same cubes, with 7 times the positions
+in the centres and 3 to 4 times in the edge phases.
+
+### Counting, as PLAN.md did for the 4x4x4
+
+A phase that tells S states apart with b continuations per move needs
+about ln S / ln b moves. The 5x5x5 has ln(2.83e74) = 171.4; b is the growth
+of move sequences that are not one another in a different order.
+
+| Moves | How many | b | ln b |
+|---|---|---|---|
+| all | 36 | 28.1 | 3.34 |
+| faces and wide half turns (centres stay staged) | 24 | 18.5 | 2.92 |
+| U D F B freely, R2 L2, wide half turns (wing halves stay apart) | 20 | 13.7 | 2.62 |
+| 3x3x3 | 18 | 13.35 | 2.59 |
+| phase P | 16 | 12.05 | 2.49 |
+| phase E | 14 | 10.55 | 2.36 |
+| second phase of the 3x3x3 | 10 | 6.8 | 1.91 |
+
+| Phase | ln of its states | ln S / ln b | Measured |
+|---|---|---|---|
+| centres, A + B | 27.0 + 19.6 | 8.1 + 6.4 to 7.4 | 11.63 + 6.30 |
+| C | about 18 | 6.2 | 7.00 |
+| P | 28.4 | 11.4 | 11.70 |
+| E | 33.3 | 14.1 | 14.03 |
+| 3x3x3 | 45.2 | 17.5 | 17.23 |
+| all | 171.4 | about 65 | 67.75 |
+
+- Every phase but the centre staging is at what its own moves allow. The
+  searches are not what loses moves; passing through the phases' goals is.
+- 60 moves is 2.86 per move on average. Only "all moves" and "faces and
+  wide half turns" have that much, and the 3x3x3 at the end is 45 of the
+  171 at 2.59. So 60 would take a search with all 36 moves that is close
+  to the shortest over the first forty moves.
+- The end as the second phase of the 3x3x3 alone (corner twist, edge flip
+  and the slice edges seen to before the last edge phase): its 23.7 cost
+  12.4 moves at 6.8 continuations, and the 21.5 moved earlier cost 7.5 to
+  8.5: about 20 against 17.5. Choosing among many ends by its exact table
+  wins back about that much. Not built.
+- The count is a ceiling and proved too generous where it promised gains:
+  see the two searches with 20 moves below.
+
+### `known5`: cubes a known number of moves from a reduced cube
+
+`anycube known5 --walk K --moves all|h|g [--base solved]`, 12 cubes each,
+default mode, no clock. "Reduction found" is centres plus edges.
+
+| Walk | Exists | Reduction found |
+|---|---|---|
+| 12, all 36 moves | 12 | 20.25 |
+| 18, all | 18 | 43.08 |
+| 24, all | 24 | 49.58 |
+| 30, all | 30 | 49.83 (random cubes: 50.5) |
+| 10, faces and wide half turns | 10 | 12.42 |
+| 14 | 14 | 18.17 |
+| 18 | 18 | 23.25 |
+| 22 | 22 | 27.75 |
+| 26 | 26 | 30.25 |
+| 8, moves that keep the wing halves apart | 8 | 8.08 |
+| 12 | 12 | 13.83 |
+| 16 | 16 | 19.83 |
+| 20 | 20 | 24.08 |
+| 24 | 24 | 25.42 |
+
+From the solved cube: 20 random moves are solved in 61.5, 30 in 67.1, 40
+in 67.5.
+
+The solver does not see that a cube is close: 18 moves from a reduced cube
+it finds 43. That is a fact about such cubes, not about random ones: a
+search that does find the short way on them (the beam below) finds nothing
+shorter than phases P and E on random cubes.
+
+### Tried, none kept
+
+1. **Phase E with all 20 moves that keep the wing halves apart** (F and B
+   freely as well, Uw2 and Dw2). Bounds: the exact number of moves that
+   bring the low wings to their middle edges, for all 12! arrangements, the
+   same for the high wings (240 MB each, about 100 s each to build here),
+   the 4x4x4's pairing table for low against high, and the centres two
+   pairs of faces at a time. From states of phase E the shortest way with
+   20 moves is as long as with 14: 15 and 15 on two cubes, none of at most
+   16 on a third; 5 to 33 million positions each, the bound at the start 8
+   or 9. Moves that leave a subgroup pay only over a stretch long enough to
+   make up for leaving it, and 15 moves is not.
+2. **Reductions chosen by the first-phase distance of their 3x3x3** (the
+   twist, flip and slice class is fixed from the end of phase P on). Over
+   4,800 reductions of 12 cubes the 3x3x3 found after 5,000 probes is
+   18.78, 18.93, 19.12, 19.37, 19.66 for a distance of 7, 8, 9, 10, 11:
+   0.2 per unit, and 6% of the reductions are at 8 or less. Nothing to
+   select by.
+3. **The centres staged in one exact search with more bounds**: next to
+   the two orbit tables, for each of the three axes all eight centres of
+   one orbit with the four of one colour of the other (two tables of 493
+   and 499 million entries, 247 MB each, 40 s each), and the exact table of
+   phase B wherever one axis is in place. The mixed tables average 7.6
+   where the orbit tables average 9.1, so they cut nothing: the first cube
+   was not done after 10 minutes on 5 cores, no better than the 340 s
+   recorded for the search with the orbit tables alone.
+   From the tables themselves: 0.1%, 1.2%, 13% and 73% of one orbit's
+   states are within 6, 7, 8 and 9 moves of staged. A search to 15 moves
+   therefore visits about 6e8 positions, 5e8 of them 8 or 9 moves from the
+   end, where each orbit alone says "possible" and only a table of both
+   orbits could say no. Such a table would need the states within 9 moves
+   of staged, several thousand million.
+4. **Pairing by a beam search with the 20 moves**, in place of phases P
+   and E, from all the results of phase C at once. Score: the largest of
+   the three edge tables of (1) and the three centre tables, then their
+   sum. On the `known5` cubes it finds the way that exists (width 100,000):
+
+   | Walk | Beam | Solver (same kind of cubes) |
+   |---|---|---|
+   | 12 | 11.50 | 13.83 |
+   | 16 | 16.08 | 19.83 |
+   | 20 | 20.67 | 24.08 |
+   | 24 | 23.67 | 25.42 |
+
+   On the first five cubes of the benchmark it needs 25 to 31 moves (28.2)
+   where phases P and E need 25.6, and it returns 2 to 10 reductions, too
+   few to choose a 3x3x3 from: 71.6 in all against 67.4. At a width of a
+   million (two cubes): 25.5 against 26, 40 s of processor per cube, 2 to 4
+   reductions. So on random cubes phases P and E are within half a move of
+   what a wide search with all 20 moves finds.
+5. **The centres staged by a beam search** with all moves (score from the
+   orbit tables and the mixed tables of (3), width 100,000, about 3 s per
+   cube here): 17.38 against 16.50 for the two-phase staging on 8 cubes.
+6. **Phase B of the centres and phase C of the edges as one search** from
+   the ends of phase A (the 4x4x4 gained 1.2 moves from joining its first
+   two phases). Bounds: the exact table of phase B and the table of phase C
+   made again for the moves of both (175 MB). The two share almost no
+   moves: the bound at the start is 5 below the answer, the first cube
+   took 336 million positions from 100 ends of phase A with four
+   labellings each, and its shortest
+   was 23 moves to the end of phase C, the same as the two phases one
+   after the other.
+
+### Where that leaves 60
+
+- Within the present phases, more effort buys tenths: 0.6 for three to
+  seven times the positions searched (full mode above).
+- Each phase is at or near the shortest for its own moves on random cubes
+  (the count, and the beam of (4) for the pairing). What is lost is lost
+  between phases, and joining two of them needs a bound that sees both:
+  A with B is 15 against 17 on the one cube measured at 340 s; B with C
+  gains nothing; C with P and P with E have no table that covers both
+  sides.
+- So about 66 looks reachable at a minute per cube (the centres in one
+  exact search, once it also returns enough stagings to choose from; an
+  estimate from the one cube measured), and 67 to 67.5 in seconds. 60 is not reachable by a solver made of phases;
+  it would be a search with all moves through most of the solve, which no
+  table that fits in memory can bound.
+
+The code of the six attempts is not in the repository; the diffs are in
+the notes folder of the sessions (`five-shorter-tried/`).
+
 ## 3x3x3: every first phase of 14 moves, on all cores (2026-11-11, night, branch `three-shorter`)
 
 The 3x3x3 of the release stopped after 30,000 second phases on one core:
