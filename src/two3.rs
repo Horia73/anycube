@@ -10,10 +10,10 @@
 //!   never walks into a dead end, and once a position is as far from the
 //!   subgroup as there are moves left, its shortest ways are read from a
 //!   list instead of being searched for (`first3.rs`);
+//! - those lists are read for 64 positions at a time, so that the waits for
+//!   memory overlap instead of following one another;
 //! - the corners' permutation is carried along, and its own distance turns
-//!   most ways away before the cube is put together;
-//! - the cubes along the path are kept, so the one at the end of a way is
-//!   a few moves from one that is there already.
+//!   most ways away before the cube is put together.
 //!
 //! The answer does not depend on how the work falls on the cores: of the
 //! solutions of the shortest length the one of the earliest piece of work
@@ -80,6 +80,9 @@ struct Node {
     cp: u16,
     d: u8,
     mv: u8,
+    /// One move further out than `NEAR`: where the table has the position.
+    sym: u8,
+    key: u32,
     down: u32,
     flat: u32,
 }
@@ -299,6 +302,8 @@ impl Job<'_> {
                 return;
             }
             (n.down, n.flat) = self.e.first.near(key, sym, n.d);
+        } else if n.d == NEAR + 1 {
+            (n.key, n.sym) = (key as u32, sym as u8);
         }
         self.stack.push(n);
     }
@@ -327,6 +332,16 @@ impl Job<'_> {
                 let d = n.d + 1 - (n.down >> m & 1) as u8 * 2 - (n.flat >> m & 1) as u8;
                 let (key, sym) = e.first.key(tws[m] as usize, fls[m] as usize, sls[m] as usize);
                 let child = Node { tw: tws[m], fl: fls[m], sl: sls[m], cp: cps[m], d, mv: m as u8, ..Node::default() };
+                self.arrive(child, key, sym, rem - 1, depth + 1);
+            }
+        } else if n.d == NEAR + 1 && rem == n.d as usize {
+            // One move further out than the lists, and every move must lead nearer: those moves are listed too.
+            let mut left = mask & e.first.nearer_from_next(n.key as usize, n.sym as usize);
+            while left != 0 {
+                let m = left.trailing_zeros() as usize;
+                left &= left - 1;
+                let (key, sym) = e.first.key(tws[m] as usize, fls[m] as usize, sls[m] as usize);
+                let child = Node { tw: tws[m], fl: fls[m], sl: sls[m], cp: cps[m], d: NEAR, mv: m as u8, ..Node::default() };
                 self.arrive(child, key, sym, rem - 1, depth + 1);
             }
         } else {

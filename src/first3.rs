@@ -14,6 +14,11 @@
 //! - which moves lead one nearer and which keep the distance, and
 //! - every shortest way into the subgroup, written out.
 //!
+//! For the eight million positions one move further out it has the moves
+//! that lead nearer, and no more: a search that must arrive from one of
+//! them in exactly that many moves reads those, where it would try every
+//! move against the table of distances.
+//!
 //! A search that must arrive in exactly as many moves as a position is far
 //! then reads its ways one after the other; walking them move by move costs
 //! a table entry for every move tried at every step. The positions are
@@ -38,6 +43,11 @@ pub const NEAR: u8 = 7;
 const SLOT_BITS: [u32; 2] = [17, 20];
 /// Shortest ways of all the listed positions together.
 const N_WAYS: usize = 2_509_109;
+/// Positions `NEAR + 1` moves from the subgroup.
+const N_NEXT: usize = 7_950_748;
+/// They are found by counting: a bit for every position of the table, set for these, in
+/// blocks of seven words behind the number of bits set before the block.
+const BLOCK: usize = 7 * 64;
 const EMPTY: u64 = u64::MAX;
 const UNREACHED: u8 = 255;
 
@@ -50,7 +60,9 @@ const RAW_MOVE: usize = TW_CONJ + 2 * N_SYM * N_TWIST;
 const EXACT: usize = RAW_MOVE + N_SYM * 18;
 const SLOTS: [usize; 2] = [EXACT + N_KEY.div_ceil(32) * 8, EXACT + N_KEY.div_ceil(32) * 8 + (16 << SLOT_BITS[0])];
 const WAYS: usize = SLOTS[1] + (16 << SLOT_BITS[1]);
-const LEN: usize = WAYS + 8 * N_WAYS;
+const NEXT_BLOCKS: usize = WAYS + 8 * N_WAYS;
+const NEXT_MOVES: usize = NEXT_BLOCKS + 64 * N_KEY.div_ceil(BLOCK);
+const LEN: usize = NEXT_MOVES + 3 * N_NEXT;
 const FILE: &str = "phase1-333.bin";
 
 pub struct First3 {
@@ -268,6 +280,33 @@ fn generate(t: &T3) -> Vec<u8> {
     });
     out.extend(slots.iter().flatten().flatten().flat_map(|x| x.to_le_bytes()));
     out.extend(ways.iter().flat_map(|x| x.to_le_bytes()));
+
+    // The positions one move further out, in the order of the table, and their moves that lead nearer.
+    let next: Vec<usize> = (0..N_KEY).into_par_iter().filter(|&key| cells[key].load(Relaxed) == NEAR + 1).collect();
+    assert_eq!(next.len(), N_NEXT, "positions one move further than the listed ones");
+    let mut blocks = vec![0u64; 8 * N_KEY.div_ceil(BLOCK)];
+    for &key in &next {
+        let (block, bit) = (key / BLOCK, key % BLOCK);
+        blocks[8 * block + 1 + bit / 64] |= 1 << (bit % 64);
+    }
+    let mut before = 0;
+    for block in blocks.chunks_exact_mut(8) {
+        block[0] = before;
+        before += block[1..].iter().map(|w| w.count_ones() as u64).sum::<u64>();
+    }
+    out.extend(blocks.iter().flat_map(|x| x.to_le_bytes()));
+    let nearer: Vec<[u8; 3]> = next
+        .par_iter()
+        .map(|&key| {
+            let (c, tw) = (key / N_TWIST, key % N_TWIST);
+            let down = (0..18).fold(0u32, |a, m| {
+                let (tw2, fs2) = step(m, tw, reps[c] as usize);
+                a | ((dist(tw2, fs2) == NEAR) as u32) << m
+            });
+            [down as u8, (down >> 8) as u8, (down >> 16) as u8]
+        })
+        .collect();
+    out.extend(nearer.iter().flatten());
     out
 }
 
@@ -327,6 +366,22 @@ impl First3 {
             assert!(e != EMPTY, "a position near the subgroup is listed");
             at = (at + 1) & ((1 << bits) - 1);
         }
+    }
+
+    /// The moves that lead nearer from a position `NEAR + 1` moves from the subgroup, as a bit
+    /// mask of the cube's own moves.
+    #[inline(always)]
+    pub fn nearer_from_next(&self, key: usize, sym: usize) -> u32 {
+        let (block, bit) = (NEXT_BLOCKS + 64 * (key / BLOCK), key % BLOCK);
+        let mut rank = self.word(block) as usize;
+        for w in 0..bit / 64 {
+            rank += self.word(block + 8 + 8 * w).count_ones() as usize;
+        }
+        rank += (self.word(block + 8 + 8 * (bit / 64)) & ((1 << (bit % 64)) - 1)).count_ones() as usize;
+        let d = &self.data[NEXT_MOVES + 3 * rank..NEXT_MOVES + 3 * rank + 3];
+        let down = d[0] as usize | (d[1] as usize) << 8 | (d[2] as usize) << 16;
+        let t = &self.raw_mask[sym];
+        t[0][down & 63] | t[1][down >> 6 & 63] | t[2][down >> 12]
     }
 
     /// The first place to look for a listed position: reading it brings that part of the list
@@ -406,10 +461,10 @@ mod tests {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             (seed >> 33) as usize % n
         };
-        let mut near = 0;
+        let (mut near, mut further) = (0, 0);
         for round in 0..3_000 {
             let (mut tw, mut fl, mut sl) = (0, 0, goal);
-            for _ in 0..if round % 2 == 0 { rnd(9) } else { 30 } {
+            for _ in 0..if round % 2 == 0 { rnd(10) } else { 30 } {
                 let m = rnd(18);
                 (tw, fl, sl) = (t.twist_mv[tw][m] as usize, t.flip_mv[fl][m] as usize, t.slice_mv[sl][m] as usize);
             }
@@ -420,6 +475,14 @@ mod tests {
                 .collect();
             assert!(next.iter().all(|&n| n + 1 >= d && n <= d + 1));
             assert!(d == 0 || next.iter().any(|&n| n + 1 == d));
+            if d == NEAR + 1 {
+                let (key, sym) = f.key(tw, fl, sl);
+                let down = f.nearer_from_next(key, sym);
+                for m in 0..18 {
+                    assert_eq!(down >> m & 1 == 1, next[m] + 1 == d, "move {} at distance {}", m, d);
+                }
+                further += 1;
+            }
             if d <= NEAR {
                 near += 1;
                 let (key, sym) = f.key(tw, fl, sl);
@@ -446,7 +509,7 @@ mod tests {
                 assert!(d == 0 || firsts & !down == 0 && firsts != 0);
             }
         }
-        assert!(near > 1_000);
+        assert!(near > 1_000 && further > 50);
     }
 
     /// The same distances as the table without symmetry.
