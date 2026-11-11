@@ -472,6 +472,28 @@ these runs, load average 20 to 30; full mode took 15.9 s on a quiet machine):
 
 Histogram of the last line: 38: 1, 39: 12, 40: 13, 41: 4.
 
+## 4x4x4: a wide move in front of the scramble (2026-11-11)
+
+If T solves the cube "w then scramble" for a wide move w, then T followed by
+one wide move solves the scramble: the 3x3x3 part of T ends before the last
+wide move. A face move in front changes nothing, so there are nine such cubes
+per scramble (Uw, Rw, Fw and their powers), and nine more for the inverse.
+First 20 cubes of `scrambles-1000.txt`, default flags, each of the 20 solves
+per cube run with the plain `bench` command; lengths include the extra move.
+
+| Solves per cube | Mean length |
+|---|---|
+| cube | 40.90 |
+| cube and inverse | 40.35 |
+| cube and its 9 cubes with a wide move in front | 40.25 |
+| all 20 | 39.85 |
+
+Against cube and inverse: one move shorter on 8 cubes, two on 1, the same on
+11. The 20 solves took 72 s per cube in all. The machine became busy during
+these runs (load average 35 to 70): the solves with a move in front averaged
+41.25 before the extra move, against 40.9 for the plain ones, so on a quiet
+machine the gain should be larger.
+
 ## 4x4x4: is the end of the reduction as short as it could be? (2026-11-11)
 
 `cubenxnxn free-tail bench/scrambles-1000.txt --limit 24 --back 3`: the cube

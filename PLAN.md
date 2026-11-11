@@ -134,6 +134,11 @@ Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
   27–30 de mutări pe o minoritate de cuburi aleatoare, față de 23 la solver.
   La scara asta nu merge; o încercare serioasă ar însemna de zeci de ori mai
   multă antrenare și lățimi de căutare mult mai mari, fără garanție.
+- O mutare W pusă înaintea amestecului dă un alt cub, a cărui soluție plus o
+  mutare W la sfârșit rezolvă cubul inițial (3x3x3 se termină înaintea
+  ultimei mutări W). Nouă astfel de cuburi pe direcție: cu toate cele 20 de
+  rezolvări, 39,85 față de 40,35 pentru cub plus invers (20 de cuburi, mod
+  implicit, mașină încărcată). Candidat pentru un mod fără limită de timp.
 - Cuburi puțin amestecate: 10 mutări → 10, 15 → 28, 20 → 42. De reparat cu un
   tabel în jurul cubului rezolvat (optim până la ~12–13 mutări).
 - Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
