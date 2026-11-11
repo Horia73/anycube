@@ -171,14 +171,30 @@ impl Work<'_> {
     /// the cube held any way round.
     fn rehome(&mut self, row: usize, col: usize) -> Result<(), String> {
         let n = self.g.n;
-        let at_home = |f: &[u8]| (0..6).all(|face| f[face * n * n + row * n + col] as usize == face);
+        self.turn_until(|f| (0..6).all(|face| f[face * n * n + row * n + col] as usize == face), "the innermost centres are not solved")
+    }
+
+    /// Turns the frame so that the given cell of every face shows a colour
+    /// of that face's own axis. For even cubes whose centres were staged
+    /// with any pair of colours on any pair of faces, before a step that
+    /// takes each pair to be on its own: with two pairs exchanged, such a
+    /// step brings the centres home as a mirror image of the cube's
+    /// colours, which no way of holding the cube puts right.
+    fn reaxis(&mut self, row: usize, col: usize) -> Result<(), String> {
+        let n = self.g.n;
+        self.turn_until(|f| (0..6).all(|face| f[face * n * n + row * n + col] as usize % 3 == face % 3), "the innermost centres are not staged")
+    }
+
+    /// Turns the frame, by the first of the 24 ways of holding the cube that
+    /// `ok` accepts.
+    fn turn_until(&mut self, ok: impl Fn(&[u8]) -> bool, or: &str) -> Result<(), String> {
         let mut frames: Vec<Vec<usize>> = vec![Vec::new()];
         let mut at = 0;
         while at < frames.len() {
             let turns = frames[at].clone();
             at += 1;
             let seen = self.g.turned(&self.f, &turns);
-            if at_home(&seen) {
+            if ok(&seen) {
                 self.f = seen;
                 let map = self.g.frame_moves(&turns);
                 self.to_given = map.iter().map(|&m| self.to_given[m]).collect();
@@ -188,7 +204,7 @@ impl Work<'_> {
                 frames.extend((0..3).map(|t| turns.iter().copied().chain([t]).collect()));
             }
         }
-        Err("the innermost centres are not solved".to_string())
+        Err(or.to_string())
     }
 }
 
@@ -335,6 +351,8 @@ impl SolverN {
             // one, for about a dozen moves less than the two apart. Its
             // moves are face turns and half turns as deep as that ring or
             // deeper, which leave the rows nearer the rim matched.
+            // The staging may have left any pair of colours on any pair of faces.
+            w.reaxis(half - 1, half - 1)?;
             let layers = [0, half - 2, half - 1, half, half + 1, last];
             let sub = g.sub_facelets(&w.f, &layers);
             let found = self.six.inner_steps(&[], &sub, 0, SIX_BEAM, SIX_SPLITS);
