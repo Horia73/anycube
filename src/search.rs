@@ -73,6 +73,41 @@ pub trait Problem: Sync {
     fn bound(&self, n: &Self::Node) -> usize;
     /// Asked only where the bound is 0.
     fn done(&self, n: &Self::Node) -> bool;
+    /// Whether the state is a solution. A problem with a cheap sign of
+    /// "certainly not" can give it here and spare the bound, which the
+    /// beam asks of every state and almost always in vain.
+    #[inline(always)]
+    fn solved(&self, n: &Self::Node) -> bool {
+        self.bound(n) == 0 && self.done(n)
+    }
+    /// Asks for the memory that the bound and the score of this state will
+    /// read. The beam calls it for a batch of states before it rates any of
+    /// them, so that the reads of large tables overlap instead of queueing.
+    #[inline(always)]
+    fn prefetch(&self, _n: &Self::Node) {}
+}
+
+/// Levels on which every state kept has the same score, after which a beam gives up.
+const STUCK: usize = 4;
+
+/// Parents whose children are made, and their memory asked for, before any
+/// child is rated.
+const BATCH: usize = 8;
+
+/// Asks for the cache line at `p`. Reading past the end of a table is never
+/// done through this; a wrong address only wastes the request.
+#[inline(always)]
+pub fn prefetch<T>(p: *const T) {
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) p, options(nostack, preserves_flags, readonly));
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::x86_64::_mm_prefetch(p as *const i8, std::arch::x86_64::_MM_HINT_T0);
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    let _ = p;
 }
 
 /// Level by level, only the `width` states with the lowest `score` are
@@ -116,30 +151,40 @@ pub fn beam_from<P: Problem>(
 where
     P::Node: Ord + Hash,
 {
-    if roots.iter().any(|root| p.bound(root) == 0 && p.done(root)) && accept(&[]) {
+    if roots.iter().any(|root| p.solved(root)) && accept(&[]) {
         return vec![Vec::new()];
     }
     // Per level: each kept state's parent in the level before and the move that led to it.
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
     let mut level: Vec<(P::Node, u8)> = roots.iter().map(|root| (*root, NONE)).collect();
+    // The score every state kept had on the last level, if they all had the
+    // same one, and for how many levels running that has been so.
+    let (mut flat, mut flat_for) = (u32::MAX, 0);
     for _ in 0..max_len {
         // The score of every state one move on; 0 marks a solution, the
         // largest value a move that need not be tried.
         let moves = p.moves();
         let scores: Vec<u16> = level
-            .par_iter()
-            .flat_map_iter(|(n, last)| {
-                let score = &score;
-                (0..moves.len()).map(move |k| {
-                    if *last != NONE && skip54(*last, moves[k]) {
-                        return u16::MAX;
+            .par_chunks(BATCH)
+            .flat_map_iter(|parents| {
+                let mut rated = vec![u16::MAX; parents.len() * moves.len()];
+                let mut children: Vec<(usize, P::Node)> = Vec::with_capacity(rated.len());
+                for (i, (n, last)) in parents.iter().enumerate() {
+                    for k in 0..moves.len() {
+                        if *last == NONE || !skip54(*last, moves[k]) {
+                            let c = p.next(n, k);
+                            p.prefetch(&c);
+                            children.push((i * moves.len() + k, c));
+                        }
                     }
-                    let c = p.next(n, k);
-                    match p.bound(&c) == 0 && p.done(&c) {
+                }
+                for (j, c) in &children {
+                    rated[*j] = match p.solved(c) {
                         true => 0,
-                        false => (1 + score(&c)).min(u16::MAX as u32 - 1) as u16,
-                    }
-                })
+                        false => (1 + score(c)).min(u16::MAX as u32 - 1) as u16,
+                    };
+                }
+                rated
             })
             .collect();
         // The score at which the beam is full, with room for states reached twice.
@@ -195,6 +240,28 @@ where
             next.drain(..solved);
         }
         next.truncate(width);
+        if std::env::var_os("CUBE_BEAM_TRACE").is_some() {
+            eprintln!(
+                "      level {:2}: {} kept, scores {} to {}, cut {}",
+                trail.len() + 1,
+                next.len(),
+                next.first().map_or(0, |x| x.0),
+                next.last().map_or(0, |x| x.0),
+                cut
+            );
+        }
+        // A beam whose states all share one score, level after level, has
+        // filled up with states that look close and are not: it is on a
+        // plateau it does not leave (seen for twenty levels and more), and
+        // the caller does better with another start.
+        match (next.first(), next.last()) {
+            (Some(a), Some(b)) if a.0 == b.0 && a.0 == flat => flat_for += 1,
+            (Some(a), Some(b)) if a.0 == b.0 => (flat, flat_for) = (a.0, 1),
+            _ => (flat, flat_for) = (u32::MAX, 0),
+        }
+        if flat_for >= STUCK {
+            return Vec::new();
+        }
         trail.push(next.iter().map(|x| (x.3, x.4)).collect());
         level = next.iter().map(|x| (x.2, x.4)).collect();
     }

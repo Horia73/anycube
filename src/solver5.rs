@@ -227,12 +227,13 @@ impl Solver5 {
             |from: &[Partial]| -> Vec<Start> { from.par_iter().map(|x| start_in(x.root, x.frame, &x.moves)).collect() };
 
         let trace = std::env::var_os("CUBE5_TRACE").is_some();
-        let mut clock = Instant::now();
+        let mut clock = (Instant::now(), crate::clock::cpu_ms());
         let mut lap = |what: &str, n: usize, best: usize| {
             if trace {
-                eprintln!("  {:8} {:6} results, shortest {:2}, {:5.0} ms", what, n, best, clock.elapsed().as_secs_f64() * 1e3);
+                let (wall, cpu) = (clock.0.elapsed().as_secs_f64() * 1e3, crate::clock::cpu_ms() - clock.1);
+                eprintln!("  {:8} {:6} results, shortest {:2}, {:5.0} ms, {:6.0} ms of processor", what, n, best, wall, cpu);
             }
-            clock = Instant::now();
+            clock = (Instant::now(), crate::clock::cpu_ms());
         };
         let shortest = |x: &[Partial]| x.iter().map(|p| p.moves.len()).min().unwrap_or(0);
         // Centres, of every cube: (cube, staging).

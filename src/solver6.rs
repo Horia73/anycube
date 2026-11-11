@@ -643,7 +643,9 @@ impl Inner6 {
             // In half moves, the inner cube weighing half as much again.
             3 * inner + halves
         };
-        crate::search::beam_again(&Reduce3 { inner: self, s6, solver }, &root, score, width, cap, 40, salt)
+        // No second try with other ties: a beam that fails here has run
+        // onto a plateau that the others of the same start run onto as well.
+        crate::search::beam(&Reduce3 { inner: self, s6, solver }, &root, score, width, cap, 40, salt)
     }
 
     /// Step 3: the shortest ways found (up to `cap`) from a cube with staged
@@ -750,6 +752,17 @@ impl crate::search::Problem for Reduce3<'_> {
 
     fn bound(&self, n: &Node3) -> usize {
         self.inner.bound(self.solver, n, 99, true)
+    }
+
+    #[inline(always)]
+    fn solved(&self, n: &Node3) -> bool {
+        n.a == n.b && self.bound(n) == 0
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &Node3) {
+        // The pairing table is 240 MB; the others stay in the cache.
+        crate::search::prefetch(self.solver.tabs.sigma.as_ptr().wrapping_add(sigma_rank(&n.sigma)));
     }
 
     fn done(&self, n: &Node3) -> bool {
@@ -936,7 +949,7 @@ pub struct Solver6 {
 }
 
 /// A cube part of the way through: moves so far, their count per step, the cube.
-type Partial = (Vec<u8>, [usize; 3], Vec<u8>);
+pub(crate) type Partial = (Vec<u8>, [usize; 3], Vec<u8>);
 
 impl Solver6 {
     pub fn load() -> Solver6 {
@@ -988,7 +1001,7 @@ impl Solver6 {
 
     /// Steps 2 and 3 for one staging: the exact way within the budget, else
     /// the same by beam search, else (no beam, or it found nothing) the quick way.
-    fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64, beam: usize) -> Vec<Partial> {
+    pub(crate) fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64, beam: usize) -> Vec<Partial> {
         let mut out = Vec::new();
         if budget > 0 {
             if let Some((sp, f2)) = self.splits(f1, false).into_iter().next() {
@@ -1001,8 +1014,18 @@ impl Solver6 {
         }
         if out.is_empty() && beam > 0 {
             // The same step by beam search, from the two most promising splits.
-            for (i, (sp, f2)) in self.splits(f1, false).into_iter().take(2).enumerate() {
-                for red in self.inner.reduce_beam(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), beam, 4, i as u32) {
+            let t0 = crate::clock::cpu_ms();
+            let splits = self.splits(f1, false);
+            if std::env::var_os("CUBE6_TRACE").is_some() {
+                eprintln!("    splits: {} in {:.0} ms of processor", splits.len(), crate::clock::cpu_ms() - t0);
+            }
+            for (i, (sp, f2)) in splits.into_iter().take(2).enumerate() {
+                let t0 = crate::clock::cpu_ms();
+                let reds = self.inner.reduce_beam(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), beam, 4, i as u32);
+                if std::env::var_os("CUBE6_TRACE").is_some() {
+                    eprintln!("    beam: split {}, {} results of {:?} moves in {:.0} ms of processor", sp.len(), reds.len(), reds.first().map(|r| r.len()), crate::clock::cpu_ms() - t0);
+                }
+                for red in reds {
                     let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
                     out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(&f2, &red)));
                 }
@@ -1041,10 +1064,10 @@ impl Solver6 {
     pub fn solve(&self, facelets: &[u8], p: &Params6) -> Result<Solution6, String> {
         let g = &self.s6.g;
         let trace = std::env::var_os("CUBE6_TRACE").is_some();
-        let clock = std::time::Instant::now();
+        let (clock, cpu) = (std::time::Instant::now(), crate::clock::cpu_ms());
         let lap = |what: &str| {
             if trace {
-                eprintln!("  {:10} at {:6.0} ms", what, clock.elapsed().as_secs_f64() * 1e3);
+                eprintln!("  {:10} at {:6.0} ms, {:6.0} ms of processor", what, clock.elapsed().as_secs_f64() * 1e3, crate::clock::cpu_ms() - cpu);
             }
         };
         let staged = self.s6.stage(&self.outer.stage, facelets, p.width);

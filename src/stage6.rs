@@ -73,6 +73,27 @@ pub struct Stage6 {
     out_ud_mv: Vec<Vec<u16>>,
 }
 
+/// How wide the staging goes.
+#[derive(Clone, Copy, Debug)]
+pub struct Wide {
+    /// Results of step 1 carried on, ways each of them is continued in
+    /// step 2, and stagings returned.
+    pub width: usize,
+    /// Results of step 2 taken into step 3, the shortest first. Step 3 is
+    /// where the candidates differ most (by up to five moves), so it pays
+    /// to try many of them there.
+    pub fan: usize,
+    /// States per level of the beam search of step 3.
+    pub beam: usize,
+}
+
+impl Wide {
+    /// As many candidates into step 3 as stagings wanted, with the usual beam.
+    pub fn plain(width: usize) -> Wide {
+        Wide { width, fan: width, beam: UD_BEAM }
+    }
+}
+
 /// A staging: the moves and how many each step took.
 #[derive(Clone)]
 pub struct Staged6 {
@@ -199,21 +220,28 @@ impl Stage6 {
     /// The best stagings found, shortest first. `width` candidates are
     /// carried from step to step, each continued in up to `width` ways.
     pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize) -> Vec<Staged6> {
-        self.stage_steps(s5, facelets, width, 0..3)
+        self.stage_wide(s5, facelets, &Wide::plain(width), 0..3)
     }
 
     /// Some of the steps only (0 and 1 do the R/L centres, 2 the rest), from
     /// a cube on which the ones before them are done. For the larger cubes,
     /// which stage one axis on all their layers before the next.
     pub fn stage_steps(&self, s5: &Stage5, facelets: &[u8], width: usize, steps: std::ops::Range<usize>) -> Vec<Staged6> {
+        self.stage_wide(s5, facelets, &Wide::plain(width), steps)
+    }
+
+    /// `stage_steps` with the widths of the steps given one by one.
+    pub fn stage_wide(&self, s5: &Stage5, facelets: &[u8], wide: &Wide, steps: std::ops::Range<usize>) -> Vec<Staged6> {
+        let width = wide.width;
         let whole = steps.end == 3;
         let start = Staged6 { moves: Vec::new(), lens: [0; 3] };
         let mut cands = vec![(start, facelets.to_vec())];
         for step in steps {
+            let t0 = crate::clock::cpu_ms();
             let mut next: Vec<(Staged6, Vec<u8>)> = cands
                 .par_iter()
                 .flat_map_iter(|(c, f)| {
-                    let sols = self.step(s5, step, f, width);
+                    let sols = self.step(s5, step, f, width, wide.beam);
                     sols.into_iter().map(move |sol| {
                         let mut f2 = f.clone();
                         self.g.apply_seq(&mut f2, &sol.iter().map(|&m| m as usize).collect::<Vec<_>>());
@@ -225,7 +253,17 @@ impl Stage6 {
                 })
                 .collect();
             next.sort_by_key(|c| c.0.moves.len());
-            next.truncate(width);
+            if std::env::var_os("CUBE6_TRACE").is_some() {
+                eprintln!(
+                    "    staging step {}: {} results from {} starts, lengths {:?}, {:.0} ms of processor",
+                    step + 1,
+                    next.len(),
+                    cands.len(),
+                    next.iter().take(8).map(|c| c.0.lens[step]).collect::<Vec<_>>(),
+                    crate::clock::cpu_ms() - t0
+                );
+            }
+            next.truncate(if step == 1 { wide.fan.max(width) } else { width });
             cands = next;
         }
         debug_assert!(!whole || cands.iter().all(|c| self.is_staged(&c.1)));
@@ -250,7 +288,7 @@ impl Stage6 {
     }
 
     /// Solutions of one step from a cube on which the earlier steps are done.
-    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize) -> Vec<Vec<u8>> {
+    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize, beam: usize) -> Vec<Vec<u8>> {
         match step {
             0 => self.step1([self.mask(X_IN, f, 1), self.mask(OBL_A, f, 1), self.mask(OBL_B, f, 1)], cap),
             1 => {
@@ -281,7 +319,7 @@ impl Stage6 {
                 // A beam that finds nothing is rare; a wider one then does.
                 [(1, 0), (8, 1), (64, 2)]
                     .iter()
-                    .map(|&(times, salt)| crate::search::beam_again(&p, &root, &score, UD_BEAM * times, cap, 40, salt))
+                    .map(|&(times, salt)| crate::search::beam_again(&p, &root, &score, beam * times, cap, 40, salt))
                     .find(|found| !found.is_empty())
                     .unwrap_or_default()
             }
@@ -427,6 +465,16 @@ impl crate::search::Problem for PairUd<'_> {
     fn done(&self, _: &Node34) -> bool {
         true
     }
+
+    #[inline(always)]
+    fn solved(&self, n: &Node34) -> bool {
+        n.a == n.b && self.bound(n) == 0
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &Node34) {
+        crate::search::prefetch(self.s.obl_ud.as_ptr().wrapping_add(n.a as usize * N_UD + n.b as usize));
+    }
 }
 
 struct Step34<'a> {
@@ -460,6 +508,18 @@ impl crate::search::Problem for Step34<'_> {
     fn done(&self, n: &Node34) -> bool {
         self.s5.b_dist(n.o as usize, n.a as usize, n.odd & 2 != 0) == 0
     }
+
+    #[inline(always)]
+    fn solved(&self, n: &Node34) -> bool {
+        n.a == n.b && self.bound(n) == 0 && self.done(n)
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &Node34) {
+        crate::search::prefetch(self.s.obl_ud.as_ptr().wrapping_add(n.a as usize * N_UD + n.b as usize));
+        self.s5.b_prefetch(n.o as usize, n.a as usize);
+        self.s5.b_prefetch(n.o as usize, n.b as usize);
+    }
 }
 
 struct Run1<'a> {
@@ -472,10 +532,17 @@ struct Run1<'a> {
 }
 
 impl Run1<'_> {
+    /// The search below one first move.
     fn dfs(&mut self, n: &[u32; 3], m: u8, rem: usize, depth: usize) -> bool {
         let s = self.s;
         let next = [s.perms[X_IN].apply(m, n[0]), s.perms[OBL_A].apply(m, n[1]), s.perms[OBL_B].apply(m, n[2])];
-        let h = s.h1(&next);
+        self.enter(&next, m, rem, depth)
+    }
+
+    /// Judges the state `next` that move `m` led to with `rem` moves left
+    /// (that move included), and searches on from it.
+    fn enter(&mut self, next: &[u32; 3], m: u8, rem: usize, depth: usize) -> bool {
+        let h = self.s.h1(next);
         if h > rem - 1 {
             return false;
         }
@@ -497,8 +564,20 @@ impl Run1<'_> {
         if self.stop.load(Relaxed) {
             return true;
         }
+        // Both tables are larger than the cache: the states one move on are
+        // made first and their entries asked for, then judged in order.
+        let s = self.s;
+        let mut kids = [[0u32; 3]; 54];
         for m2 in 0..54u8 {
-            if !skip54(m, m2) && self.dfs(&next, m2, rem - 1, depth + 1) {
+            if !skip54(m, m2) {
+                let k = [s.perms[X_IN].apply(m2, next[0]), s.perms[OBL_A].apply(m2, next[1]), s.perms[OBL_B].apply(m2, next[2])];
+                crate::search::prefetch(s.in_rl.as_ptr().wrapping_add(k[0] as usize));
+                crate::search::prefetch(s.unpaired.as_ptr().wrapping_add((k[1] ^ k[2]) as usize));
+                kids[m2 as usize] = k;
+            }
+        }
+        for m2 in 0..54u8 {
+            if !skip54(m, m2) && self.enter(&kids[m2 as usize], m2, rem - 1, depth + 1) {
                 return true;
             }
         }

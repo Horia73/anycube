@@ -13,6 +13,7 @@
 //! Every phase starts from many cubes at once and keeps the continuations
 //! that are shortest in total, so a longer step is taken where it pays later.
 
+use crate::search::prefetch;
 use crate::c3::{perm_rank, perm_unrank, T3};
 use crate::c5::{tables5, Cube5};
 use crate::cube::{skip_move, tables as cube_tables};
@@ -1325,6 +1326,12 @@ impl Search<'_> {
         if self.tick() {
             return true;
         }
+        // The tables are far larger than the cache and every state reads
+        // several of them. So the states one move on are made first and
+        // their first entries asked for together; then those entries are
+        // read and the further ones asked for; only then is each state
+        // judged and searched. The order of the search is as it would be.
+        let mut kids = [(false, PNode { ml: 0, mh: 0, fb: 0, rl: 0 }); 16];
         for (k, &m) in P_MOVES.iter().enumerate() {
             if last != 255 && skip_move(last, m) {
                 continue;
@@ -1335,12 +1342,38 @@ impl Search<'_> {
                 fb: e.fb_mv[n.fb][k] as usize,
                 rl: e.rl_mv[n.rl][k] as usize,
             };
-            let bound = e.p_bound(&next, rem - 1);
+            prefetch(e.pq.as_ptr().wrapping_add(next.ml * 1680 + next.mh % 1680));
+            prefetch(e.p_centres.as_ptr().wrapping_add(next.fb * 4900 + next.rl));
+            kids[k] = (true, next);
+        }
+        for (live, next) in kids.iter_mut() {
+            if !*live {
+                continue;
+            }
+            let first = e.pq[next.ml * 1680 + next.mh % 1680].max(e.p_centres[next.fb * 4900 + next.rl]) as usize;
+            if first > rem - 1 {
+                *live = false;
+                continue;
+            }
+            prefetch(e.p_fb[0].as_ptr().wrapping_add((next.ml * 4900 + next.fb) >> 1));
+            prefetch(e.p_fb[1].as_ptr().wrapping_add((next.mh * 4900 + next.fb) >> 1));
+            let rl = e.rl_id[next.rl] as usize;
+            if rl < e.n_rl {
+                prefetch(e.p_rl[0].as_ptr().wrapping_add((next.ml * e.n_rl + rl) >> 1));
+                prefetch(e.p_rl[1].as_ptr().wrapping_add((next.mh * e.n_rl + rl) >> 1));
+            }
+        }
+        for (k, (live, next)) in kids.iter().enumerate() {
+            if !*live {
+                continue;
+            }
+            let bound = e.p_bound(next, rem - 1);
             if bound > rem - 1 || (bound == 0 && rem > 1) {
                 continue;
             }
+            let m = P_MOVES[k];
             self.path[depth] = m;
-            if self.dfs_p(root, &next, rem - 1, m, depth + 1) {
+            if self.dfs_p(root, next, rem - 1, m, depth + 1) {
                 return true;
             }
         }
@@ -1355,24 +1388,42 @@ impl Search<'_> {
             return true;
         }
         let e = self.e5;
+        // As in `dfs_p`: the pairing table first, for every move at once.
+        let mut kids = [(false, ENode { lo: 0, hi: 0, d: 0, ud: 0, side: 0 }); 14];
         for (k, &m) in E_MOVES[..14].iter().enumerate() {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
             let (lo, hi) = (e.out_low_mv[n.lo][k] as usize, e.out_high_mv[n.hi][k] as usize);
+            prefetch(e.e.as_ptr().wrapping_add((lo * N_P8 + hi) >> 2));
+            kids[k] = (true, ENode { lo, hi, d: 0, ud: 0, side: 0 });
+        }
+        for (k, (live, next)) in kids.iter_mut().enumerate() {
+            if !*live {
+                continue;
+            }
             // The neighbour is at distance d-1, d or d+1; the table says which, modulo 3.
-            let v = e.e_mod3(lo, hi);
+            let v = e.e_mod3(next.lo, next.hi);
             let d = n.d + (v + 3 - (n.d + 2) % 3) % 3 - 1;
             if d as usize > rem - 1 {
+                *live = false;
                 continue;
             }
-            let next = ENode { lo, hi, d, ud: e.ud_mv[n.ud][k] as usize, side: e.last_mv[n.side][k] as usize };
-            let centre = e.e_centre(&next) as usize;
-            if centre > rem - 1 || (d == 0 && centre == 0 && rem > 1) || e.e_joint(&next) as usize > rem - 1 {
+            *next = ENode { lo: next.lo, hi: next.hi, d, ud: e.ud_mv[n.ud][k] as usize, side: e.last_mv[n.side][k] as usize };
+            prefetch(e.e_ud[0].as_ptr().wrapping_add((next.lo * 4900 + next.ud) >> 1));
+            prefetch(e.e_ud[1].as_ptr().wrapping_add((next.hi * 4900 + next.ud) >> 1));
+        }
+        for (k, (live, next)) in kids.iter().enumerate() {
+            if !*live {
                 continue;
             }
+            let centre = e.e_centre(next) as usize;
+            if centre > rem - 1 || (next.d == 0 && centre == 0 && rem > 1) || e.e_joint(next) as usize > rem - 1 {
+                continue;
+            }
+            let m = E_MOVES[k];
             self.path[depth] = m;
-            if self.dfs_e(&next, rem - 1, m, depth + 1) {
+            if self.dfs_e(next, rem - 1, m, depth + 1) {
                 return true;
             }
         }

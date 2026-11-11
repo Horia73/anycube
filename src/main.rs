@@ -922,14 +922,16 @@ fn stage6(args: &[String]) {
     let s5 = cubenxnxn::stage5::Stage5::load();
     let s6 = Stage6::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
-    let (mut sums, mut total, mut ms, mut n) = ([0usize; 3], 0usize, 0.0, 0usize);
+    let (mut sums, mut total, mut ms, mut n, mut cpu) = ([0usize; 3], 0usize, 0.0, 0usize, 0.0);
     for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
         let scramble = s6.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = s6.g.solved();
         s6.g.apply_seq(&mut f, &scramble);
-        let t = Instant::now();
-        let found = s6.stage(&s5, &f, width);
+        let (t, c) = (Instant::now(), cubenxnxn::clock::cpu_ms());
+        let wide = cubenxnxn::stage6::Wide { width, fan: num("--fan", width), beam: num("--beam", 20_000) };
+        let found = s6.stage_wide(&s5, &f, &wide, 0..3);
         ms += t.elapsed().as_secs_f64() * 1e3;
+        cpu += cubenxnxn::clock::cpu_ms() - c;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
         s6.g.apply_seq(&mut f, &best.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
         if !s6.is_staged(&f) {
@@ -948,7 +950,7 @@ fn stage6(args: &[String]) {
         total as f64 / nf,
         sums.iter().map(|&s| format!("{:.2}", s as f64 / nf)).collect::<Vec<_>>().join(" + ")
     );
-    println!("mean time {:.0} ms", ms / nf);
+    println!("mean time {:.0} ms, processor time {:.0} ms", ms / nf, cpu / nf);
 }
 
 /// 6x6x6 on a scramble file: full solves, lengths per step and times.
@@ -963,7 +965,7 @@ fn bench6(args: &[String]) {
     let solver = Solver6::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let g = &solver.s6.g;
-    let (mut sums, mut times, mut n) = ([0usize; 4], Vec::new(), 0usize);
+    let (mut sums, mut times, mut n, mut cpu) = ([0usize; 4], Vec::new(), 0usize, 0.0);
     let mut hist = std::collections::BTreeMap::new();
     let mut out = opt(args, "--out").map(|p| {
         std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
@@ -972,9 +974,10 @@ fn bench6(args: &[String]) {
         let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = g.solved();
         g.apply_seq(&mut f, &scramble);
-        let t = Instant::now();
+        let (t, c) = (Instant::now(), cubenxnxn::clock::cpu_ms());
         let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
         let ms = t.elapsed().as_secs_f64() * 1e3;
+        cpu += cubenxnxn::clock::cpu_ms() - c;
         g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
         if !g.is_solved(&f) {
             fail(&format!("cube {}: the solution does not solve the cube", n));
@@ -1003,10 +1006,11 @@ fn bench6(args: &[String]) {
         sums[3] as f64 / nf
     );
     println!(
-        "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms",
+        "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms; processor time {:.0} ms",
         times.iter().sum::<f64>() / nf,
         times[times.len() / 2],
-        times[times.len() - 1]
+        times[times.len() - 1],
+        cpu / nf
     );
     println!("length histogram: {:?}", hist);
 }
