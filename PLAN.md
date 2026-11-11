@@ -502,6 +502,97 @@ drumul lung.
 4. Tabelele potrivirii: 24 MB fiecare, multe sunt probabil aceleași între
    mărimi și axe.
 
+## Punerea în comun (2026-11-11, după-amiază)
+
+Patru sesiuni au lucrat în paralel, fiecare pe ramura ei; la cererea lui
+Horia au fost unite pe ramura `together` (unirea a făcut-o sesiunea de
+6x6x6, cu acordul celor de 5x5x5 și 7x7x7; sesiunea de 4x4x4 nu a putut fi
+anunțată, ramura ei a intrat cum era comisă). Detaliile fiecăreia sunt în
+`bench/RESULTS.md`, în secțiunile zilei.
+
+| Ramură | Ce aduce | Cifra ei, măsurată separat |
+|---|---|---|
+| `shorter-solutions` | potrivirea rândurilor de centre de orice lungime | 9x9x9 326,9; 10x10x10 427,95 |
+| `faster-555` | faza A cu tabel aproape de țintă la 7–8 mutări și lungimi peste optim; fazele de muchii în ordinea rezervei; tabel exact pentru faza a doua a 3x3x3 | 5x5x5 implicit 68,83 → 67,75 cu o treime din timpul de procesor (12 cuburi, alăturat) |
+| `faster-777` | un singur fascicul pentru toți candidații (`beam_roots`), pași de așezare uniți, ordinea axelor aleasă în căutare; așezarea cuburilor mari cu candidați (`staging.rs`) | 7x7x7 153,15 (20 de cuburi) la jumătate din timpul de procesor |
+| `six-faster` | candidați fără dubluri, fascicule care nu mai așteaptă după memorie, ultimul pas al așezării o dată pe tipar; inelul interior al cuburilor pare prin pașii de 6x6x6 | 6x6x6 implicit 109,35 → 108,35, rapid 111,65 → 110,60 |
+| `known-reductions` | experimente 4x4x4: reduceri cu toate mutările, rețea ca estimare, cuburi aproape reduse | nimic nou în solver; vezi mai jos ce au arătat |
+| `public-cleanup` | README pentru publicare, licență MIT | |
+
+**Ce au găsit sesiunile și e valabil pentru toate mărimile:**
+
+1. **Căutările așteptau după memorie.** Tabelele sunt mult mai mari decât
+   memoria cache, iar o stare citea câte una pe rând. Trei sesiuni au
+   ajuns independent la același remediu: copiii unei stări se fac întâi,
+   intrările lor se cer dinainte (`search::fetch`), abia apoi se citesc.
+   Fascicule de 1,4–2,7 ori mai rapide, aceleași soluții.
+2. **Candidați care sunt același cub.** La 6x6x6 o treime până la jumătate
+   din candidații duși din pas în pas erau copii (același cub ajuns prin
+   alte mutări); la startele 5x5x5 sunt 4–12%; la 7x7x7 așezarea elimina
+   deja copiile, dar finalele nu. Eliminate după starea cubului, aceeași
+   lățime dă mai multe cuburi diferite: e singurul lucru care a scurtat
+   6x6x6 fără timp în plus.
+3. **Diversitatea devreme bate lățimea.** 7x7x7: 8 așezări care diferă
+   devreme dau o potrivire de 15,5, 256 care diferă doar la ultimele
+   mutări 16,9. 5x5x5: lungimile fazei A peste optim valorează 1,85 +
+   0,65 + 0,3 mutări, lățimile fazelor P și E nimic. 6x6x6: fascicule de
+   trei ori mai late aduc 0,3.
+4. **Mai multe starturi într-un singur fascicul**, nu un fascicul pentru
+   fiecare (7x7x7): jumătate din cost la aceeași lungime, iar lățimea se
+   duce la cele care ies bine. Alegerea axei ajută doar așa, ca rădăcini
+   ale aceluiași fascicul; aleasă după lungimea unui pas nu aduce nimic.
+   La 6x6x6 cele șase ținute ale cubului ca fascicule în plus nu au adus
+   nimic la efort egal: de încercat ca rădăcini.
+5. **Paritatea aripilor** lăsată liberă în așezare o scurtează cu 1–2
+   mutări pe pas și lungește muchiile cu 11 la 10x10x10; o repară doar
+   pasul inelului exterior.
+6. **Un fascicul poate rămâne pe un platou** de stări care par aproape
+   gata și nu sunt (reducerea interioară de la 6x6x6: cubul interior la o
+   jumătate de tură adâncă de gata, care ar strica perechile de oblici).
+   Regula de renunțare trebuie să fie a problemei: pusă la toate
+   fasciculele a tăiat potrivirea rândurilor lungi.
+7. **Pe mașina ocupată timpul de ceas nu spune nimic.** Au rulat cinci-șase
+   benchmarkuri deodată (încărcare 60–340 pe 10 nuclee). Măsuri care nu
+   depind de asta: timp de procesor (`src/clock.rs`), poziții căutate pe
+   fază (`bench5`), lungimi fără ceas.
+
+**Ce au arătat experimentele de 4x4x4** (nu schimbă solverul, dar
+închid întrebări): cubul invers și „o mutare lată în față” NU dau soluții
+(0 din 60 și 0 din 3.240 verificate; centrele unei culori nu se pot
+deosebi, deci permutarea lor ascunsă iese ca centre greșite), iar cifrele
+39,67 și 39,85 scrise mai devreme pentru ele nu sunt rezultate. Sfârșitul
+reducerii (ultimele 12–13 mutări) e deja cât cel mai scurt posibil cu
+orice mutare; ce pierde reducerea în trei faze, pierde în primele ~10
+mutări. O rețea mică e de zece ori mai selectivă decât scorul de mână ca
+estimare a distanței până la un cub redus, dar un fascicul ghidat de ea
+găsește 27–30 de mutări pe o minoritate de cuburi, față de 23 ale
+solverului.
+
+**Ce nu a mers, ca să nu fie încercat din nou:** tabele cu starea
+întreagă aproape de țintă pentru fazele P și E (pozițiile căutate nu
+scad); mai multe soluții pe start în faza E; fascicule înguste pentru
+mulți candidați în ultimul pas al așezării de 6x6x6; pașii 1–3 ai
+așezării de 7x7x7 într-o singură căutare; ponderi diferite în scorurile
+unite; fascicule mai late la așezare (100.000 → 300.000: 0,3 mutări).
+
+**Ce a rămas de făcut după unire:**
+
+1. Măsurătorile finale, pe rând, pe codul unit: fiecare mărime cu timp de
+   ceas pe mașina liberă. Cifrele din tabelul de mai sus sunt ale ramurilor
+   luate separat; README-ul are încă cifrele de dimineață.
+2. Lățimile 5x5x5 scrise explicit în solverele de 6x6x6 și 7x7x7: fazele
+   de muchii întorc acum cam câte rezultate li se cer, nu până la de opt
+   ori mai multe, deci aceleași numere înseamnă mai puține reduceri.
+3. În `staging.rs` pașii de tip 6x6x6 rulează încă o dată pe candidat;
+   `stage6::stage_wide` caută deja ultimul pas o singură dată pe tipar și
+   ar putea primi mai multe cuburi.
+4. Ideea ramurii 5x5x5 „ultimele rânduri ale unui inel alese împreună cu
+   pasul următor” a ieșit odată cu bucla veche de așezare din `nnn.rs` și
+   nu e reaplicată în `staging.rs`.
+5. `Stage5::a_close` (pragul fazei A folosit de fasciculele de 7x7x7)
+   trece acum prin cele 16 simetrii la fiecare stare: de măsurat dacă
+   încetinește așezarea de 7x7x7.
+
 ## Despre tabelele lui dwalton76
 
 Pentru 4x4x4 are opt tabele cu între 840 și 5,9 milioane de rânduri, ca text:
