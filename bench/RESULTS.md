@@ -395,3 +395,143 @@ More things that did not pay:
   nothing; with 200,000 it gave 114.2 moves on 6 cubes at 29 s per cube.
 - Choosing among 64 matchings by how easily the inner wings then split:
   117.25 against 116.95 before, on the same 20 cubes; no gain.
+
+## 7x7x7: first complete solver (2026-11-11)
+
+Set: `scrambles777-100.txt`, 250 random moves each. Metric: outer block turns
+(a turn of one, two or three layers of a face is one move). Every solution
+was applied to the scrambled cube on the sticker model and left it solved;
+the file below was also checked with `cubenxnxn verify --size 7`. Another
+benchmark was running on the same machine and these runs had 4 of its 8
+cores (`RAYON_NUM_THREADS=4`), so the times are rough.
+
+dwalton76 on the first 10 cubes: 194.40 moves, 9.4 s per cube. The target
+was 20% fewer, 155.5.
+
+| Mode | Staging | Matching | Inner edges | Outer edges | 3x3x3 | Total | Mean time | Max time | Cubes | Against dwalton76 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `--mode fast` (beams of 20,000) | 54.20 | 16.40 | 34.40 | 34.60 | 17.50 | 157.10 | 5.7 s | 7.3 s | first 10 | -19.2% |
+| default (beams of 100,000) | 53.30 | 16.10 | 34.10 | 34.70 | 16.60 | 154.80 | 11.3 s | 12.4 s | first 10 | -20.4% |
+| default | 52.57 | 15.77 | 34.17 | 34.93 | 16.83 | 154.27 | 11.4 s | 13.8 s | first 30 | |
+| `--restarts 3` | 53.10 | 15.60 | 34.00 | 34.40 | 17.20 | 154.30 | 30 s | 35 s | first 10 | -20.6% |
+
+Per cube, default: 154, 155, 157, 155, 155, 154, 157, 154, 151, 156 against
+195, 198, 191, 196, 192, 193, 194, 195, 199, 191. On 30 cubes the shortest
+solution has 151 moves and the longest 158. File: `seven777-results.tsv`,
+the 30 cubes of the default (cube, lengths per step, total, milliseconds,
+solution).
+
+The pipeline (`src/stage7.rs`, `src/solver7.rs`, `src/search.rs`):
+
+1. Staging, five steps: R/L inner x and t centres onto R and L (phase A of
+   the 5x5x5 on the inner cube, layers 1, 3, 4, 5, 7); R/L triples formed
+   (oblique, outer t centre, oblique: all three R/L or none); R/L outer x
+   centres and triples onto R and L (phase A on the outer cube, layers 1, 2,
+   4, 6, 7); U/D inner centres, inner wing parity and U/D triples in one
+   search; U/D outer centres and outer wing parity (phase B on the outer
+   cube). Mean lengths with beams of 20,000 on 6 cubes: 10.2 + 10.3 + 10.0
+   + 15.3 + 7.7 = 53.5.
+2. Matching: half turns of two layers make every oblique and outer t centre
+   agree in colour with the inner centre beside it.
+3. The three edge phases of the 5x5x5 solver on the inner cube, with turns of
+   one and three layers: the matched centres come along with the inner ones.
+4. The same phases and the 3x3x3 on the outer cube.
+
+Each step keeps several results (8 stagings, up to 4 matchings of each, 16
+reduced inner cubes) and the next one continues the ones shortest in total.
+
+### Beam search
+
+Three searches do two jobs that share few moves, and their lower bounds are
+far below the answers: forming the R/L triples (bound 5 to 6, answer 11 or
+more), U/D inner centres with U/D triples (bound about 10, answer 14 to
+16), matching (bound about 9, answer 14 to 18). Iterative deepening:
+
+| Search | Result |
+|---|---|
+| R/L triples, one cube | no solution of 10 moves or fewer (109 million positions); stopped during depth 11 |
+| U/D inner centres and triples | 14 moves in 4 s on one cube; not finished after a minute and a half on the next |
+| matching, one cube | no solution of 14 moves or fewer (109 million positions); stopped during depth 15 |
+
+A beam search (`search::beam`: per level, keep the states a score likes
+best; ties kept as a sample, by a hash) finds answers of the lengths
+iterative deepening could not rule out:
+
+| Beam width | R/L triples (6 starts) | Time per search |
+|---|---|---|
+| 2,000 | 12 to 13 moves | 0.1 s |
+| 20,000 | 11 to 12 | 0.3 s |
+| 200,000 | 11 | 2 s |
+
+The scores: for the triples, the sum of two relaxed bounds (obliques
+against outer t centres) and the count of places that disagree; for the
+U/D step, twice the exact phase-B distance of the inner centres plus three
+exact two-orbit distances; for matching, the sum over the axes of exact
+per-axis distances with each move's cost shared between the axes.
+
+Computing the scores of a level first and building only the states that
+stay took the solve from 23 s to 11 s at the same lengths.
+
+### How it got here
+
+| Version | Cubes | Mean length | Time per cube |
+|---|---|---|---|
+| first complete: one staging, matching by beam of 20,000 | cube 0 | 164 (55 + 20 + 37 + 34 + 18) | 12 s |
+| triples riding along the inner edge phases instead of matching (below) | first 10 | 159.20 | 11.6 s |
+| matching again, 4 stagings, 2 matchings each | first 4 | 159.75 | 7 s |
+| 8 stagings, 4 matchings each | first 4 | 157.75 | 8 s |
+| beams of 100,000 | first 10 | 154.60 | 23.6 s |
+| scores first, a quicker hash (same search) | first 10 | 154.80 | 11.3 s |
+
+Staging alone, beams of 20,000, 6 cubes: one candidate 56.67; 4 candidates
+carried from step to step 54.33; 8 candidates 53.33 to 53.50 (3.5 s).
+
+### Tried, did not pay
+
+- **Whole axes in one beam search** (all six orbits' R/L centres onto R and
+  L with all moves, ranked by the sum of the single-orbit distances; the
+  same for U/D): the sum falls from 32 to about 9 in 17 moves and then
+  stalls at 3 to 5 for 40 levels without a solution. Near the end the moves
+  that finish one orbit undo another, and a sum of single-orbit distances
+  does not see it.
+- **No matching step; the triples ride along the inner edge phases** as a
+  second state with its own exact tables, each face half turn of the inner
+  cube made with one layer or with two. Three variants:
+  - one axis per phase (stripes on the axis a phase turns by quarters, which
+    later half turns leave alone; one colour per triple on the last axis).
+    Exact, by iterative deepening: phase C with its axis 13 moves in 17 s
+    (alone 7; the triples alone 8.5), phase E 18 moves in 4 s (its own
+    bound 12), phase P not finished in minutes. By beam of 100,000: 12 to 14, 17
+    to 23 and 19 to 25 moves. Whole solve 159.20 on 10 cubes, inner cube
+    53.9 moves against 50.2 for matching plus plain phases.
+  - all three axes left to the last phase, the earlier ones only making
+    that possible: inner cube 51 and 56 moves on two cubes.
+  - both side by side with matching, the best reduction of either going on:
+    the riders never won on 4 cubes.
+  The beam was also fragile here: with other orders of equal states it
+  found nothing in 40 levels on some cubes, because states with one job
+  done and the other one move away fill the beam and cannot be finished. A
+  penalty for such states and a limit on the share of one score helped on
+  some cubes and hurt on others.
+- **Choosing a staging step's results by a quick narrow search of the next
+  step**: 53.83 in 9 s against 53.50 in 3.5 s without.
+- **More reduced inner cubes for the outer cube (32), no time limit in the
+  outer cube, wider inner edge phases (2,000 results per phase)**: the same
+  lengths to the move on 4 cubes.
+- **Three runs of every beam with ties broken differently**: 154.30
+  against 154.80, for three times the time. **Beams of 300,000**: 154.70,
+  28 s per cube. The lengths stop falling at about 100,000.
+
+### What remains weak
+
+- Staging is 53 moves, a third of the solve. A joint search of an axis
+  would need a score that sees how the orbits hinder each other.
+- Matching is 16 moves of pure overhead. The riders show that the edge
+  phases cannot absorb it cheaply (the two jobs share few moves), and its
+  beam is at most a move or two above what iterative deepening rules out.
+- The lengths move by a move or two with the order of equal states in the
+  beams, so the mean of 10 cubes is good to about half a move.
+
+Reproduce with `cubenxnxn bench7 bench/scrambles777-100.txt --limit 10
+[--mode fast] [--restarts 3] [--out file]`; tables are generated on first
+use (`stage777-*.bin`, about 300 MB).

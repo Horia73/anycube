@@ -31,7 +31,7 @@ use crate::cube::Cube;
 use crate::cuben::Geometry;
 use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
-use crate::search::{beam, Problem};
+use crate::search::{beam_again, Problem};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes, Ranks};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
@@ -366,7 +366,7 @@ impl Stage7 {
             let (x, y) = (n[0] ^ n[1], n[1] ^ n[2]);
             (d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
         };
-        beam(&Step2 { s: self }, root, score, width, cap, 40, salt)
+        beam_again(&Step2 { s: self }, root, score, width, cap, 40, salt)
     }
 
     /// Up to `cap` solutions of one step from a cube on which the earlier
@@ -396,7 +396,7 @@ impl Stage7 {
                         + nibble(&t[1], a * N_UD + o) as u32
                         + nibble(&t[2], o * N_UD + b) as u32
                 };
-                beam(&p, &self.node4(f), score, wide, cap, 40, salt)
+                beam_again(&p, &self.node4(f), score, wide, cap, 40, salt)
             }
             _ => vec![s5.phase_b(self.mask(X_OUT, f, 0), self.mask(T_OUT, f, 0), self.wings_odd(f, OUTER_WINGS))],
         };

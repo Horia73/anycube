@@ -30,7 +30,7 @@ use crate::c3::C3;
 use crate::c5::{tables5, Cube5};
 use crate::edges5::{is_reduced, Found, Limits, Start};
 use crate::solver5::{Params5, Solver5};
-use crate::search::{beam, Problem};
+use crate::search::{beam_again, Problem};
 use crate::stage7::{from_inner, moves_where, Stage7, INNER5, OBL_A, OBL_B, OUTER5, T_IN, T_OUT, X_IN, X_OUT};
 use rayon::prelude::*;
 use std::time::{Duration, Instant};
@@ -413,7 +413,8 @@ impl Params7 {
             matchings: 4,
             inner: Params5 { c_keep: 500, p_keep: 500, e_keep: 100, time_ms: 0, ..Params5::normal() },
             reductions: 16,
-            outer: Params5::normal(),
+            // No clock: a phase cut short can leave the next one nothing to work with.
+            outer: Params5 { time_ms: 0, ..Params5::normal() },
         }
     }
 
@@ -472,7 +473,7 @@ impl Solver7 {
         // The bound is far below the true length, so: beam search, states
         // ranked by the half moves the three axes need.
         let score = |n: &[u32; 5]| p.axis(n, 0) as u32 + p.axis(n, 1) as u32 + p.axis(n, 2) as u32;
-        beam(&p, &root, score, width, cap, 40, salt)
+        beam_again(&p, &root, score, width, cap, 40, salt)
     }
 
     /// True if the outer cube is a 5x5x5: every triple of one colour, the

@@ -173,3 +173,20 @@ where
     }
     Vec::new()
 }
+
+/// `beam`, run again with other ties if it comes back empty: on rare
+/// states every state kept looks close and none can be finished.
+pub fn beam_again<P: Problem>(
+    p: &P,
+    root: &P::Node,
+    score: impl Fn(&P::Node) -> u32 + Sync,
+    width: usize,
+    cap: usize,
+    max_len: usize,
+    salt: u32,
+) -> Vec<Vec<u8>>
+where
+    P::Node: Ord + Hash,
+{
+    (0..4).map(|again| beam(p, root, &score, width, cap, max_len, salt + 1000 * again)).find(|sols| !sols.is_empty()).unwrap_or_default()
+}
