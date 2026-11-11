@@ -1,19 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
-  <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1c2029"/>
-      <stop offset="1" stop-color="#0b0d10"/>
-    </linearGradient>
-  </defs>
-  <rect x="100.0" y="100.0" width="824" height="824" rx="171.7" fill="url(#tile)"/>
-  <rect x="103.0" y="103.0" width="818" height="818" rx="168.7" fill="none" stroke="#fff" stroke-opacity="0.07" stroke-width="6"/>
-  <rect x="203.0" y="203.0" width="178.5" height="178.5" rx="41.2" fill="#f4f4ef"/>
-  <rect x="422.7" y="203.0" width="178.5" height="178.5" rx="41.2" fill="#d92b3a"/>
-  <rect x="642.5" y="203.0" width="178.5" height="178.5" rx="41.2" fill="#1faa59"/>
-  <rect x="203.0" y="422.7" width="178.5" height="178.5" rx="41.2" fill="#f7d038"/>
-  <rect x="422.7" y="422.7" width="178.5" height="178.5" rx="41.2" fill="#f58220"/>
-  <rect x="642.5" y="422.7" width="178.5" height="178.5" rx="41.2" fill="#2f6fde"/>
-  <rect x="203.0" y="642.5" width="178.5" height="178.5" rx="41.2" fill="#d92b3a"/>
-  <rect x="422.7" y="642.5" width="178.5" height="178.5" rx="41.2" fill="#2f6fde"/>
-  <rect x="642.5" y="642.5" width="178.5" height="178.5" rx="41.2" fill="#f7d038"/>
+  <g transform="translate(100 100) scale(34.3333)">
+    <rect width="24" height="24" rx="5" fill="#0e1014"/>
+    <rect x="3" y="3" width="5.2" height="5.2" rx="1.2" fill="#f4f4ef"/>
+    <rect x="9.4" y="3" width="5.2" height="5.2" rx="1.2" fill="#d92b3a"/>
+    <rect x="15.8" y="3" width="5.2" height="5.2" rx="1.2" fill="#1faa59"/>
+    <rect x="3" y="9.4" width="5.2" height="5.2" rx="1.2" fill="#f7d038"/>
+    <rect x="9.4" y="9.4" width="5.2" height="5.2" rx="1.2" fill="#f58220"/>
+    <rect x="15.8" y="9.4" width="5.2" height="5.2" rx="1.2" fill="#2f6fde"/>
+    <rect x="3" y="15.8" width="5.2" height="5.2" rx="1.2" fill="#d92b3a"/>
+    <rect x="9.4" y="15.8" width="5.2" height="5.2" rx="1.2" fill="#2f6fde"/>
+    <rect x="15.8" y="15.8" width="5.2" height="5.2" rx="1.2" fill="#f7d038"/>
+  </g>
 </svg>
