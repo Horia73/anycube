@@ -1458,6 +1458,16 @@ textarea.bad {
     font-size: 0.9rem;
     margin: 0;
   }
+  .cam-say {
+    gap: 6px;
+  }
+  .cam-sign svg {
+    width: 32px;
+    height: 31px;
+  }
+  .cam-sign i {
+    display: none;
+  }
   .cam-text {
     min-height: 0;
     font-size: 0.78rem;

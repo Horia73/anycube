@@ -36,12 +36,12 @@ const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
 // the order, nor the way up: the six pictures are put together afterwards
 // the way they make a cube (scan-fit.js). `sign` is the small drawing.
 export const SCAN_STEPS = [
-  { face: 2, signs: ["hold"], text: "Hold any face to the camera, the cube level. Note which face is on top." },
-  { face: 1, signs: ["round"], text: "Turn the cube a quarter turn sideways. The top stays on top." },
-  { face: 5, signs: ["round"], text: "Another quarter turn the same way, top still on top." },
+  { face: 2, signs: ["hold"], text: "Hold any face to the camera, level. Note which face is on top." },
+  { face: 1, signs: ["round"], text: "A quarter turn sideways. The top stays on top." },
+  { face: 5, signs: ["round"], text: "Another quarter turn the same way." },
   { face: 4, signs: ["round"], text: "And once more the same way." },
-  { face: 0, via: 2, signs: ["round", "tip"], text: "Two moves: once more sideways, back to the first face. Then tip the top towards the camera." },
-  { face: 3, via: 2, signs: ["up", "up"], text: "Two moves the other way: tip back to the first face, then on, until the bottom faces the camera." },
+  { face: 0, via: 2, signs: ["round", "tip"], text: "Round once more, then tip the top to the camera." },
+  { face: 3, via: 2, signs: ["up", "up"], text: "Tip back, and on: the bottom to the camera." },
 ];
 
 // The small drawings: the face held to the camera, and an arrow for how
@@ -292,7 +292,7 @@ export class CameraScanner {
     this.heading.textContent = done ? "All six faces captured" : `Face ${this.step + 1} of 6: ${FACE_NAMES[face].toLowerCase()}`;
     // A face gone back to is not the next one round: it is shown as the cube in the panel shows it.
     const again = this.jumped && !done;
-    this.text.textContent = done ? "" : again ? `Show the ${FACE_NAMES[face].toLowerCase()} face again, held as the cube here shows it: the framed face to the camera.` : text;
+    this.text.textContent = done ? "" : again ? `The ${FACE_NAMES[face].toLowerCase()} face again: hold the cube as the one here, framed face to the camera.` : text;
     this.text.classList.remove("warn");
     this.sign.innerHTML = (again ? ["hold"] : signs).map((name) => `<svg viewBox="0 0 40 38">${SIGNS[name]}</svg>`).join("<i>then</i>");
     this.again = -1;
