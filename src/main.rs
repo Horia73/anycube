@@ -21,6 +21,9 @@ fn main() {
         Some("free-features") => free_features(&args[1..]),
         Some("free-beam") => free_beam(&args[1..]),
         Some("free-tail") => free_tail(&args[1..]),
+        Some("free-dump") => free_dump(&args[1..]),
+        Some("free-export") => free_export(&args[1..]),
+        Some("free-verify") => free_verify(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
         Some("gen-centres") => gen_centres(),
         Some("startup") => startup(),
@@ -377,6 +380,139 @@ fn bench(args: &[String]) {
     if tpr.is_some() {
         println!("TPR on the same cubes: mean length {:.3} (facelets and solutions cross-checked)", tpr_total as f64 / n);
     }
+}
+
+/// Experiment: training data for a learned estimate of the distance to a
+/// reduced cube. Each record is a cube `K` moves away from a reduced cube
+/// (`--kmin`..`--kmax`, or the list `--ks`), 52 bytes: the 24 recoloured
+/// centres, the 24 partner positions, the parity bits, K, the exact distance
+/// when it is at most 6 (else 255), and with `--hand` the score the beam search
+/// uses (2 x staging distance - dedges paired + 12, else 255).
+fn free_dump(args: &[String]) {
+    use cubenxnxn::free::{class_parts, Ball};
+    use cubenxnxn::tables::axis_masks;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (count, kmin, kmax, seed) = (num("--count", 1_000_000), num("--kmin", 1), num("--kmax", 26), num("--seed", 1));
+    let ks: Option<Vec<usize>> =
+        opt(args, "--ks").map(|s| s.split(',').map(|v| v.parse().unwrap_or_else(|_| usage())).collect());
+    let out = opt(args, "--out").unwrap_or_else(|| usage());
+    let hand = args.iter().any(|a| a == "--hand");
+    let t0 = Instant::now();
+    let ball = Ball::build(6);
+    let solver = hand.then(Solver::new);
+    let record = |i: usize| -> [u8; 52] {
+        let mut state = (seed as u64) << 32 ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+        let mut rnd = |n: usize| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize % n
+        };
+        // A few steps to separate neighbouring seeds.
+        for _ in 0..4 {
+            rnd(2);
+        }
+        let k = match &ks {
+            Some(list) => list[i % list.len()],
+            None => kmin + rnd(kmax - kmin + 1),
+        };
+        let cube = Cube::from_moves(&free_walk(&mut rnd, k));
+        let (centres, partner, bits) = class_parts(&cube);
+        let mut rec = [255u8; 52];
+        rec[..24].copy_from_slice(&centres);
+        rec[24..48].copy_from_slice(&partner);
+        rec[48] = bits;
+        rec[49] = k as u8;
+        if let Some(d) = ball.dist(&cube) {
+            rec[50] = d;
+        }
+        if let Some(s) = &solver {
+            let m = axis_masks(&cube);
+            let stage = [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)]
+                .iter()
+                .map(|&(a, b)| s.ctab.exact(&s.tabs.bp, &s.tabs.ranks, m[a], m[b]))
+                .min()
+                .unwrap();
+            let paired = (0..12).filter(|&p| cube.ep[p + 12] == (cube.ep[p] + 12) % 24).count() as u8;
+            rec[51] = 2 * stage + 12 - paired;
+        }
+        rec
+    };
+    let mut file = std::io::BufWriter::new(std::fs::File::create(out).unwrap_or_else(|e| fail(&format!("{}: {}", out, e))));
+    for start in (0..count).step_by(1 << 20) {
+        let end = (start + (1 << 20)).min(count);
+        let chunk: Vec<[u8; 52]> = (start..end).into_par_iter().map(&record).collect();
+        for rec in &chunk {
+            file.write_all(rec).unwrap();
+        }
+    }
+    eprintln!("{} records in {:.1} s", count, t0.elapsed().as_secs_f64());
+}
+
+/// Experiment: what a search outside this program needs, as JSON: the 27 moves
+/// as permutations of the centre and wing positions, the centres of the 24
+/// orientations with the parity a reduced cube has in each, and the cubes of a
+/// scramble file (with `--solve`, also the shortest reduction the solver finds).
+fn free_export(args: &[String]) {
+    use cubenxnxn::cube::{perm_parity, MOVE_NAMES};
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let solve = args.iter().any(|a| a == "--solve");
+    let ct = cubenxnxn::cube::tables();
+    let list = |v: &[u8]| format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","));
+    let rows = |v: Vec<String>| format!("[{}]", v.join(","));
+    let dedges = |c: &Cube| -> Vec<u8> { c.ep[..12].iter().map(|&e| e % 12).collect() };
+    println!("{{");
+    println!("\"names\": {},", rows(MOVE_NAMES[..27].iter().map(|n| format!("\"{}\"", n)).collect()));
+    println!("\"ct_src\": {},", rows((0..27).map(|m| list(&ct.ct_src[m])).collect()));
+    println!("\"ep_src\": {},", rows((0..27).map(|m| list(&ct.ep_src[m])).collect()));
+    println!("\"rots\": {},", rows(ct.rots.iter().map(|r| list(&r.state.ct)).collect()));
+    // Parity of the dedge permutation against the corners in each orientation of a solved cube;
+    // face turns change neither, so every reduced, solvable cube in that orientation has it.
+    println!(
+        "\"rot_parity\": {},",
+        list(&ct.rots.iter().map(|r| perm_parity(&dedges(&r.state)) ^ perm_parity(&r.state.cp)).collect::<Vec<_>>())
+    );
+    let solver = solve.then(Solver::new);
+    let params = params(args);
+    let mut cubes = Vec::new();
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let cube = Cube::from_moves(&parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+        let shortest = solver.as_ref().map_or(0, |s| s.solve(&cube, &params).unwrap_or_else(|e| fail(&e)).shortest_reduction);
+        cubes.push(format!(
+            "{{\"scramble\": \"{}\", \"ct\": {}, \"ep\": {}, \"corner_parity\": {}, \"solver\": {}}}",
+            scr,
+            list(&cube.ct),
+            list(&cube.ep),
+            perm_parity(&cube.cp),
+            shortest
+        ));
+    }
+    println!("\"cubes\": {}", rows(cubes));
+    println!("}}");
+}
+
+/// Checks reductions found outside this program: each line of the file is
+/// `scramble<TAB>moves`, and the moves must leave a reduced cube.
+fn free_verify(args: &[String]) {
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let (mut ok, mut total, mut moves) = (0usize, 0usize, 0usize);
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut parts = line.split('\t');
+        let mut cube = Cube::from_moves(&parse_moves(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(&e)));
+        let reduction = parse_moves(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(&e));
+        cube.apply_seq(&reduction);
+        total += 1;
+        moves += reduction.len();
+        if cubenxnxn::free::is_reduced(&cube) {
+            ok += 1;
+        } else {
+            println!("line {}: not reduced", total);
+        }
+    }
+    println!("{} of {} reduced, mean length {:.3}", ok, total, moves as f64 / total.max(1) as f64);
 }
 
 /// Experiment: is the end of the solver's reduction as short as it could be?

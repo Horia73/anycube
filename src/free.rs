@@ -79,6 +79,17 @@ fn mix(h: u64, w: u64) -> u64 {
 /// - the parity of the corners against that of the dedges, read in the order
 ///   in which the positions first show each dedge.
 pub fn key(c: &Cube) -> u64 {
+    let (centres, partner, bits) = class_parts(c);
+    let mut h = bits as u64;
+    for chunk in centres.chunks(8).chain(partner.chunks(8)) {
+        h = mix(h, u64::from_le_bytes(chunk.try_into().unwrap()));
+    }
+    h
+}
+
+/// What `key` hashes: the recoloured centres, the position of each wing's
+/// partner, and the two parities (bit 0 wings, bit 1 corners against dedges).
+pub fn class_parts(c: &Cube) -> ([u8; 24], [u8; 24], u8) {
     let t = tables();
     let (mut best, mut best_ct) = (0usize, [u8::MAX; 24]);
     for (r, map) in colour_maps().iter().enumerate() {
@@ -108,11 +119,7 @@ pub fn key(c: &Cube) -> u64 {
         }
     }
     let bits = perm_parity(&x.ep) | (perm_parity(&order) ^ perm_parity(&x.cp)) << 1;
-    let mut h = bits as u64;
-    for chunk in best_ct.chunks(8).chain(partner.chunks(8)) {
-        h = mix(h, u64::from_le_bytes(chunk.try_into().unwrap()));
-    }
-    h
+    (best_ct, partner, bits)
 }
 
 /// Every class within `depth` moves of a reduced cube, with its distance.
