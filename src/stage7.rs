@@ -19,10 +19,13 @@
 //! 3. R/L outer x centres and triples onto R and L with 1- and 2-layer
 //!    turns: phase A of the 5x5x5 again, on the outer cube;
 //! 4. U/D inner x and inner t centres onto U and D, inner wings even, U/D
-//!    triples formed, in one search bounded by the exact table of phase B
+//!    triples formed, in one search guided by the exact table of phase B
 //!    and exact tables for each two of the three orbits of a triple;
 //! 5. U/D outer x centres and triples onto U and D, outer wings even:
 //!    phase B of the 5x5x5 on the outer cube.
+//!
+//! Steps 2 and 4 are beam searches (`search`): their lower bounds are 5 to
+//! 6 and about 10 where the shortest solutions have 11 and 14 moves.
 
 use crate::cube::Cube;
 use crate::cuben::Geometry;
@@ -71,7 +74,7 @@ pub fn moves_where(keep: impl Fn(usize, usize, usize) -> bool) -> Vec<u8> {
 
 /// 3-layer quarter turns move one inner slice a quarter turn: an odd permutation of the inner wings.
 #[inline(always)]
-pub fn flips_inner(m: u8) -> bool {
+fn flips_inner(m: u8) -> bool {
     m >= 36 && m % 3 != 1
 }
 
@@ -98,7 +101,7 @@ fn nib_set(bytes: &[AtomicU8], idx: usize, v: u8) -> bool {
 }
 
 #[inline(always)]
-pub fn nibble(bytes: &[u8], idx: usize) -> u8 {
+fn nibble(bytes: &[u8], idx: usize) -> u8 {
     (bytes[idx >> 1] >> ((idx & 1) * 4)) & 15
 }
 
@@ -432,10 +435,6 @@ impl Problem for Step2<'_> {
         n[0] == n[1] && n[1] == n[2]
     }
 
-    /// Only a 3-layer turn changes a triple.
-    fn may_end(&self, k: usize) -> bool {
-        self.s.m2[k] >= 36
-    }
 }
 
 /// Step 4: the U/D patterns of the inner x and inner t centres, the parity
@@ -491,9 +490,62 @@ impl Problem for Step4<'_> {
         true
     }
 
-    /// Only a 3-layer turn moves an inner centre off its face or changes a triple.
-    fn may_end(&self, k: usize) -> bool {
-        self.s.m4[k] >= 36
-    }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inner_and_outer_layers_move_like_5x5x5_cubes() {
+        let (g7, g5) = (Geometry::new(7), Geometry::new(5));
+        let mut seed = 777u64;
+        let mut rnd = |n: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        // The inner cube under turns of one and three layers, and under
+        // turns of two layers, which are face turns to it.
+        let (mut f, mut inner) = (g7.solved(), g5.solved());
+        for _ in 0..200 {
+            let m = rnd(36) as u8;
+            g7.apply(&mut f, from_inner(m) as usize);
+            g5.apply(&mut inner, m as usize);
+            assert_eq!(g7.sub_facelets(&f, &INNER5), inner);
+        }
+        for _ in 0..50 {
+            let m = rnd(18);
+            g7.apply(&mut f, m + 18);
+            g5.apply(&mut inner, m);
+            assert_eq!(g7.sub_facelets(&f, &INNER5), inner);
+        }
+        // The outer cube under turns of one and two layers.
+        let (mut f, mut outer) = (g7.solved(), g5.solved());
+        for _ in 0..200 {
+            let m = rnd(36);
+            g7.apply(&mut f, m);
+            g5.apply(&mut outer, m);
+            assert_eq!(g7.sub_facelets(&f, &OUTER5), outer);
+        }
+    }
+
+    #[test]
+    fn step_moves_keep_what_they_should() {
+        let g = Geometry::new(7);
+        let orbits = centre_orbits(&g);
+        let side = |f: usize| f != 1 && f != 4;
+        let on_rl = |o: usize, m: u8| (16..24).all(|i| orbits[o].src[m as usize][i] >= 16);
+        // Step 2 keeps the inner centres of R and L on R and L.
+        for m in moves_where(|f, layers, power| layers < 3 || !side(f) || power == 1) {
+            assert!(on_rl(X_IN, m) && on_rl(T_IN, m));
+        }
+        // Step 4 keeps every centre of R and L on R and L.
+        let m4 = moves_where(|f, layers, power| match layers {
+            1 => side(f),
+            _ => !side(f) || power == 1,
+        });
+        for m in m4 {
+            assert!((0..6).all(|o| on_rl(o, m)));
+        }
+    }
+}

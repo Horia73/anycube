@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96 or 150 facelets> [search flags]   solve a cube from 2x2x2 to 5x5x5 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150 or 294 facelets> [search flags]   solve a cube of size 2 to 5 or 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -46,10 +46,14 @@ fn solve(args: &[String]) {
         (None, Some(24)) => 2,
         (None, Some(54)) => 3,
         (None, Some(150)) => 5,
+        (None, Some(294)) => 7,
         _ => 4,
     };
     if size == 5 {
         return solve5(state, args);
+    }
+    if size == 7 {
+        return solve7(state, args);
     }
     let cube = match state {
         Some(s) if size == 4 => Cube::from_facelets(s).unwrap_or_else(|e| fail(&e)),
@@ -66,7 +70,7 @@ fn solve(args: &[String]) {
         2 => solve2(&cube),
         3 => solve3(&cube, args),
         4 => solve4(&cube, args),
-        _ => fail("supported sizes: 2, 3, 4 and 5"),
+        _ => fail("supported sizes: 2, 3, 4, 5 and 7"),
     }
 }
 
@@ -76,7 +80,7 @@ fn move_text(args: &[String]) -> String {
     let mut i = 0;
     while i < args.len() {
         if args[i].starts_with("--") {
-            i += if matches!(args[i].as_str(), "--split" | "--parallel" | "--lazy") { 1 } else { 2 };
+            i += if matches!(args[i].as_str(), "--split" | "--parallel") { 1 } else { 2 };
         } else {
             tokens.push(&args[i]);
             i += 1;
@@ -114,6 +118,44 @@ fn solve5(state: Option<&str>, args: &[String]) {
                 sol.lens[3],
                 sol.lens[4],
                 sol.lens[5],
+                (t1 - t0).as_secs_f64() * 1e3,
+                t1.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+fn solve7(state: Option<&str>, args: &[String]) {
+    let t0 = Instant::now();
+    let solver = cubenxnxn::solver7::Solver7::load();
+    let g = &solver.s7.g;
+    let mut facelets = match state {
+        Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
+        None => {
+            let moves = g.parse_moves(&move_text(args)).unwrap_or_else(|e| fail(&e));
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &moves);
+            f
+        }
+    };
+    let t1 = Instant::now();
+    match solver.solve(&facelets, &params7(args)) {
+        Ok(sol) => {
+            g.apply_seq(&mut facelets, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            if !g.is_solved(&facelets) {
+                fail("the solution found does not solve the cube");
+            }
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            println!("{}", names.join(" "));
+            eprintln!(
+                "{} moves (staging {}, matching {}, inner edges {}, outer edges {}, 3x3x3 {}), tables {:.0} ms, search {:.0} ms",
+                sol.moves.len(),
+                sol.lens[0],
+                sol.lens[1],
+                sol.lens[2],
+                sol.lens[3],
+                sol.lens[4],
                 (t1 - t0).as_secs_f64() * 1e3,
                 t1.elapsed().as_secs_f64() * 1e3
             );
@@ -853,38 +895,35 @@ fn stage7(args: &[String]) {
 fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
     use cubenxnxn::solver7::Params7;
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
-    let d = Params7::normal();
-    let outer = params5(args);
+    let d = match opt(args, "--mode") {
+        Some("fast") => Params7::fast(),
+        Some("normal") | None => Params7::normal(),
+        Some(_) => usage(),
+    };
     Params7 {
         width: num("--width", d.width),
         fan: num("--fan", d.fan),
+        beam: num("--beam", d.beam),
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
-        rigid: cubenxnxn::solver5::Params5 {
-            c_keep: num("--rigid-c", d.rigid.c_keep),
-            p_keep: num("--rigid-p", d.rigid.p_keep),
-            e_keep: num("--rigid-e", d.rigid.e_keep),
-            ..d.rigid
-        },
-        match_extra: num("--match-extra", d.match_extra),
-        beam: num("--beam", d.beam),
-        inner_beam: num("--inner-beam", d.inner_beam),
-        more: num("--more", d.more),
-        mix: [num("--mix-edges", d.mix[0] as usize) as u32, num("--mix-triples", d.mix[1] as usize) as u32],
-        stuck: num("--stuck", d.stuck as usize) as u32,
-        runs: num("--runs", d.runs),
-        lazy: args.iter().any(|a| a == "--lazy"),
-        look: num("--look", d.look as usize) as u32,
-        reductions: num("--reductions", d.reductions),
         inner: cubenxnxn::solver5::Params5 {
             labellings: num("--inner-labellings", d.inner.labellings),
             c_keep: num("--inner-c", d.inner.c_keep),
             p_keep: num("--inner-p", d.inner.p_keep),
             e_keep: num("--inner-e", d.inner.e_keep),
-            time_ms: num("--inner-time", d.inner.time_ms as usize) as u64,
             ..d.inner
         },
-        outer,
+        reductions: num("--reductions", d.reductions),
+        outer: cubenxnxn::solver5::Params5 {
+            labellings: num("--labellings", d.outer.labellings),
+            c_keep: num("--c-keep", d.outer.c_keep),
+            p_keep: num("--p-keep", d.outer.p_keep),
+            e_keep: num("--e-keep", d.outer.e_keep),
+            pool: num("--pool", d.outer.pool),
+            probes: num("--probes", d.outer.probes as usize) as u64,
+            time_ms: num("--time", d.outer.time_ms as usize) as u64,
+            ..d.outer
+        },
     }
 }
 
