@@ -7,9 +7,9 @@ the Romanian plan is `PLAN.md`.
 
 Written by the session of the general solver (branch `shorter-solutions`)
 from the commits and result files of the other branches as they stood at
-15:40. Cross-session messages between the sessions were not delivered (the
-receiving sessions hold them), so nothing here was confirmed by the other
-sessions; where a branch had not written its results up, that is said.
+15:40. The sessions of the 5x5x5 and of the 7x7x7 then read their sections
+and sent corrections and figures, which are in; the sections of the
+6x6x6, the 4x4x4 and the publication are from their branches alone.
 
 ## Where each size stands
 
@@ -23,7 +23,7 @@ Mean number of moves (outer block turns) on the fixed scramble sets in
 | 5x5x5 default | 79.78 | 68.82 | 67.90 (first 30; 68.6 before on those) | `faster-555` | whole set not run yet |
 | 6x6x6 fast | 136.10 | 112.00 | 111.65 (20 cubes) | `six-faster` | half the processor time |
 | 6x6x6 default | 136.10 | 109.20 | 108.59 (first 17; 109.35 before on those) | `six-faster` | run not finished |
-| 7x7x7 default | 194.40 | 154.56 | not written up | `faster-777` | staging 52.9 to 50.7 moves on ten cubes |
+| 7x7x7 default | 194.40 | 154.56 | 153.15 (first 20; 154.3 to 154.8 before on those) | `faster-777` | half the processor time; fast mode not measured |
 | 8x8x8 | 308.40 | 301.90 | 243.15 (20 cubes) | `six-faster` on top of `shorter-solutions` | |
 | 9x9x9 | 368.00 | 368.55 | 326.90 (20 cubes) | `shorter-solutions` | |
 | 10x10x10 | 523.40 | 531.00 | 427.95 (20 cubes) | `shorter-solutions` | |
@@ -54,19 +54,41 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
 
 ### 5x5x5 (`faster-555`)
 
-- Phase A of the centres was 62% of the work and its second length was
-  worth 1.85 moves. A third length is worth 0.65 more; it is made
-  affordable by a table one move deeper in the same memory (reduced by 16
-  symmetries) and by searching the longer lengths in part within a budget.
+- Phase A of the centres was 62% of the processor time when run without a
+  clock (with the clock it was cut off at 15% of the budget, so there the
+  loss was in length), and its second length was worth 1.85 moves. A third
+  length is worth 0.65 more and a fourth 0.3 (but about a minute per cube
+  if searched whole). They are made affordable by a table one move deeper
+  in the same memory (reduced by 16 symmetries) and by searching the
+  longer lengths in part within a budget.
 - Edge phases search the starts with least slack first and stop when they
-  have what was asked: a third of the positions for the same lengths.
+  have what was asked: about 25 million positions per cube in P and E
+  became 8.7 million at the same widths and lengths (68.90 against 68.80
+  on 20 cubes).
+- After that the widths of P and E no longer matter (`p_keep` 700, 2000,
+  6000: 68.25, 68.20, 68.25; `e_keep` 100, 200, 600: 68.30, 68.33,
+  68.20). The cheap ones do: more stagings, labellings and results of
+  phase C 0.1 to 0.15 each, more 3x3x3 searches 0.3.
 - An exact table for the second phase of the 3x3x3 (57 MB): the same
   solutions in two thirds of the time, for every size.
 - Did not work: tables of whole states near the goal for phases P and E.
+  Their bounds are already exact that close; the work is in the first
+  three or four moves of each start, 9 to 11 moves from the goal, and a
+  table that helps would have to see that far.
+- Copies among the starts of the 5x5x5 phases were counted and left in: 4
+  to 12% (990 to 927 in C, 20,324 to 19,492 in P, 10,008 to 8,834 in E on
+  one cube), far fewer than on the 6x6x6.
 - For the other sizes: a phase now returns about what it is asked for, not
   up to eight times as much, so solvers that pass their own widths get
   fewer reductions for the same numbers; a cube that arrives with staged
   centres skips the long phase-A lengths.
+- For the larger cubes, not measured: in their 5x5x5 steps the centres
+  arrive staged, phase A has length 0 and phase C has one start (and those
+  one move away) where a 5x5x5 of its own chooses among about 1,200
+  stagings. The edges of a 5x5x5 of its own take 32.7 to 32.9 moves and
+  about 35 there, so at most some 2 moves per orbit of wings are to be
+  had, by more results of phase C, more labellings and more axes at the
+  start; the widths of P and E will not bring them.
 
 ### 6x6x6 (`six-faster`)
 
@@ -86,15 +108,39 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
   middle layers are a 6x6x6, and its inner steps replace the matching of
   that ring and the 4x4x4 on the innermost wings (8x8x8 246.50 to 243.15).
 
-### 7x7x7 (`faster-777`, from its commits and comments; no results written up)
+### 7x7x7 (`faster-777`)
 
-- Several cubes are carried through the staging and each beam-search step
-  is one search from all of them (`search::beam_roots`).
-- Which axis is staged first is chosen inside the search (three starts,
-  then either of the other two): worth more than a move.
-- Steps 1 and 2 of the staging in one search, and steps 4 and 5: 52.9
-  moves became 50.7 on ten cubes.
-- The same is applied to the staging of any size (`src/staging.rs`).
+Processor time throughout (the machine was at a load of 30 to 290); the
+detail is the last section of `bench/RESULTS.md` on that branch.
+
+- Whole solves, first 20 cubes: 153.15 moves (staging 50.30, matching
+  16.40, inner edges 34.45, outer edges 34.90, 3x3x3 17.10) at about 25 s
+  of processor time per cube, against 154.3 to 154.8 at about 53 s. Two
+  earlier runs of the new code gave 153.45 and 153.05.
+- Staging alone, ten cubes, beams of 100,000: the five steps 52.90; steps
+  1 and 2 in one search with the three axes as starts 51.50; steps 4 and 5
+  in one as well 50.70.
+- Of the 2.9 moves gained in the staging about 1.3 are left in the total:
+  the stagings handed to the matching now resemble each other, and the
+  matching takes 16.9 to 17.1 where it took 15.55 from eight stagings
+  that differed early.
+- Faster with the same solutions (staging of five cubes): 149 s became
+  84 s by asking for table entries ahead. One beam for all candidates:
+  4.7 s per cube against 17.6 s with one each, but 53.2 moves against
+  52.3; at 300,000 states for all, 52.5 in 8.4 s.
+- Did not work: the order of the axes chosen by the length of one step
+  (53.1 against 52.9); steps 1 to 3 in one search (no shorter, 1.7 times
+  the time); other weights in the merged searches (52.8 to 57.4); 32
+  candidates carried instead of 8; 256 stagings given to the matching.
+- For the larger cubes (`src/staging.rs`, staging alone): 8x8x8 92.0
+  moves became 81.2, 9x9x9 128.0 became 112.6, 10x10x10 168.3 became
+  155.0 (three to five cubes each; no whole solves on the final code).
+- The parity of the wings left free in every staging step shortens the
+  staging by 1 to 4 moves and lengthens the edges by 11 on a 10x10x10; it
+  is now seen to once, by the step of the outermost ring.
+- Its matching scores each state by the nearer of "same" and "opposite"
+  per axis, the case that kept the beams of the general solver undecided;
+  the eight choices as eight starts of one beam is the next thing to try.
 
 ### 4x4x4 (`known-reductions`)
 
@@ -140,14 +186,14 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
 
 ## State of the code
 
-- `together` (in the worktree of the 6x6x6 session) had `shorter-solutions`
-  (f8394fa), `faster-555`, `faster-777` (as of 15:39) and `six-faster`
-  merged at 15:43 (cd09239). Still to go in: what `faster-777` committed
-  after 15:39, this file, `known-reductions`, `public-cleanup`.
-- `together` at cd09239, checked from a scratch worktree by the session of
-  the general solver: it builds without warnings, its 24 tests pass, and
-  the general solver solves three cubes of each size, every solution
-  applied on the sticker model:
+- `together` (in the worktree of the 6x6x6 session) has every branch as
+  of 15:50 (71341bb): `shorter-solutions` up to f8394fa, `faster-555`,
+  `faster-777`, `six-faster`, `known-reductions`, `public-cleanup`. Only
+  this file is not in it yet.
+- `together`, checked from a scratch worktree by the session of the
+  general solver: it builds without warnings, its 24 tests pass, and the
+  general solver solves three cubes of each size, every solution applied
+  on the sticker model (at cd09239, before the last merges):
 
   | Size | `together`, first 3 cubes | `shorter-solutions`, first 5 cubes |
   |---|---|---|
@@ -155,9 +201,16 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
   | 9x9x9 | 319.0 (320, 325, 312) | 336.4 |
   | 10x10x10 | 416.7 (398, 396, 456) | 427.8 |
 
-  So what the sessions did adds up on the large cubes. To look at: the
-  third 10x10x10 cube found no matching and took the long way (456 moves),
-  which did not happen on any of the 20 cubes on `shorter-solutions`.
+  So what the sessions did adds up on the large cubes. The third
+  10x10x10 cube found no matching there and took the long way (456
+  moves); at 71341bb it is matched (405 moves), so that was either a fault
+  of the merge in between or a search that does not always succeed. A run
+  of all 20 cubes will tell.
+- On even cubes the staging of `src/staging.rs` may leave the colours of
+  an axis on the faces of another axis (every centre is still staged). The
+  matching in `src/rings.rs` needs only four of each colour per axis and
+  orbit, and the steps after it name the frame from the innermost centres,
+  so this is allowed for.
 - Tried in a scratch worktree: on top of f8394fa the code of `faster-555`
   applies cleanly; `faster-777` then conflicts in `src/stage5.rs`, and
   `six-faster` in `src/edges5.rs` and `src/stage5.rs`. `src/nnn.rs` and
