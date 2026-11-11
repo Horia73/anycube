@@ -24,11 +24,20 @@ pub enum Opened {
     Nothing,
 }
 
-/// A directory for this run's small files (the window script, the icon).
+/// The directory for this run's small files (the window script, the icon).
+fn scratch_dir() -> PathBuf {
+    std::env::temp_dir().join(format!("anycube-{}", std::process::id()))
+}
+
 fn scratch() -> std::io::Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!("anycube-{}", std::process::id()));
+    let dir = scratch_dir();
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+/// Removes this run's small files, once the window that used them is closed.
+pub fn tidy() {
+    let _ = std::fs::remove_dir_all(scratch_dir());
 }
 
 /// Browsers that can show a page as an application window.

@@ -71,7 +71,7 @@ if [ "$uninstall" = yes ]; then
             rm -rf "$DATA/tables"
             say "  removed $DATA/tables"
         else
-            say "  kept the lookup tables in $DATA/tables ($(du -sh "$DATA/tables" | cut -f1)): --uninstall --tables removes them too"
+            say "  kept the lookup tables in $DATA/tables ($(du -sh "$DATA/tables" | cut -f1 | tr -d ' ')): --uninstall --tables removes them too"
         fi
     fi
     rmdir "$DATA" 2>/dev/null && say "  removed $DATA" || true

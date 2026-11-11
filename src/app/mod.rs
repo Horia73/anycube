@@ -159,6 +159,7 @@ pub fn main(args: &[String]) {
         window::Opened::Window(mut child) => {
             // The window is the application: when it closes, so does this.
             let _ = child.wait();
+            window::tidy();
         }
         window::Opened::Tab => loop {
             std::thread::park();
