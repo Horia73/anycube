@@ -83,10 +83,41 @@ export class CubeModel {
     return face * n * n + r * n + c;
   }
 
-  // What a move is: its face, how many layers, and the turn.
+  // What a move is: its face, the layers it turns (`from` up to but not
+  // including `to`, counted from the face: a move of the solver's starts at
+  // 0 and turns `layers` of them) and the turn.
   info(m) {
     const power = m % 3;
-    return { face: Math.floor(m / 3) % 6, layers: Math.floor(m / 18) + 1, power, quarters: [1, 2, -1][power] };
+    const quarters = [1, 2, -1][power];
+    const n = this.n;
+    if (m >= 18 * n) {
+      const k = Math.floor((m - 18 * n) / 3);
+      const [to, from, face] = [k % (n + 1), Math.floor(k / (n + 1)) % n, Math.floor(k / (n + 1) / n)];
+      return { face, from, to, layers: to - from, power, quarters };
+    }
+    const layers = Math.floor(m / 18) + 1;
+    return { face: Math.floor(m / 3) % 6, from: 0, to: layers, layers, power, quarters };
+  }
+
+  // Inner layers alone, which the solver has no move for but a hand makes:
+  // layers `from` up to `to` of a face, numbered past all the solver's
+  // moves. From 0 it is the solver's own move.
+  slice(face, from, to, power) {
+    if (from === 0) return this.move(face, to, power);
+    const n = this.n;
+    return 18 * n + ((face * n + from) * (n + 1) + to) * 3 + power;
+  }
+
+  // The same sequence in the solver's moves only: inner layers alone are
+  // the layers down to them turned, and those above turned back.
+  plain(moves) {
+    const out = [];
+    for (const m of moves) {
+      const { face, from, to, power } = this.info(m);
+      out.push(this.move(face, to, power));
+      if (from > 0) out.push(this.move(face, from, 2 - power));
+    }
+    return out;
   }
 
   inverse(m) {
@@ -95,8 +126,8 @@ export class CubeModel {
 
   // `perm[j]` is the facelet whose sticker move `m` brings to facelet `j`.
   perm(m) {
-    const { face, layers, power } = this.info(m);
-    return this.slab(face, 0, layers, power);
+    const { face, from, to, power } = this.info(m);
+    return this.slab(face, from, to, power);
   }
 
   // The same for any run of layers of a face, counted from the face (0 is
@@ -164,6 +195,32 @@ export class CubeModel {
     return { moves, rotate: false };
   }
 
+  // One layer turned by hand as one move, named from the face it is nearer
+  // to: the solver's move for an outer layer, a `slice` for an inner one.
+  // Nothing for the middle layer of an odd cube, which is not a move of a
+  // cube whose middles stay where they are.
+  handSlice(face, layer, quarters) {
+    const n = this.n;
+    if (n % 2 === 1 && layer === (n - 1) / 2) return null;
+    if (layer >= n / 2) return this.handSlice((face + 3) % 6, n - 1 - layer, Math.abs(quarters) === 2 ? 2 : -quarters);
+    return this.slice(face, layer, layer + 1, quarters === 1 ? 0 : quarters === -1 ? 2 : 1);
+  }
+
+  // What is left of move `next` when `made`, a turn of some of its layers
+  // but not all, has been made: the other layers still to be turned as
+  // `next` says, and those turned, if the turn was not all of theirs, the
+  // rest of the way. Nothing (null) when `made` is not such a turn.
+  remainder(next, made) {
+    const [a, b] = [this.info(next), this.info(made)];
+    if (a.face !== b.face || b.from < a.from || b.to > a.to || b.to - b.from === a.to - a.from) return null;
+    const still = (((a.quarters - b.quarters) % 4) + 4) % 4;
+    const out = [];
+    if (b.from > a.from) out.push(this.slice(a.face, a.from, b.from, a.power));
+    if (b.to < a.to) out.push(this.slice(a.face, b.to, a.to, a.power));
+    if (still) out.push(this.slice(a.face, b.from, b.to, still - 1));
+    return out;
+  }
+
   // The same stickers with the middle of each face of an odd cube set to
   // the face's own colour: those six never move, so they are never asked
   // for. The array itself when nothing needs setting.
@@ -223,9 +280,11 @@ export class CubeModel {
   }
 
   moveName(m) {
-    const { face, layers, power } = this.info(m);
+    const { face, from, to, layers, power } = this.info(m);
     const letter = FACE_LETTERS[face];
-    const body = layers === 1 ? letter : layers === 2 ? `${letter}w` : `${layers}${letter}w`;
+    // Inner layers alone are named by their number: 2F the second layer, 2-3Fw the second and third.
+    const inner = to - from === 1 ? `${to}${letter}` : `${from + 1}-${to}${letter}w`;
+    const body = from > 0 ? inner : layers === 1 ? letter : layers === 2 ? `${letter}w` : `${layers}${letter}w`;
     return body + ["", "2", "'"][power];
   }
 

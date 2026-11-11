@@ -259,3 +259,78 @@ test("a solution survives turns it did not ask for", () => {
     }
   }
 });
+
+test("inner layers alone are a move: the same as the solver's moves that make them", () => {
+  for (const n of [4, 5, 6, 7]) {
+    const model = new CubeModel(n);
+    const rnd = random(40 + n);
+    const start = model.applyAll(model.solved(), model.randomScramble(30, rnd));
+    for (let face = 0; face < 6; face++) {
+      for (let from = 0; from < Math.floor(n / 2); from++) {
+        for (let to = from + 1; to <= Math.floor(n / 2); to++) {
+          for (let power = 0; power < 3; power++) {
+            const m = model.slice(face, from, to, power);
+            const info = model.info(m);
+            assert.deepEqual([info.face, info.from, info.to, info.power], [face, from, to, power]);
+            assert.deepEqual(model.apply(start, m), model.applyAll(start, model.plain([m])), `${n}: ${model.moveName(m)}`);
+            assert.deepEqual(model.apply(model.apply(start, m), model.inverse(m)), start);
+          }
+        }
+      }
+    }
+    assert.equal(model.moveName(model.slice(2, 1, 2, 0)), "2F");
+    if (n >= 6) assert.equal(model.moveName(model.slice(2, 1, 3, 2)), "2-3Fw'");
+    // A layer turned by hand is that one move, from whichever face it is nearer to.
+    for (let face = 0; face < 6; face++) {
+      for (let layer = 0; layer < n; layer++) {
+        for (const quarters of [1, 2, -1]) {
+          const one = model.handSlice(face, layer, quarters);
+          if (n % 2 === 1 && layer === (n - 1) / 2) {
+            assert.equal(one, null);
+            continue;
+          }
+          assert.deepEqual(model.apply(start, one), model.applyAll(start, model.handTurn(face, layer, quarters).moves), `${n}: face ${face} layer ${layer} by ${quarters}`);
+        }
+      }
+    }
+  }
+});
+
+test("one layer of a wide move made by hand leaves the move's other layers, nothing undone", () => {
+  for (const n of [4, 5, 6, 7]) {
+    const model = new CubeModel(n);
+    const rnd = random(60 + n);
+    const start = model.applyAll(model.solved(), model.randomScramble(30, rnd));
+    for (let face = 0; face < 6; face++) {
+      for (let layers = 2; layers <= Math.floor(n / 2); layers++) {
+        for (let power = 0; power < 3; power++) {
+          const wide = model.move(face, layers, power);
+          const want = model.apply(start, wide);
+          for (let layer = 0; layer < layers; layer++) {
+            for (const quarters of [1, 2, -1]) {
+              const made = model.handSlice(face, layer, quarters);
+              const left = model.remainder(wide, made);
+              const name = `${n}: ${model.moveName(wide)} after ${model.moveName(made)}`;
+              assert.deepEqual(model.applyAll(model.apply(start, made), left), want, name);
+              // The layer turned as the move says is done with: only the others are left, as the move had them.
+              if (quarters === model.info(wide).quarters) {
+                assert.ok(left.every((m) => model.info(m).power === power && (model.info(m).to <= layer || model.info(m).from > layer)), name);
+                assert.ok(left.length <= 2, name);
+              }
+              // And each of those in its turn steps the list on.
+              let rest = left;
+              for (const m of left) {
+                assert.equal(model.rejoin(rest, [m]).moves.length, rest.length - 1, name);
+                rest = rest.slice(1);
+              }
+            }
+          }
+        }
+      }
+    }
+    // A turn that is not of the move's layers, or is all of them, leaves nothing of this kind.
+    assert.equal(model.remainder(model.move(0, 2, 0), model.move(1, 1, 0)), null);
+    assert.equal(model.remainder(model.move(0, 2, 0), model.move(0, 2, 2)), null);
+    assert.equal(model.remainder(model.move(0, 1, 1), model.move(0, 1, 0)), null);
+  }
+});

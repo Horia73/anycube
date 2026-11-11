@@ -61,8 +61,8 @@ export class Player {
       this.view.setCue(null);
       return;
     }
-    const { face, layers, quarters } = this.model.info(next);
-    this.view.setCue({ face, from: 0, to: layers, quarters });
+    const { face, from, to, quarters } = this.model.info(next);
+    this.view.setCue({ face, from, to, quarters });
   }
 
   stop() {
@@ -130,7 +130,7 @@ export class Player {
       return;
     }
     const move = this.moves[direction > 0 ? this.position : this.position - 1];
-    const { face, layers, quarters } = m.info(move);
+    const { face, from, to, quarters } = m.info(move);
     // Backwards, the cube is first put as it was before the move, and the
     // layers start fully turned and come back.
     const before = direction > 0 ? this.facelets : m.apply(this.facelets, m.inverse(move));
@@ -142,7 +142,7 @@ export class Player {
     this.anim = anim;
     // The arrows of a move stay on its layers while they turn, and give way
     // to those of the next move when it ends. A move taken back has none.
-    if (this.cue && direction > 0) this.view.setCue({ face, from: 0, to: layers, quarters });
+    if (this.cue && direction > 0) this.view.setCue({ face, from, to, quarters });
     else this.view.setCue(null);
     const frame = (now) => {
       if (this.anim !== anim) return;
@@ -153,7 +153,7 @@ export class Player {
       const t = Math.min(1, (now - anim.start) / anim.ms);
       const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
       this.view.setFacelets(before);
-      this.view.setTurn({ face, from: 0, to: layers, angle: full * (direction > 0 ? eased : 1 - eased) });
+      this.view.setTurn({ face, from, to, angle: full * (direction > 0 ? eased : 1 - eased) });
       if (t < 1) {
         nextFrame(frame);
         return;

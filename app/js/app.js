@@ -679,7 +679,10 @@ export async function mount(root, options = {}) {
         // solves the cube as it now is; where the two meet, moves of the same
         // layers become one or none.
         const rest = solution.moves.slice(at);
-        const { moves: merged, kept } = model.rejoin(rest, moves);
+        // The turn as one move of its own layer, where it can be one.
+        const one = model.handSlice(face, layer, quarters);
+        const made = one === null ? moves : [one];
+        const { moves: merged, kept } = model.rejoin(rest, made);
         const extra = merged.length - kept;
         if (extra === 0) {
           // The turn was what the solution asked for next: it steps on.
@@ -703,13 +706,19 @@ export async function mount(root, options = {}) {
           return out;
         };
         const total = solution.moves.length;
+        // One layer of a wide move the solution asked for: that layer is done,
+        // and the move's other layers are what comes next, in the same part of
+        // the solution. Nothing is undone.
+        const left = one === null ? null : model.remainder(rest[0], one);
         const sameLayers = (x, y) => Math.floor(x / 3) === Math.floor(y / 3);
         // A quarter of a half turn the solution asked for: half of that move
         // is done and the other half is next, in the same part of the solution.
         const half = moves.length === 1 && extra === 1 && kept === rest.length - 1 && sameLayers(moves[0], rest[0]) && sameLayers(merged[0], rest[0]);
-        const parts = half
-          ? [...cut(0, at), { name: cut(at, at + 1)[0].name, moves: 2 }, ...cut(at + 1, total)]
-          : [...cut(0, at), { name: "Your turn", moves: moves.length }, { name: "Back to the solution", moves: extra }, ...cut(total - kept, total)];
+        const parts = left
+          ? [...cut(0, at), { name: cut(at, at + 1)[0].name, moves: 1 + left.length }, ...cut(at + 1, total)]
+          : half
+            ? [...cut(0, at), { name: cut(at, at + 1)[0].name, moves: 2 }, ...cut(at + 1, total)]
+            : [...cut(0, at), { name: "Your turn", moves: made.length }, { name: "Back to the solution", moves: extra }, ...cut(total - kept, total)];
         // Parts of one name that now stand side by side are one part.
         const joined = [];
         for (const part of parts) {
@@ -717,16 +726,16 @@ export async function mount(root, options = {}) {
           if (last && last.name === part.name) last.moves += part.moves;
           else joined.push({ ...part });
         }
-        const list = [...played, ...moves, ...merged];
+        const list = left ? [...played, one, ...left, ...rest.slice(1)] : [...played, ...made, ...merged];
         state.solution = { ...solution, moves: list, parts: joined, found: solution.found ?? total };
         state.result = null;
         player.load(model, player.start, list);
         renderSolution(state.solution);
-        player.seek(at + moves.length);
+        player.seek(at + made.length);
         restStatus();
         return;
       }
-      const before = done ? [] : [...state.scramble.moves, ...played];
+      const before = done ? [] : [...state.scramble.moves, ...model.plain(played)];
       setScramble(model.simplify([...before, ...moves]));
     } else {
       const facelets = model.applyAll(player.facelets, moves);
@@ -929,7 +938,7 @@ export async function mount(root, options = {}) {
         restStatus();
         return;
       }
-      const moves = state.model.simplify([...state.scramble.moves, ...state.solution.moves.slice(0, player.position)]);
+      const moves = state.model.simplify([...state.scramble.moves, ...state.model.plain(state.solution.moves.slice(0, player.position))]);
       if (moves.length <= solver.config.max_scramble_moves) {
         $("scramble").value = state.model.names(moves);
         state.scramble = { moves, problem: null };
@@ -1233,8 +1242,8 @@ export async function mount(root, options = {}) {
   setArrows(arrows, false);
   // The kept cube is on screen already: with the arrows of the move that was next.
   if (page && arrows && page.position < page.moves.length) {
-    const { face, layers, quarters } = page.model.info(page.moves[page.position]);
-    view.setCue({ face, from: 0, to: layers, quarters }, true);
+    const { face, from, to, quarters } = page.model.info(page.moves[page.position]);
+    view.setCue({ face, from, to, quarters }, true);
   }
   renderSolution(null);
   await solver.loadConfig();
