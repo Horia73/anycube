@@ -193,8 +193,12 @@ kbd {
   min-height: 0;
   min-width: 0;
   display: grid;
+  /* One column no wider than its place, whatever is in it: the playback
+     below the cube then fits itself to that width (see .transport). */
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 8px;
+  container-type: inline-size;
 }
 
 /* Wherever the cube is drawn: as large a square as fits. */
@@ -459,6 +463,31 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   grid-template-areas: "keys counter scrub speed";
   align-items: center;
   gap: 4px 12px;
+}
+/* Where the cube's column is narrow (a small window, a tablet upright, a
+   phone) the slider goes on a row of its own, and narrower still the least
+   used buttons go. By the column's width, not the window's: beside the
+   panel the column can be narrow in a wide window. */
+@container (max-width: 640px) {
+  .transport {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas: "keys counter speed" "scrub scrub scrub";
+    gap: 0 8px;
+  }
+  .speed {
+    justify-self: end;
+  }
+}
+@container (max-width: 480px) {
+  .speed button {
+    padding: 4px 6px;
+  }
+  .speed button[data-speed="0.5"],
+  .speed button[data-speed="12"],
+  #to-start,
+  #to-end {
+    display: none;
+  }
 }
 .keys {
   grid-area: keys;
@@ -756,11 +785,12 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   padding: 12px;
 }
 /* The input keeps one height whatever tab is open, so what is under it stays where it is. */
+/* Nothing in it scrolls: each tab's contents are made to fit (the box of a
+   long scramble scrolls its own text). */
 .panels {
   flex: none;
   height: 196px;
-  overflow: auto;
-  overscroll-behavior: contain;
+  overflow: hidden;
 }
 .note {
   margin: 8px 0 0;
@@ -1297,23 +1327,6 @@ textarea.bad {
     border-radius: 10px;
     background: radial-gradient(120% 90% at 50% 28%, var(--stage-a), var(--stage-b) 72%);
   }
-  .transport {
-    grid-template-columns: auto auto minmax(0, 1fr);
-    grid-template-areas: "keys counter speed" "scrub scrub scrub";
-    gap: 0 8px;
-  }
-  .speed {
-    justify-self: end;
-  }
-  .speed button {
-    padding: 4px 6px;
-  }
-  .speed button[data-speed="0.5"],
-  .speed button[data-speed="12"],
-  #to-start,
-  #to-end {
-    display: none;
-  }
   .next {
     top: 8px;
     left: 10px;
@@ -1335,6 +1348,7 @@ textarea.bad {
   }
   .row {
     margin-top: 6px;
+    flex-wrap: nowrap;
   }
   .note {
     margin-top: 5px;
@@ -1420,6 +1434,9 @@ textarea.bad {
   .panels {
     height: 176px;
   }
+  textarea {
+    height: calc(5 * 1.45em + 20px);
+  }
   .panel {
     gap: 8px;
     padding: 10px;
@@ -1430,5 +1447,15 @@ textarea.bad {
   span.busy i {
     animation: none;
     opacity: 0.8;
+  }
+}
+
+/* A phone too narrow for "Random scramble" beside the other buttons says "Random". */
+@media (max-width: 430px) {
+  #random .long {
+    display: none;
+  }
+  .row {
+    gap: 5px;
   }
 }
