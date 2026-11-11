@@ -3,6 +3,8 @@
 # an entry among the computer's applications. Nothing is written outside
 # the user's own directories and nothing needs sudo.
 #
+#   curl -fsSL https://raw.githubusercontent.com/Horia73/anycube/main/install.sh | sh
+#                                from nothing: fetches what it needs itself
 #   ./install.sh                 from a clone of the repository
 #   ./install.sh --app           also add it to the applications, without asking
 #   ./install.sh --no-app        do not, without asking
@@ -10,14 +12,25 @@
 #   ./install.sh --uninstall     remove everything this script installed
 #   ./install.sh --uninstall --tables    and the lookup tables too
 #
+# With arguments down a pipe:  curl ... | sh -s -- --app
+#
 # It takes a ready-made program from the project's releases when there is
-# one for this system, and builds from source otherwise. Building needs
-# Rust; this script does not install it, it says how.
+# one for this system. Otherwise it fetches the source (the clone it is run
+# from, else a clone or a download of the repository) and builds it.
+# Building needs Rust and a C compiler; this script installs neither, it
+# says what is missing and how to get it.
 set -eu
 
 # The repository on GitHub, as owner/name: where ready-made programs are
 # fetched from (its releases) and, without a clone, the source.
 REPO="Horia73/anycube"
+# Where the source is cloned from, if not from there (a git address or a directory).
+SOURCE="${ANYCUBE_SOURCE:-https://github.com/$REPO}"
+# How this script was started, for the lines that say how to run it again.
+case "$0" in
+    *install.sh) piped=no; again="$0" ;;
+    *) piped=yes; again="curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh -s --" ;;
+esac
 
 BIN_DIR="${ANYCUBE_BIN_DIR:-$HOME/.local/bin}"
 BIN="$BIN_DIR/anycube"
@@ -46,7 +59,9 @@ for arg in "$@"; do
         --from-source) source_only=yes ;;
         --uninstall) uninstall=yes ;;
         --tables) tables=yes ;;
-        -h | --help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h | --help)
+            if [ "$piped" = no ]; then sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; else say "arguments: --app --no-app --from-source --uninstall [--tables]"; fi
+            exit 0 ;;
         *) fail "unknown argument '$arg' (see --help)" ;;
     esac
 done
@@ -97,23 +112,47 @@ fi
 
 # Otherwise from source: the clone this script is in, or a fresh one.
 if [ -z "$got" ]; then
+    # Rust's installer puts cargo here; a terminal opened before it ran does not know yet.
+    [ -x "$HOME/.cargo/bin/cargo" ] && PATH="$HOME/.cargo/bin:$PATH"
+    missing=no
     if ! command -v cargo >/dev/null 2>&1; then
+        missing=yes
         say "anycube has to be built from source here, and that needs Rust, which is not installed."
-        say "Get it from https://rustup.rs (one command, no administrator rights), open a new terminal,"
-        say "and run this again."
+        say "Rust's own installer is one command and needs no administrator rights:"
+        say "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+    fi
+    if ! command -v cc >/dev/null 2>&1; then
+        missing=yes
+        say "Building also needs a C compiler, which is not installed."
+        if [ "$OS" = macos ]; then
+            say "  xcode-select --install"
+        else
+            say "  it comes with your system's build tools: the package build-essential, base-devel or gcc"
+        fi
+    fi
+    if [ "$missing" = yes ]; then
+        say "Then run this again:"
+        say "  $again"
         exit 1
     fi
-    if [ -f "$here/Cargo.toml" ] && grep -q '^name = "anycube"' "$here/Cargo.toml"; then
+    if [ "$piped" = no ] && [ -f "$here/Cargo.toml" ] && grep -q '^name = "anycube"' "$here/Cargo.toml"; then
         src="$here"
     elif command -v git >/dev/null 2>&1; then
         say "Fetching the source..."
-        git clone --quiet --depth 1 "https://github.com/$REPO" "$work/src"
+        git clone --quiet --depth 1 "$SOURCE" "$work/src" || fail "could not clone $SOURCE"
+        src="$work/src"
+    elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+        # No git: the same source as an archive.
+        say "Fetching the source..."
+        mkdir "$work/src"
+        curl -fsSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$work/src" --strip-components 1 \
+            || fail "could not download the source from https://github.com/$REPO"
         src="$work/src"
     else
-        fail "building from source needs git to fetch it, or run this from a clone of the repository"
+        fail "fetching the source needs git, or curl and tar; none of them is installed"
     fi
     say "Building (a minute or two)..."
-    (cd "$src" && cargo build --release --quiet)
+    (cd "$src" && cargo build --release --quiet) || fail "the build failed; what cargo said is above"
     got="$src/target/release/anycube"
     [ -f "$got" ] || fail "the build did not produce the program"
 fi
@@ -152,4 +191,5 @@ fi
 say ""
 say "Run it:        anycube app"
 say "Lookup tables: built on first use, in $DATA/tables"
-say "Remove it:     $0 --uninstall     (or: anycube app --uninstall for the application entry alone)"
+say "Remove it:     $again --uninstall"
+say "               (or: anycube app --uninstall for the entry among the applications alone)"
