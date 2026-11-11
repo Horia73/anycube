@@ -2,8 +2,8 @@
 
 | Command | What it does |
 |---|---|
-| `solve <moves> [--size N]` | solve a scramble given as moves |
-| `solve --state <facelets>` | solve a cube given as facelets in URFDLB order |
+| `solve --size N <moves>` | solve a scramble given as moves |
+| `solve --state <facelets>` | solve a cube given as it looks, 6·N·N stickers in URFDLB order; the size is read from their number |
 | `facelets --size N <moves>` | print the facelets of a scrambled cube |
 | `scrambles --size N --count C --length L` | random-move scrambles, one per line |
 | `verify --size N <file>` | check solutions; each line is `scramble<TAB>solution` |

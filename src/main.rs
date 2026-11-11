@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve <moves...> [--size N] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise; any size from 2 up)\n  cubenxnxn solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube\n  cubenxnxn scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  cubenxnxn verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  cubenxnxn known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  cubenxnxn benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  cubenxnxn row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  cubenxnxn solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube\n  cubenxnxn scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  cubenxnxn verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  cubenxnxn known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  cubenxnxn benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  cubenxnxn row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -61,7 +61,9 @@ fn solve(args: &[String]) {
         (None, Some(150)) => 5,
         (None, Some(216)) => 6,
         (None, Some(294)) => 7,
-        _ => 4,
+        (None, Some(_)) => 4,
+        // A scramble says nothing about the size of the cube it was made for.
+        (None, None) => fail("give the size of the cube with --size N (any size from 2 up)"),
     };
     // Any other length that is six squares is a larger cube.
     let size = match (opt(args, "--size"), state.map(|s| s.trim().len())) {
