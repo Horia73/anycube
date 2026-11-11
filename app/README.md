@@ -71,12 +71,29 @@ host is written in these files.
 - `cube-view.js`: the cube in 3D on a 2D canvas, layers mid-turn, arrows
   for the next move, and the cube as something to touch: a drag on a
   sticker turns its layer, a tap paints, a drag beside the cube looks round.
-- `player.js`: play, pause, step, speed.
+- `player.js`: play, pause, step, speed; the arrows of a move turn with its
+  layers and give way to those of the next.
 - `solver.js`: where a cube gets solved. With the WebAssembly build beside
   the page (`pkg/anycube.wasm`), the 2x2x2 and 3x3x3 are solved, checked
   and scrambled in the browser; otherwise by the server.
-- `camera.js`, `colour.js`: the six faces through a camera, and their
-  colours sorted into six by likeness. The picture never leaves the page.
+- `camera.js`: the six faces through a camera, one after another, with a
+  drawing and a sentence for what the hands do at each step. The face is
+  found wherever it is in the picture and outlined there, with a mark over
+  every sticker in the colour it is being read as; a grid in a fixed place
+  is what is used when no face is found. Capture is pressed by the person,
+  and a face shown twice is said at once. The picture never leaves the page.
+- `detect.js`: one frame to the face of the cube in it: flat patches shaped
+  like stickers, an N by N lattice among their middles, its four corners
+  and the colour of each sticker with the perspective undone. About 4 ms a
+  frame; no library.
+- `colour.js`: the 6*N*N samples sorted into six colours by likeness, all
+  together, each colour a direction (so that shade does not move it) and
+  each picture with its own white balance taken out. Red and orange are
+  what it is built round.
+- `scan-fit.js`: the six pictures put together the way they make a cube:
+  a face held a quarter turn round or shown out of turn is put right when
+  the cube fits together only one way, and two stickers the sorting was
+  unsure of are exchanged when that is what makes a cube.
 - `paint.js`: the colours to paint with and the cube unfolded.
 
 ## Limits
@@ -107,13 +124,20 @@ the browser's solver against the native one on the same cubes.
 
 ## Not done
 
-- **Following a cube as it is turned in front of the camera.** `camera.js`
-  is split for it: `CameraFeed` (the stream) stays, `sampleGrid` (colours
-  of a fixed grid) and the six-step `CameraScanner` are the parts to
-  replace: find the cube in each frame without a grid, read its stickers
-  through a perspective map, and compare each frame with what every
-  possible next move would show. A move found that way is a call to the
-  same `turned(face, layer, quarters)` that a dragged layer makes.
+- **Following a cube as it is turned in front of the camera**, and reading
+  moves from the picture. `detect.js` finds a face in a frame and
+  `camera.js` draws what it finds; what is missing is comparing each frame
+  with what every possible next move would show. A move found that way is
+  a call to the same `turned(face, layer, quarters)` that a dragged layer
+  makes.
+- **Holding the camera's exposure and white balance** fixed between the six
+  pictures, where a browser allows it: not tried on a camera. `colour.js`
+  takes each picture's own cast out instead.
+- **A real cube in front of a real camera** has shown the page orange for
+  red once, before the colours were sorted as they are now; the sorting,
+  the putting together and the finding of the face are tested on made-up
+  pictures only. Glare, logo stickers, stickerless cubes with no seam and
+  fingers over stickers are untested.
 - **Windows**: no window of its own and no application entry there yet.
 - **The camera inside the macOS window** has not been tried on a real
   camera: the page finds the camera interface there, and the bundle

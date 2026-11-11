@@ -3,19 +3,28 @@
 // the browser. No picture is stored or sent anywhere; what leaves this file
 // is 6*N*N colours.
 //
-// Three parts, so that one can be replaced without the others:
+// Four parts, so that one can be replaced without the others:
 //
 //   CameraFeed    the camera itself: open, close, mirror, switch.
+//   findFace      (detect.js) one frame to the face of the cube in it,
+//                 wherever it is: its four corners and the colours of its
+//                 N by N stickers with the perspective undone.
 //   sampleGrid    one frame to the colours of an N by N grid in a fixed
-//                 place of the picture.
+//                 place of the picture: what is used when no face is found.
 //   CameraScanner the six-step session and its controls.
 //
-// Following a cube as it is turned in the hand (README, "Live tracking")
-// would keep the feed, put a detector that finds the cube in each frame in
-// the place of sampleGrid, and a session that follows moves in the place
-// of the six steps.
+// The face is looked for several times a second and what is found is
+// drawn over the picture: its outline, and on each sticker a mark in the
+// colour it is being read as. Nothing is captured until Capture is
+// pressed; then the face as found at that moment is taken, or the grid's
+// cells if none is.
+//
+// Following a cube as it is turned in the hand and reading moves from the
+// picture (README, "Not done") would keep the feed and the detector and
+// put a session that follows moves in the place of the six steps.
 
 import { cellColour, guess, STICKERS, unalike } from "./colour.js";
+import { findFace, FACE_SCORE } from "./detect.js";
 
 const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
 
@@ -135,6 +144,25 @@ export function sampleGrid(video, n, scratch) {
   return colours;
 }
 
+// Where the point (u, v) of the unit square lies in a four-cornered shape
+// seen in perspective: `corners` are its top-left, top-right, bottom-right
+// and bottom-left.
+function inQuad(corners, u, v) {
+  const [[x0, y0], [x1, y1], [x2, y2], [x3, y3]] = corners;
+  const [dx1, dy1, dx2, dy2] = [x1 - x2, y1 - y2, x3 - x2, y3 - y2];
+  const [sx, sy] = [x0 - x1 + x2 - x3, y0 - y1 + y2 - y3];
+  const den = dx1 * dy2 - dx2 * dy1 || 1e-9;
+  const g = (sx * dy2 - dx2 * sy) / den;
+  const h = (dx1 * sy - sx * dy1) / den;
+  const [a, b, c] = [x1 - x0 + g * x1, x3 - x0 + h * x3, x0];
+  const [d, e, f] = [y1 - y0 + g * y1, y3 - y0 + h * y3, y0];
+  const w = g * u + h * v + 1;
+  return [(a * u + b * v + c) / w, (d * u + e * v + f) / w];
+}
+
+// The picture is looked at this small to find the face: enough for stickers, quick on a phone.
+const LOOK = 288; // and half as much again for the 6x6x6 and 7x7x7, whose stickers are small
+
 /** The six faces, one after another. */
 export class CameraScanner {
   /**
@@ -157,8 +185,14 @@ export class CameraScanner {
     this.video.muted = true;
     this.feed = new CameraFeed(this.video);
     this.grid = el("div", { class: "cam-grid", "aria-hidden": "true" });
+    // What is found in the picture is drawn here, over it.
+    this.over = el("canvas", { class: "cam-found", "aria-hidden": "true" });
+    this.small = document.createElement("canvas");
+    this.found = null; // { corners, cells, at }: the face as last found, corners as shares of the picture shown
     this.frame = frame;
-    frame.append(this.video, this.grid);
+    // Whether the cube is found, said on the picture.
+    this.note = el("p", { class: "cam-note", role: "status" });
+    frame.append(this.video, this.grid, this.over, this.note);
 
     this.sign = el("span", { class: "cam-sign", "aria-hidden": "true" });
     this.heading = el("p", { class: "cam-heading", "aria-live": "polite" });
@@ -258,7 +292,102 @@ export class CameraScanner {
     if (!done) this.hooks.onstep?.(face);
   }
 
+  // Looks for the face in the picture of the moment: the middle square of
+  // the frame (what the page shows), made small.
+  #find() {
+    const video = this.video;
+    const [w, h] = [video.videoWidth, video.videoHeight];
+    if (!w || !h || video.readyState < 2) return null;
+    const side = Math.min(w, h);
+    const look = this.n >= 6 ? LOOK * 1.5 : LOOK;
+    this.small.width = this.small.height = look;
+    const ctx = this.small.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(video, (w - side) / 2, (h - side) / 2, side, side, 0, 0, look, look);
+    const began = performance.now();
+    let face = null;
+    try {
+      face = findFace(ctx.getImageData(0, 0, look, look), this.n);
+    } catch {
+      face = null;
+    }
+    this.cost = performance.now() - began;
+    if (!face || face.score < FACE_SCORE) return null;
+    return { corners: face.corners.map(([x, y]) => [x / look, y / look]), cells: face.cells, at: performance.now() };
+  }
+
+  // Draws what was found over the picture: the outline of the face and, on
+  // each sticker, a mark in the page's own colour for what is being read
+  // there (a ring where it could as well be another colour), the sticker
+  // itself showing round it.
+  #mark() {
+    const box = this.over;
+    const size = Math.round(box.clientWidth * Math.min(window.devicePixelRatio || 1, 2));
+    if (!size) return;
+    if (box.width !== size || box.height !== size) box.width = box.height = size;
+    const ctx = box.getContext("2d");
+    ctx.clearRect(0, 0, size, size);
+    const found = this.found;
+    this.grid.hidden = !!found;
+    if (!found) return;
+    const n = this.n;
+    const at = (u, v) => inQuad(found.corners, u, v).map((p) => p * size);
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    [[0, 0], [1, 0], [1, 1], [0, 1]].forEach(([u, v], i) => {
+      const [x, y] = at(u, v);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.closePath();
+    ctx.lineWidth = Math.max(4, size / 110);
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.stroke();
+    ctx.lineWidth = Math.max(2, size / 220);
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+    const part = 0.18; // half the mark, as a share of a sticker
+    for (let r = 0; r < n; r++) {
+      for (let c = 0; c < n; c++) {
+        const read = guess(found.cells[r * n + c]);
+        const [u, v] = [(c + 0.5) / n, (r + 0.5) / n];
+        ctx.beginPath();
+        [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([du, dv], i) => {
+          const [x, y] = at(u + (du * part) / n, v + (dv * part) / n);
+          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        ctx.closePath();
+        const unsure = read.doubt > 0.7;
+        ctx.setLineDash([]);
+        ctx.lineWidth = Math.max(5, size / 130);
+        ctx.strokeStyle = "rgba(0,0,0,0.6)";
+        ctx.stroke();
+        ctx.lineWidth = Math.max(3, size / 200);
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+        if (unsure) {
+          ctx.setLineDash([size / 90, size / 90]);
+          ctx.strokeStyle = STICKERS[read.colour];
+          ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          ctx.fillStyle = STICKERS[read.colour];
+          ctx.fill();
+        }
+      }
+    }
+  }
+
   #sample() {
+    // The face wherever it is, if it can be found; a little steadier than frame by frame.
+    const face = this.#find();
+    if (face && this.found) {
+      face.corners = face.corners.map(([x, y], k) => [(x + this.found.corners[k][0]) / 2, (y + this.found.corners[k][1]) / 2]);
+    }
+    // A face lost for a moment (a blur, a hand in the way) is kept for that moment.
+    this.found = face ?? (this.found && performance.now() - this.found.at < 350 ? this.found : null);
+    this.#mark();
+    this.frame.classList.toggle("found", !!this.found);
+    const say = this.found ? "Cube found" : "Looking for the cube. Or hold a face inside the grid.";
+    if (this.note.textContent !== say) this.note.textContent = say;
     const colours = sampleGrid(this.video, this.n, this.scratch);
     if (!colours) return;
     this.live = colours;
@@ -276,7 +405,9 @@ export class CameraScanner {
 
   #capture() {
     this.#sample();
-    if (this.live) this.take(this.live);
+    // The face as found at this moment; the grid's cells if there is none.
+    if (this.found) this.take(this.found.cells);
+    else if (this.live) this.take(this.live);
   }
 
   /** Takes a face as read: n*n colours, row by row. What Capture does with the picture of the moment. */
