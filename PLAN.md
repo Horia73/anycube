@@ -285,25 +285,37 @@ De ce nu ajunge schema de acum, după numărătoarea de stări:
 - piedica e aceeași în orice variantă: o căutare care împerechează wings
   interioare și oblicii împreună, cu un prag bun. Fără prag, e lentă.
 
-**Stadiu 2026-11-11, mai târziu:** rapid 111,75 în 3,1 s (−17,9%), normal
-110,05 în 7,4 s (−19,1%), pe 20 de cuburi verificate. Două schimbări:
+**Stadiu 2026-11-11, mai târziu:** două schimbări au adus ~7 mutări:
 pașii 3 și 4 ai așezării într-o singură căutare în fascicul (17,25 → 15,75
 mutări) și reducerea interioară cu oblici făcută cu fasciculul scris pentru
 7x7x7 (17 mutări într-o fracțiune de secundă, unde căutarea exactă lua
 minute). Calea scurtă (potrivirea oblicilor cu x interior) a rămas doar ca
-rezervă. Lărgirile nu mai aduc nimic: ~110 orice aș mări. Mai lipsește o
-mutare până la 108,9 și cere încă o schimbare de structură; candidatul e
-împărțirea wings interioare (5,6 mutări ca pas separat) făcută odată cu
-pasul 3 al așezării, cum face 4x4x4-ul în faza lui comună.
+rezervă. Cifrele pe moduri sunt în `bench/RESULTS.md` și în README.
+
+Ce nu a mers după aceea (detalii în `bench/RESULTS.md`): împărțirea wings
+interioare făcută în pasul 3 al așezării (aceeași sumă), mai multe
+rezultate duse din pasul 1 în pasul 2, alegerea așezării după împărțirea
+care urmează, un singur fascicul pentru toate variantele unui cub, pașii 1
+și 2 (axa R/L) într-un singur fascicul.
+
+Ce a mai adus puțin: capătul dinspre 3x3x3. Solverul de 5x5x5 ajunge aici
+la ~260 de reduceri (din 4 dintre cuburile primite), față de ~1000 pe un
+5x5x5 propriu, iar 3x3x3-ul rămas are 18 mutări în loc de 16,5. Cu mai
+multe reduceri păstrate și mai multe căutări de 3x3x3 se câștigă ~0,8.
+
+**Cifre la sfârșitul zilei de 2026-11-11** (20 de cuburi, toate soluțiile
+verificate; dwalton76 136,10): rapid 112,0 în 4,1 s (−17,7%), normal 109,2
+în 9,7 s (−19,8%), full 108,85 sub un minut (−20,0%; 108,6 pe primele 10
+cuburi, cele pe care a fost măsurat dwalton76). Ținta de 108,9 e atinsă la
+limită doar în modul full.
 
 **Ce urmează la 6x6x6, în ordine:**
 
-1. Un prag comun pentru pasul 3 (wings interioare + oblici), ca să fie și
-   exact, și rapid. Fără el nu se poate nici măsura cinstit pe 100 de cuburi.
-2. Lanțul de alegere între pași, ca la 5x5x5 (mai multe așezări și
-   împărțiri duse până la capăt, aleasă cea mai scurtă în total).
-3. Așezarea centrelor: 35–36 de mutări față de ~25 cât ar permite numărul
-   de stări; e cel mai mare rest de câștig.
+1. Axa R/L a așezării (pașii 1 și 2, 18,85 mutări): singura parte rămasă în
+   doi pași cu căutare exactă pe fiecare. Un fascicul pe suma distanțelor
+   pe orbite nu merge; ar trebui un scor care vede două orbite deodată.
+2. Diversitatea reducerilor date 3x3x3-ului (vezi mai sus).
+3. Timpul: modul rapid e la ~3 s, nu sub 1 s.
 
 **7x7x7** urmează aceeași schemă: 5x5x5 virtual din straturile 1, 3, 4, 5, 7
 pentru interior, tripletele oblic–t–oblic în locul perechilor, apoi 5x5x5

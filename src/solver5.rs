@@ -308,6 +308,14 @@ impl Solver5 {
             })
             .collect();
         quick.sort_by_key(|r| r.0);
+        if trace {
+            let mut by: std::collections::BTreeMap<(usize, usize), usize> = std::collections::BTreeMap::new();
+            for r in &quick {
+                *by.entry((r.0 - r.3.len(), r.3.len())).or_insert(0) += 1;
+            }
+            let roots: std::collections::BTreeSet<usize> = quick.iter().map(|r| r.1.root).collect();
+            eprintln!("  reductions from {} cubes; (moves before the 3x3x3, quick 3x3x3) -> count: {:?}", roots.len(), by);
+        }
         quick.truncate(p.pool);
         let best = quick
             .into_par_iter()

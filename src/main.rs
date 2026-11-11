@@ -139,10 +139,17 @@ fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
         Some("normal") | None => Params6::normal(),
         Some(_) => usage(),
     };
-    let outer = match opt(args, "--mode") {
-        // The 5x5x5 part follows the mode unless its own flags say otherwise.
-        Some("fast") | None | Some("normal") => cubenxnxn::solver5::Params5 { ..params5(args) },
-        _ => cubenxnxn::solver5::Params5 { time_ms: 0, ..d.outer.clone() },
+    // The 5x5x5 part follows the mode unless its own flags say otherwise.
+    let o = &d.outer;
+    let outer = cubenxnxn::solver5::Params5 {
+        labellings: num("--labellings", o.labellings),
+        c_keep: num("--c-keep", o.c_keep),
+        p_keep: num("--p-keep", o.p_keep),
+        e_keep: num("--e-keep", o.e_keep),
+        pool: num("--pool", o.pool),
+        probes: num("--probes", o.probes as usize) as u64,
+        time_ms: num("--time", o.time_ms as usize) as u64,
+        ..o.clone()
     };
     Params6 {
         width: num("--width", d.width),

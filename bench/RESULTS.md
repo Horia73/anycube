@@ -407,8 +407,8 @@ moves on the first 10 cubes; the target is 108.9.
 | `--mode fast` | 35.25 | 6.10 | 17.20 | 53.20 | 111.75 | 3.1 s | 7.5 s | -17.9% |
 | default | 35.10 | 5.60 | 16.95 | 52.40 | 110.05 | 7.4 s | 12.3 s | -19.1% |
 
-Files: `fast666-20.tsv`, `normal666-20.tsv` (they replace the ones of the
-section above: 119.00 and 116.95).
+The files of these two runs were replaced by the ones of "6x6x6: modes as
+they stand" below.
 
 What changed, measured in the fast mode on the same 20 cubes:
 
@@ -448,11 +448,75 @@ Tried on top, no gain (default mode, 20 cubes unless said):
 So the default sits at about 110 whatever is widened; the last move to the
 target needs another change of structure.
 
+Changes of structure tried after that, none kept:
+
+- **The wing split inside the last staging step** (one beam search over the
+  staging state, the wings of a labelling and the oblique patterns of the
+  R/L axis; 16 labellings as starting states). With the split weighing as
+  much as a move of staging the beam finishes the split first and then
+  cannot move: every staging move undoes as much split as it gains (all
+  states at the same score for twenty levels, nothing found). With half
+  that weight it finds 38.2 to 39.5 moves of staging and 3.2 to 4.2 of
+  split left over, against 35.8 and 5.8 apart: the same sum.
+- **More results of step 1 taken into step 2** (64 or 256 instead of 8):
+  step 2 falls from 9.70 to 9.20 and step 3 rises from 15.80 to 16.25;
+  34.5 moves either way.
+- **Choosing among many stagings by the split that follows** (the beam made
+  to return every way into the solved state, and the ones of the next
+  level; 16 to 24 stagings with split bounds of 3 to 5): 111.90 and 112.30
+  against 111.60, fast mode, 20 cubes.
+- **One beam for all candidates of a cube** (12 starting states with their
+  costs in the score, solutions collected over three levels): two to three
+  times quicker, but 109, 113, 109 against 107, 110, 107 on three cubes.
+  The reductions come out longer (a beam of 100,000 shared by twelve cubes
+  is narrow for each) and the 5x5x5 solver has fewer cubes to choose from.
+
+What does help a little is the far end. The 3x3x3 left over takes 18 moves
+on average here against 16.5 when the 5x5x5 solver runs on a 5x5x5 of its
+own. More reductions and more 3x3x3 searches (default mode, 20 cubes):
+
+| 5x5x5 settings | Total | Outer 5x5x5 | Mean time |
+|---|---|---|---|
+| default | 110.05 | 52.40 | 7.4 s |
+| `--pool 240 --e-keep 800 --time 8000` | 109.55 | 51.85 | 10.0 s |
+| the same with `--c-keep 4000 --p-keep 4000 --probes 10000 --time 0` | 109.20 | 51.45 | 10.5 s |
+| `--pool 800 --e-keep 3000 --c-keep 6000 --p-keep 6000 --probes 10000 --time 0 --finals 128` | 109.35 | 51.35 | 15.1 s |
+
 A fault found on the way, in the 5x5x5 solver: phase P needs four edge
 classes with no piece in its slice, and when all the results kept from phase
 C were alike and offered none, the solve failed ("no reduction found", cube
 18 of the 6x6x6 set in the fast mode, 5 runs in 6). Phase C is now asked for
 eight times as many results when that happens.
+
+## 6x6x6: modes as they stand (2026-11-11, night)
+
+First 20 cubes of `scrambles666-100.txt`; every file checked with
+`cubenxnxn verify --size 6` (20 of 20 each). dwalton76: 136.10 moves and
+43 s per cube on the first 10 cubes; the target is 108.9.
+
+| Mode | Staging | Wing split | Inner reduction | Outer 5x5x5 | Total | First 10 cubes | Mean time | Max time | Against dwalton76 |
+|---|---|---|---|---|---|---|---|---|---|
+| `--mode fast` | 35.80 | 5.95 | 17.35 | 52.90 | 112.00 | 112.50 | 4.1 s | 8.1 s | -17.7% |
+| default | 35.00 | 5.65 | 16.80 | 51.75 | 109.20 | 109.30 | 9.7 s | 15.8 s | -19.8% |
+| `--mode full` | 34.80 | 5.85 | 16.45 | 51.75 | 108.85 | 108.60 | 52 s | 103 s | -20.0% |
+
+Files: `fast666-20.tsv`, `normal666-20.tsv`, `full666-20.tsv`.
+
+- The fast and default runs had the machine to themselves. The full run
+  shared it with two other benchmarks, so its times are too high; its
+  search has no clock, so its lengths do not depend on that.
+- The fast mode moves by about half a move from run to run (its 5x5x5 part
+  works against a clock): 111.40, 111.85 and 112.00 on the same 20 cubes.
+- What the modes are: fast carries 4 stagings and takes 3 on, with beams
+  of 50,000; default 8 and 6 with beams of 100,000 and the wider 5x5x5 end
+  of the table above; full 16 and 12 with beams of 300,000 and a 5x5x5 end
+  wider still.
+- Narrower than fast (`--mode fast --width 2 --tries 1 --beam 20000`):
+  114.65 moves at 1.5 s per cube. Nothing here gets under a second.
+
+Checked after these changes: the 5x5x5 default on the first 40 cubes of its
+set gives 68.675, the same as before; the 7x7x7 default on its first 10
+cubes gives 154.80, the same as before.
 
 ## 7x7x7: first complete solver (2026-11-11)
 

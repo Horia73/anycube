@@ -891,20 +891,30 @@ pub struct Params6 {
 }
 
 impl Params6 {
-    /// A few seconds per cube.
+    /// A few seconds per cube. The 5x5x5 is the quick part, so it keeps
+    /// more reductions than its own fast mode does.
     pub fn fast() -> Params6 {
-        Params6 { width: 4, tries: 3, finals: 24, budget: 0, beam: 50_000, outer: Params5::fast() }
+        let outer = Params5 { e_keep: 200, pool: 60, time_ms: 1500, ..Params5::fast() };
+        Params6 { width: 4, tries: 3, finals: 24, budget: 0, beam: 50_000, outer }
     }
 
-    /// Wider, with the normal settings of the 5x5x5.
+    /// Wider, and the 5x5x5 with more reductions and more 3x3x3 searches
+    /// than it takes for a 5x5x5 of its own: its choice of reductions is
+    /// narrower here (they come from a few of the cubes it is given), and
+    /// the 3x3x3 left over is where the candidates differ most.
     pub fn normal() -> Params6 {
-        Params6 { width: 8, tries: 6, finals: 64, budget: 0, beam: 100_000, outer: Params5::normal() }
+        let outer =
+            Params5 { c_keep: 4000, p_keep: 4000, e_keep: 800, pool: 240, probes: 10_000, time_ms: 0, ..Params5::normal() };
+        Params6 { width: 8, tries: 6, finals: 64, budget: 0, beam: 100_000, outer }
     }
 
-    /// Wider still, and no clock in the 5x5x5. The exact step 3 (`budget`)
-    /// stays off: it takes minutes on some cubes for less than a move.
+    /// Wider everywhere, and no clock in the 5x5x5, whose last steps get
+    /// most: the 3x3x3 left over is what varies most between candidates.
+    /// The exact step 3 (`budget`) stays off: it takes minutes on some
+    /// cubes for less than a move.
     pub fn full() -> Params6 {
-        Params6 { width: 16, tries: 12, finals: 256, budget: 0, beam: 300_000, outer: Params5 { time_ms: 0, ..Params5::normal() } }
+        let outer = Params5 { c_keep: 6000, p_keep: 6000, e_keep: 3000, pool: 800, probes: 10_000, time_ms: 0, ..Params5::normal() };
+        Params6 { width: 16, tries: 12, finals: 128, budget: 0, beam: 300_000, outer }
     }
 }
 

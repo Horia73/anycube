@@ -57,13 +57,15 @@ The target is 20% fewer moves than his: 108.9 and 155.5.
 | Size | Solver | Mean length | Mean time | Cubes | Against dwalton76 |
 |---|---|---|---|---|---|
 | 6x6x6 | dwalton76 | 136.10 | 43 s | first 10 | |
-| 6x6x6 | cubenxnxn `--mode fast` | 111.75 | 3.1 s | first 20 | -17.9% |
-| 6x6x6 | cubenxnxn, default | 110.05 | 7.4 s | first 20 | -19.1% |
+| 6x6x6 | cubenxnxn `--mode fast` | 112.00 | 4.1 s | first 20 | -17.7% |
+| 6x6x6 | cubenxnxn, default | 109.20 | 9.7 s | first 20 | -19.8% |
+| 6x6x6 | cubenxnxn `--mode full` | 108.85 | under a minute | first 20 | -20.0% |
 | 7x7x7 | dwalton76 | 194.40 | 9.4 s | first 10 | |
 | 7x7x7 | cubenxnxn `--mode fast` | 155.60 | 3.3 s | cubes 31 to 50 | -20.0% |
 | 7x7x7 | cubenxnxn, default | 154.56 | 6 s | first 50 | -20.5% |
 
-The 7x7x7 meets the target; the 6x6x6 is one move short of it. How they work, what was
+The 7x7x7 meets the target by default; the 6x6x6 meets it in the full mode and
+is 0.3 moves short of it by default. How they work, what was
 tried and the per-step lengths are in `bench/RESULTS.md` (sources:
 `src/stage6.rs`, `src/solver6.rs`, `src/stage7.rs`, `src/solver7.rs`,
 `src/search.rs`).
