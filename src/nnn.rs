@@ -63,9 +63,6 @@ pub struct SolutionN {
     /// The matching of the centres found nothing and the cube went the
     /// longer way: every centre home before the edges.
     pub long_way: bool,
-    /// Some row of centres was not matched in one search but piece by
-    /// piece, which takes many more moves.
-    pub laboured: bool,
 }
 
 /// The cube while it is being solved: as it is now, seen in a frame in
@@ -149,28 +146,14 @@ impl SolverN {
     /// Solves a cube of size 6 or more given as its facelets (faces U R F D
     /// L B, row by row; colours 0 to 5 in that order).
     pub fn solve(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
-        let trace = std::env::var_os("CUBEN_TRACE").is_some();
-        // The outermost row of centres is the longest; if it is too long to match there is no point in trying.
-        if g.n > crate::rings::LONGEST + 4 {
-            return self.attempt(g, facelets, false);
-        }
-        let matched = match self.attempt(g, facelets, true) {
-            // Every row matched in one search: this is the shorter way.
-            Ok(sol) if !sol.laboured => return Ok(sol),
-            Ok(sol) => Some(sol),
+        match self.attempt(g, facelets, true) {
+            Ok(sol) => Ok(sol),
             Err(e) => {
-                if trace {
+                if std::env::var_os("CUBEN_TRACE").is_some() {
                     eprintln!("  {}; the long way instead", e);
                 }
-                None
+                self.attempt(g, facelets, false)
             }
-        };
-        // Otherwise the matching may have cost more than it saves: both ways, and the shorter.
-        let long = self.attempt(g, facelets, false);
-        match (matched, long) {
-            (Some(a), Ok(b)) => Ok(if a.moves.len() <= b.moves.len() { a } else { b }),
-            (Some(a), Err(_)) => Ok(a),
-            (None, long) => long,
         }
     }
 
@@ -295,11 +278,9 @@ impl SolverN {
         }
         // Every centre made to agree with the one under it, ring by ring
         // from the rim inwards; the edge steps then bring them home.
-        let mut laboured = false;
         if matched {
             for a in 1..first {
-                let (moves, whole) = crate::rings::Ring::new(g, a).solve(g, &w.f)?;
-                laboured |= !whole;
+                let moves = crate::rings::Ring::new(g, a).solve(g, &w.f)?;
                 w.apply_ours(&moves);
                 if trace {
                     eprintln!("  centres of layer {} matched to layer {}: {} moves, {} so far", a + 1, a + 2, moves.len(), w.moves.len());
@@ -338,6 +319,6 @@ impl SolverN {
             return Err("the steps did not solve the cube".to_string());
         }
         let total = w.moves.len();
-        Ok(SolutionN { moves: w.moves, lens: [centres, total - centres - tail, tail], long_way: !matched, laboured })
+        Ok(SolutionN { moves: w.moves, lens: [centres, total - centres - tail, tail], long_way: !matched })
     }
 }

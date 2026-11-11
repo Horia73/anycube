@@ -399,17 +399,21 @@ care lucrează pe rânduri sau inele întregi. Regula pe piese: solverele de
 cu 10 la fiecare mărime) dă 219 / 289 / 369 și se potrivește la fel de
 bine pe 3–7.
 
+**A patra versiune (2026-11-11, după-amiază):** potrivirea rândurilor de
+orice lungime. De la mijlocul rândului spre capete, cu coloanele deja
+făcute ținute identice între ele; atunci, oricâte ar fi, contează ca una
+singură și fiecare pas e o căutare mică, de mărime fixă. 9x9x9: 326,9
+(−11% față de dwalton76), 10x10x10: 427,95 (−18%); niciun cub nu mai ia
+drumul lung.
+
 **Ce urmează, pe idei proprii (nu după dwalton76 sau Kociemba):**
 
-1. Potrivirea rândurilor lungi. Cu toate coloanele într-o singură căutare
-   costă ~9 mutări pe coloană, dar se blochează de la 5–6 coloane; cu
-   mutări care nu ating restul (comutatoare) e sigură, dar costă 20+ pe
-   coloană. Trebuie o căutare care rămâne în regimul ieftin.
-2. Așezarea: ~36 de mutări pentru fiecare pereche de orbite oblice, adică
-   220 la 10x10x10. E cea mai mare parte și crește cu pătratul mărimii.
-   Coborârea comună pe toate orbitele nu a mers; de încercat așezarea pe
-   rânduri întregi, nu pe perechi de orbite.
+1. Timpul: nemăsurat cinstit (rulau alte trei sesiuni), dar potrivirea
+   încearcă multe variante de semn și fascicule late; de strâns.
+2. Așezarea: 165 de mutări la 10x10x10, cea mai mare parte.
 3. Muchiile: ~35 de mutări pe orbită.
+4. Tabelele potrivirii: 24 MB fiecare, multe sunt probabil aceleași între
+   mărimi și axe.
 
 ## Despre tabelele lui dwalton76
 

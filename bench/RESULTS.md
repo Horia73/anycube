@@ -846,3 +846,54 @@ all columns (so that columns disturbed together are not counted many
 times). The searches did not finish one cube in the four and a half minutes
 allowed. Not kept.
 
+## Any size: rows of any length matched (2026-11-11, afternoon)
+
+The matching of a row of centres to the row under it (`src/rings.rs`) got a
+way that works whatever the length of the row: from the middle of the row
+outwards, the columns done so far kept not only matched but alike (the same
+pattern in the row, the same in the row under it). Columns that are alike
+and are not cut apart move alike, so they are one thing to follow however
+many they are, and a step deals with that one column and the one or two it
+adds. The score of a step is an exact table over the four orbits of a new
+column and the column it has to be like, per axis, the three axes added.
+
+On random staged cubes (`cubenxnxn rowtest --size N --row 1`), row 1:
+
+| Row of | All columns in one search (8 choices of sign) | From the middle outwards |
+|---|---|---|
+| 4 centres (8x8x8) | 5 of 6 matched, 30.8 moves | 6 of 6, 37.3 moves |
+| 5 centres (9x9x9) | 3 of 6, 46.3 moves | 6 of 6, 54.7 moves |
+| 6 centres (10x10x10) | 0 of 6 | 4 of 4, 64.2 moves (17 + 31 + 16 for its three steps) |
+
+Rows of up to four centres still try the one search first.
+
+Whole solves, 20 cubes each, every solution applied on the sticker model
+and the files checked again with `cubenxnxn verify`:
+
+| Size | Bound | dwalton76 (5 cubes) | Before | Now | Now, his 5 cubes | Against dwalton76 | Now over bound | Moves per piece |
+|---|---|---|---|---|---|---|---|---|
+| 9x9x9 | 149.2 | 368.00 | 333.80 | 326.90 | 336.40 | -11.2% | 2.19 | 0.85 |
+| 10x10x10 | 179.1 | 523.40 | 482.75 | 427.95 | 427.80 | -18.2% | 2.39 | 0.88 |
+
+Files: `general999-20.tsv`, `general101010-20.tsv`. No cube of either size
+went the long way. On a 10x10x10 the centres now take 284 moves (165 of
+staging, about 64 + 39 + 13 of matching), the edges 126, the 3x3x3 18.
+
+Not measured again: the 8x8x8 (its rows have four and two centres, so
+nothing changes for it by design; a run was stopped after 14 cubes at
+249.07 against the 246.50 on file).
+
+Times are not given: three other sessions were running benchmarks on the
+same machine, and the solves came out at one to two minutes per cube. The
+tables of the new way (24 MB each, 42 files, 962 MB for sizes 8 to 10) are
+made on first use, about half a minute each.
+
+What was tried for long rows before this and did not work:
+
+- Column by column with the columns done before counted once in the score
+  (the one furthest from done) instead of each: 1 of 6 rows of five, 0 of 6
+  rows of six.
+- The new way with a score from pairs of orbits instead of the table over
+  four: each requirement alone is met in 6 to 8 moves, two of them in 10
+  or 11, all three together not at all within 50 moves.
+

@@ -25,6 +25,7 @@ fn main() {
         Some("stage6") => stage6(&args[1..]),
         Some("bench6") => bench6(&args[1..]),
         Some("benchn") => benchn(&args[1..]),
+        Some("rowtest") => rowtest(&args[1..]),
         Some("stage7") => stage7(&args[1..]),
         Some("bench7") => bench7(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
@@ -242,6 +243,57 @@ fn solven(size: usize, state: Option<&str>, args: &[String]) {
         }
         Err(e) => fail(&e),
     }
+}
+
+/// The matching of one row of centres (`rings`) on random staged cubes:
+/// how often it is found, how long it is and how long it takes.
+fn rowtest(args: &[String]) {
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (size, row, count) = (num("--size", 10), num("--row", 1), num("--count", 10));
+    let g = cubenxnxn::cuben::Geometry::new(size);
+    let ring = cubenxnxn::rings::Ring::new(&g, row);
+    // Face turns and half turns keep the centres of a solved cube staged.
+    let staged: Vec<usize> = (0..g.move_count()).filter(|m| m / 18 == 0 || m % 3 == 1).collect();
+    let mut seed = num("--seed", 12345) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let (mut found, mut total, mut ms) = (0usize, 0usize, 0.0);
+    for trial in 0..count {
+        let mut f = g.solved();
+        for _ in 0..400 {
+            g.apply(&mut f, staged[rnd(staged.len())]);
+        }
+        let t = Instant::now();
+        let result = ring.solve(&g, &f);
+        let took = t.elapsed().as_secs_f64() * 1e3;
+        ms += took;
+        match result {
+            Ok(moves) => {
+                g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+                if !ring.matched(&f) {
+                    fail(&format!("trial {}: the row is not matched", trial));
+                }
+                eprintln!("trial {:2}: {} moves, {:.0} ms", trial, moves.len(), took);
+                found += 1;
+                total += moves.len();
+            }
+            Err(e) => eprintln!("trial {:2}: {}, {:.0} ms", trial, e, took),
+        }
+    }
+    println!(
+        "row {} of a {}x{}x{} ({} centres): matched {} of {}, mean {:.1} moves, {:.1} s per trial",
+        row,
+        size,
+        size,
+        size,
+        ring.len(),
+        found,
+        count,
+        total as f64 / found.max(1) as f64,
+        ms / count as f64 / 1e3
+    );
 }
 
 /// The general solver on a scramble file of any size from 6 up.

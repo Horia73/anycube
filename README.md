@@ -85,11 +85,13 @@ done as a sequence of small ones:
   the axis or none), two mirror orbits of oblique centres at a time, each
   step a 6x6x6 or a 7x7x7 made of layers (with the staging of those
   solvers); then the whole ring goes onto its faces in one step, as the x
-  and t centres of a 5x5x5. Then, row by row
-  from the rim inwards, every centre is made to agree in colour with the
-  one under it (`src/rings.rs`); the edge steps bring them home. Where no
-  such matching is found (some cubes, and every cube from 10x10x10 up) the
-  centres are brought home one step at a time instead (`src/axes.rs`).
+  and t centres of a 5x5x5. Then, row by row from the rim inwards, every
+  centre is made to agree in colour with the one under it
+  (`src/rings.rs`); the edge steps bring them home. A short row is matched
+  in one search; a long one from its middle outwards, the columns done so
+  far kept alike so that each step is a search of the same small size
+  whatever the length of the row. Should no matching be found, the centres
+  are brought home one step at a time instead (`src/axes.rs`).
 - Edges: orbit by orbit from the middle outwards, each a 5x5x5 whose middle
   edges are the stretch already joined (a 4x4x4 for the innermost wings of
   an even cube). The last one is the whole cube as a 5x5x5, solved to the end.
@@ -104,11 +106,11 @@ counted in moves, below which no solver can average:
 | Size | Bound | dwalton76 | cubenxnxn | cubenxnxn, his 5 cubes | Time, his | Time, ours |
 |---|---|---|---|---|---|---|
 | 8x8x8 | 117.1 | 308.40 | 246.50 | 251.00 | 15.8 s | 24 s |
-| 9x9x9 | 149.2 | 368.00 | 333.80 | 345.20 | 11.0 s | 23 s |
-| 10x10x10 | 179.1 | 523.40 | 482.75 | 478.80 | 24.8 s | 18 s |
+| 9x9x9 | 149.2 | 368.00 | 326.90 | 336.40 | 11.0 s | not timed |
+| 10x10x10 | 179.1 | 523.40 | 427.95 | 427.80 | 24.8 s | not timed |
 
 The solvers for 4x4x4 to 7x7x7 are at 1.4 to 1.7 times the bound (0.71
-moves per piece); this one is at 2.1 to 2.7 times (0.83 to 0.99 per piece),
+moves per piece); this one is at 2.1 to 2.4 times (0.83 to 0.88 per piece),
 so much of what can be gained on large cubes is still ahead. Sizes 11, 12 and 14 solve as well. Run on 6x6x6 and 7x7x7 it gives
 122 and 174 moves where their own solvers give 109 and 155.
 
