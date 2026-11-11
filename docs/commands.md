@@ -14,7 +14,7 @@
 The row of one size in the results table, and the whole table for a release:
 
 ```bash
-./target/release/cubenxnxn row bench/scrambles101010-20.txt --size 10
+./target/release/anycube row bench/scrambles101010-20.txt --size 10
 ```
 
 ```bash
@@ -28,11 +28,11 @@ scripts/release.py readme
 To make new scrambles or look at a cube:
 
 ```bash
-./target/release/cubenxnxn scrambles --size 12 --count 5 --length 600
+./target/release/anycube scrambles --size 12 --count 5 --length 600
 ```
 
 ```bash
-./target/release/cubenxnxn facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
+./target/release/anycube facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 ```
 
 The flags behind `--mode` are in [search-flags.md](search-flags.md).

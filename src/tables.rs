@@ -545,7 +545,7 @@ fn gen_sigma(pl: &[[u8; 12]; 17], phinv: &[[u8; 12]; 17]) -> Vec<u8> {
 
 pub(crate) fn table_dir() -> PathBuf {
     // `CUBE444_TABLES` is the name from before the project was renamed.
-    std::env::var_os("CUBENXNXN_TABLES")
+    std::env::var_os("ANYCUBE_TABLES")
         .or_else(|| std::env::var_os("CUBE444_TABLES"))
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("tables"))

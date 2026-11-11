@@ -246,7 +246,7 @@ impl Solver {
     ) -> Result<Vec<P2Cand>, String> {
         // Variants come in groups of six per frame. Only the first frame is searched;
         // every staged sequence is then also tried in its partner of the other two frames.
-        let share = std::env::var_os("CUBENXNXN_NO_SHARE").is_none();
+        let share = std::env::var_os("ANYCUBE_NO_SHARE").is_none();
         let searched = if share { 6 } else { variants.len() };
         let partners: Vec<Vec<Partner>> = (0..searched)
             .map(|i| if share { self.joint_partners(variants, i) } else { Vec::new() })
@@ -293,7 +293,7 @@ impl Solver {
         }
         // Development aid: stop after a given depth.
         let max_depth: Option<usize> =
-            std::env::var("CUBENXNXN_JOINT_MAXDEPTH").ok().and_then(|s| s.parse().ok());
+            std::env::var("ANYCUBE_JOINT_MAXDEPTH").ok().and_then(|s| s.parse().ok());
         let have_endpoint = AtomicBool::new(false);
         let shared = Shared {
             count: AtomicUsize::new(0),
@@ -327,7 +327,7 @@ impl Solver {
             }
             shared.stop.store(false, Relaxed);
         }
-        if std::env::var_os("CUBENXNXN_DEBUG").is_some() {
+        if std::env::var_os("ANYCUBE_DEBUG").is_some() {
             eprintln!(
                 "debug: joint phase: nodes by moves left {:?}, {} staged sequences, {} edge tests, {} endpoints",
                 shared.by_rem.iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>(),

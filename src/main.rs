@@ -1,12 +1,12 @@
-use cubenxnxn::cube::{format_moves, parse_moves, Cube};
-use cubenxnxn::solver::{Params, Solver};
+use anycube::cube::{format_moves, parse_moves, Cube};
+use anycube::solver::{Params, Solver};
 use rayon::prelude::*;
 use std::io::Write;
 use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  cubenxnxn solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube\n  cubenxnxn scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  cubenxnxn verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  cubenxnxn known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  cubenxnxn benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  cubenxnxn row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -42,10 +42,10 @@ fn main() {
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
-        Some("selftest5") => cubenxnxn::edges5::Edges5::load().self_test(),
+        Some("selftest5") => anycube::edges5::Edges5::load().self_test(),
         Some("gen-edges5") => {
             let t = Instant::now();
-            cubenxnxn::edges5::Edges5::load();
+            anycube::edges5::Edges5::load();
             eprintln!("5x5x5 edge tables ready in {:.1} s", t.elapsed().as_secs_f64());
         }
         _ => usage(),
@@ -117,7 +117,7 @@ fn move_text(args: &[String]) -> String {
 }
 
 fn solve5(state: Option<&str>, args: &[String]) {
-    use cubenxnxn::c5::tables5;
+    use anycube::c5::tables5;
     let g = &tables5().geometry;
     let facelets = match state {
         Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
@@ -130,7 +130,7 @@ fn solve5(state: Option<&str>, args: &[String]) {
     };
     let p = params5(args);
     let t0 = Instant::now();
-    let solver = cubenxnxn::solver5::Solver5::load();
+    let solver = anycube::solver5::Solver5::load();
     let t1 = Instant::now();
     match solver.solve(&facelets, &p) {
         Ok(sol) => {
@@ -153,8 +153,8 @@ fn solve5(state: Option<&str>, args: &[String]) {
     }
 }
 
-fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
-    use cubenxnxn::solver6::Params6;
+fn params6(args: &[String]) -> anycube::solver6::Params6 {
+    use anycube::solver6::Params6;
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let d = match opt(args, "--mode") {
         Some("fast") => Params6::fast(),
@@ -164,7 +164,7 @@ fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
     };
     // The 5x5x5 part follows the mode unless its own flags say otherwise.
     let o = &d.outer;
-    let outer = cubenxnxn::solver5::Params5 {
+    let outer = anycube::solver5::Params5 {
         labellings: num("--labellings", o.labellings),
         c_keep: num("--c-keep", o.c_keep),
         p_keep: num("--p-keep", o.p_keep),
@@ -190,7 +190,7 @@ fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
 
 fn solve6(state: Option<&str>, args: &[String]) {
     let t0 = Instant::now();
-    let solver = cubenxnxn::solver6::Solver6::load();
+    let solver = anycube::solver6::Solver6::load();
     let g = &solver.s6.g;
     let mut facelets = match state {
         Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
@@ -228,8 +228,8 @@ fn solve6(state: Option<&str>, args: &[String]) {
 /// Sizes from 8 up: the general solver.
 fn solven(size: usize, state: Option<&str>, args: &[String]) {
     let t0 = Instant::now();
-    let g = cubenxnxn::cuben::Geometry::new(size);
-    let solver = cubenxnxn::nnn::SolverN::load();
+    let g = anycube::cuben::Geometry::new(size);
+    let solver = anycube::nnn::SolverN::load();
     let mut facelets = match state {
         Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
         None => {
@@ -267,8 +267,8 @@ fn solven(size: usize, state: Option<&str>, args: &[String]) {
 fn rowtest(args: &[String]) {
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (size, row, count) = (num("--size", 10), num("--row", 1), num("--count", 10));
-    let g = cubenxnxn::cuben::Geometry::new(size);
-    let ring = cubenxnxn::rings::Ring::new(&g, row);
+    let g = anycube::cuben::Geometry::new(size);
+    let ring = anycube::rings::Ring::new(&g, row);
     // Face turns and half turns keep the centres of a solved cube staged.
     let staged: Vec<usize> = (0..g.move_count()).filter(|m| m / 18 == 0 || m % 3 == 1).collect();
     let mut seed = num("--seed", 12345) as u64;
@@ -314,9 +314,9 @@ fn rowtest(args: &[String]) {
 }
 
 /// The general solver on a scramble file of any size from 6 up.
-fn staging(args: &[String], d: &cubenxnxn::staging::Staging) -> cubenxnxn::staging::Staging {
+fn staging(args: &[String], d: &anycube::staging::Staging) -> anycube::staging::Staging {
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
-    cubenxnxn::staging::Staging {
+    anycube::staging::Staging {
         width: num("--width", d.width),
         fan: num("--fan", d.fan),
         beam: num("--beam", d.beam),
@@ -331,9 +331,9 @@ fn stagen(args: &[String]) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (size, limit) = (num("--size", 8), num("--limit", usize::MAX));
-    let g = cubenxnxn::cuben::Geometry::new(size);
+    let g = anycube::cuben::Geometry::new(size);
     let t0 = Instant::now();
-    let mut solver = cubenxnxn::nnn::SolverN::load();
+    let mut solver = anycube::nnn::SolverN::load();
     solver.staging = staging(args, &solver.staging);
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let (mut total, mut times, mut n) = (0usize, Vec::new(), 0usize);
@@ -345,7 +345,7 @@ fn stagen(args: &[String]) {
         let moves = solver.stage(&g, &f).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
         let ms = t.elapsed().as_secs_f64() * 1e3;
         g.apply_seq(&mut f, &moves);
-        if !cubenxnxn::staging::is_staged(&g, &f) {
+        if !anycube::staging::is_staged(&g, &f) {
             fail(&format!("cube {}: the centres are not staged", n));
         }
         eprintln!("cube {:3}: {} moves, {:.0} ms", n, moves.len(), ms);
@@ -365,9 +365,9 @@ fn benchn(args: &[String]) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (size, limit) = (num("--size", 8), num("--limit", usize::MAX));
-    let g = cubenxnxn::cuben::Geometry::new(size);
+    let g = anycube::cuben::Geometry::new(size);
     let t0 = Instant::now();
-    let mut solver = cubenxnxn::nnn::SolverN::load();
+    let mut solver = anycube::nnn::SolverN::load();
     solver.staging = staging(args, &solver.staging);
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let (mut sums, mut times, mut n, mut long_way) = ([0usize; 3], Vec::new(), 0usize, 0usize);
@@ -425,7 +425,7 @@ fn benchn(args: &[String]) {
 /// longest seconds per cube, separated by tabs. Every solution is applied
 /// on the sticker model. Tables are loaded before the clock starts.
 fn row(args: &[String]) {
-    use cubenxnxn::cuben::Geometry;
+    use anycube::cuben::Geometry;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
@@ -442,11 +442,11 @@ fn row(args: &[String]) {
     type Solve = Box<dyn Fn(&Geometry, &str, &[u8]) -> Result<Vec<usize>, String>>;
     let solve: Solve = match size {
         2 => {
-            let t = cubenxnxn::c2::T2::load();
+            let t = anycube::c2::T2::load();
             Box::new(move |g, scr, _| named(g, &t.solve(&small(scr)?)))
         }
         3 => {
-            use cubenxnxn::c3::{C3, T3};
+            use anycube::c3::{C3, T3};
             let t = T3::new();
             let probes = if opt(args, "--mode") == Some("fast") { 500 } else { 30_000 };
             Box::new(move |g, scr, _| {
@@ -459,19 +459,19 @@ fn row(args: &[String]) {
             Box::new(move |g, scr, _| named(g, &s.solve(&small(scr)?, &p)?.moves))
         }
         5 => {
-            let (s, p) = (cubenxnxn::solver5::Solver5::load(), params5(args));
+            let (s, p) = (anycube::solver5::Solver5::load(), params5(args));
             Box::new(move |_, _, f| Ok(wide(s.solve(f, &p)?.moves)))
         }
         6 => {
-            let (s, p) = (cubenxnxn::solver6::Solver6::load(), params6(args));
+            let (s, p) = (anycube::solver6::Solver6::load(), params6(args));
             Box::new(move |_, _, f| Ok(wide(s.solve(f, &p)?.moves)))
         }
         7 => {
-            let (s, p) = (cubenxnxn::solver7::Solver7::load(), params7(args));
+            let (s, p) = (anycube::solver7::Solver7::load(), params7(args));
             Box::new(move |_, _, f| Ok(wide(s.solve(f, &p)?.moves)))
         }
         _ => {
-            let s = cubenxnxn::nnn::SolverN::load();
+            let s = anycube::nnn::SolverN::load();
             Box::new(move |g, _, f| s.solve(g, f).map(|sol| sol.moves))
         }
     };
@@ -507,7 +507,7 @@ fn row(args: &[String]) {
 
 fn solve7(state: Option<&str>, args: &[String]) {
     let t0 = Instant::now();
-    let solver = cubenxnxn::solver7::Solver7::load();
+    let solver = anycube::solver7::Solver7::load();
     let g = &solver.s7.g;
     let mut facelets = match state {
         Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
@@ -543,8 +543,8 @@ fn solve7(state: Option<&str>, args: &[String]) {
     }
 }
 
-fn params5(args: &[String]) -> cubenxnxn::solver5::Params5 {
-    use cubenxnxn::solver5::Params5;
+fn params5(args: &[String]) -> anycube::solver5::Params5 {
+    use anycube::solver5::Params5;
     let d = match opt(args, "--mode") {
         Some("fast") => Params5::fast(),
         Some("full") => Params5::full(),
@@ -575,14 +575,14 @@ fn params5(args: &[String]) -> cubenxnxn::solver5::Params5 {
 
 fn solve2(cube: &Cube) {
     let t0 = Instant::now();
-    let t = cubenxnxn::c2::T2::load();
+    let t = anycube::c2::T2::load();
     let sol = t.solve(cube);
     println!("{}", format_moves(&sol));
     eprintln!("{} moves, optimal, {:.0} ms", sol.len(), t0.elapsed().as_secs_f64() * 1e3);
 }
 
 fn solve3(cube: &Cube, args: &[String]) {
-    use cubenxnxn::c3::{C3, T3};
+    use anycube::c3::{C3, T3};
     let c3 = cube
         .with_home_centres()
         .and_then(|c| C3::from_cube(&c))
@@ -596,8 +596,8 @@ fn solve3(cube: &Cube, args: &[String]) {
     if mode == "full" {
         // Exact search on all cores; falls back to the two-phase solution at the time limit.
         let secs = opt(args, "--time").and_then(|s| s.parse::<u64>().ok()).unwrap_or(120_000);
-        let big = cubenxnxn::big2::Big2::load(&t);
-        let o = cubenxnxn::opt3::Opt3::new(&t, &big);
+        let big = anycube::big2::Big2::load(&t);
+        let o = anycube::opt3::Opt3::new(&t, &big);
         let res = o.solve_optimal(&o.prepare(&c3), Instant::now() + std::time::Duration::from_millis(secs));
         note = match res.solution {
             Some(s) => {
@@ -806,8 +806,8 @@ fn bench(args: &[String]) {
 /// when it is at most 6 (else 255), and with `--hand` the score the beam search
 /// uses (2 x staging distance - dedges paired + 12, else 255).
 fn free_dump(args: &[String]) {
-    use cubenxnxn::free::{class_parts, Ball};
-    use cubenxnxn::tables::axis_masks;
+    use anycube::free::{class_parts, Ball};
+    use anycube::tables::axis_masks;
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -872,7 +872,7 @@ fn free_dump(args: &[String]) {
 /// tried against a table of all cubes within `--ball` moves of solved), and
 /// compared with what the solver finds.
 fn short(args: &[String]) {
-    use cubenxnxn::free::Ball;
+    use anycube::free::Ball;
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -928,12 +928,12 @@ fn short(args: &[String]) {
 /// orientations with the parity a reduced cube has in each, and the cubes of a
 /// scramble file (with `--solve`, also the shortest reduction the solver finds).
 fn free_export(args: &[String]) {
-    use cubenxnxn::cube::{perm_parity, MOVE_NAMES};
+    use anycube::cube::{perm_parity, MOVE_NAMES};
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
     let solve = args.iter().any(|a| a == "--solve");
-    let ct = cubenxnxn::cube::tables();
+    let ct = anycube::cube::tables();
     let list = |v: &[u8]| format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","));
     let rows = |v: Vec<String>| format!("[{}]", v.join(","));
     let dedges = |c: &Cube| -> Vec<u8> { c.ep[..12].iter().map(|&e| e % 12).collect() };
@@ -980,7 +980,7 @@ fn free_verify(args: &[String]) {
         cube.apply_seq(&reduction);
         total += 1;
         moves += reduction.len();
-        if cubenxnxn::free::is_reduced(&cube) {
+        if anycube::free::is_reduced(&cube) {
             ok += 1;
         } else {
             println!("line {}: not reduced", total);
@@ -995,7 +995,7 @@ fn free_verify(args: &[String]) {
 /// phase 3) is compared with the shortest reduction from that point with all
 /// moves, exact up to 12 moves.
 fn free_tail(args: &[String]) {
-    use cubenxnxn::free::{is_reduced, Ball};
+    use anycube::free::{is_reduced, Ball};
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| {
@@ -1052,7 +1052,7 @@ fn free_tail(args: &[String]) {
 
 /// A cube for `known`: the moves of its base and of the walk away from it.
 fn known_cube(rnd: &mut impl FnMut(usize) -> usize, walk: usize, from_solved: bool) -> (Vec<u8>, Vec<u8>) {
-    use cubenxnxn::cube::skip_move;
+    use anycube::cube::skip_move;
     // The base: a 3x3x3 state on the 4x4x4, from 40 random face turns.
     let mut base: Vec<u8> = Vec::new();
     while !from_solved && base.len() < 40 {
@@ -1086,7 +1086,7 @@ fn known_cube(rnd: &mut impl FnMut(usize) -> usize, walk: usize, from_solved: bo
 /// `known --walk K` (same seed, same cubes). `--solver file` is the result
 /// file of `known` for the same K, to put the solver's reductions next to it.
 fn free_beam(args: &[String]) {
-    use cubenxnxn::free::{is_reduced, Ball, Beam};
+    use anycube::free::{is_reduced, Ball, Beam};
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -1170,8 +1170,8 @@ fn free_beam(args: &[String]) {
 /// undone. The solver is then run on the cube and its lengths are compared
 /// with the known ones.
 fn known(args: &[String]) {
-    use cubenxnxn::c3::C3;
-    use cubenxnxn::cube::inv_seq;
+    use anycube::c3::C3;
+    use anycube::cube::inv_seq;
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -1277,9 +1277,9 @@ fn known(args: &[String]) {
 /// shortest reduction that may use any move, found exactly up to
 /// `--forward` + `--ball` moves.
 fn free3(args: &[String]) {
-    use cubenxnxn::cube::skip_move;
-    use cubenxnxn::free::{is_reduced, key, Ball};
-    use cubenxnxn::tables::P3_MOVES;
+    use anycube::cube::skip_move;
+    use anycube::free::{is_reduced, key, Ball};
+    use anycube::tables::P3_MOVES;
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -1292,7 +1292,7 @@ fn free3(args: &[String]) {
 
     // The key must not change when face turns and rotations are done first, and
     // must tell a reduced cube from one with a parity the 3x3x3 cannot fix.
-    let ct = cubenxnxn::cube::tables();
+    let ct = anycube::cube::tables();
     let reduced_key = key(&Cube::solved());
     for _ in 0..2000 {
         let w: Vec<u8> = (0..rnd(12)).map(|_| rnd(36) as u8).collect();
@@ -1367,7 +1367,7 @@ fn free_walk(rnd: &mut impl FnMut(usize) -> usize, len: usize) -> Vec<u8> {
     while steps.len() < len {
         let m = rnd(27) as u8;
         let one_axis = steps.iter().all(|&s| s / 3 % 3 == m / 3 % 3);
-        if (m < 18 && one_axis) || steps.last().is_some_and(|&l| cubenxnxn::cube::skip_move(l, m)) {
+        if (m < 18 && one_axis) || steps.last().is_some_and(|&l| anycube::cube::skip_move(l, m)) {
             continue;
         }
         steps.push(m);
@@ -1379,7 +1379,7 @@ fn free_walk(rnd: &mut impl FnMut(usize) -> usize, len: usize) -> Vec<u8> {
 /// several K: staging distance of the centres (best orientation), dedges
 /// already paired, dedges with one wing in each half (best frame).
 fn free_features(args: &[String]) {
-    use cubenxnxn::tables::axis_masks;
+    use anycube::tables::axis_masks;
     let num = |name: &str, default: usize| {
         opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
     };
@@ -1431,9 +1431,9 @@ fn free_features(args: &[String]) {
 
 /// Development aid: speed of the exact 3x3x3 search on random outer-move scrambles.
 fn probe333(args: &[String]) {
-    use cubenxnxn::big2::Big2;
-    use cubenxnxn::c3::{C3, T3};
-    use cubenxnxn::opt3::{Opt3, Outcome};
+    use anycube::big2::Big2;
+    use anycube::c3::{C3, T3};
+    use anycube::opt3::{Opt3, Outcome};
     use std::sync::atomic::{AtomicI64, Ordering::Relaxed};
     let n: usize = args.first().and_then(|s| s.parse().ok()).unwrap_or(10);
     let max_len: usize = args.get(1).and_then(|s| s.parse().ok()).unwrap_or(15);
@@ -1473,8 +1473,8 @@ fn probe333(args: &[String]) {
 
 /// Generates the exact centre table (2.37 GB) and checks a few lookups.
 fn gen_centres() {
-    use cubenxnxn::ctab::{Ctab, GOAL_RL, GOAL_UD};
-    use cubenxnxn::tables::{axis_masks, Tabs};
+    use anycube::ctab::{Ctab, GOAL_RL, GOAL_UD};
+    use anycube::tables::{axis_masks, Tabs};
     let tabs = Tabs::load();
     let t0 = Instant::now();
     let ctab = Ctab::load(&tabs.bp, &tabs.ranks);
@@ -1489,28 +1489,28 @@ fn gen_centres() {
 
 /// Development aid: where the start-up time goes.
 fn startup() {
-    use cubenxnxn::tables::Tabs;
+    use anycube::tables::Tabs;
     let lap = |name: &str, t: Instant| eprintln!("{:28} {:7.1} ms", name, t.elapsed().as_secs_f64() * 1e3);
     let t = Instant::now();
-    cubenxnxn::cube::tables();
+    anycube::cube::tables();
     lap("cube model", t);
     let t = Instant::now();
     let tabs = Tabs::load();
     lap("phase tables", t);
     let t = Instant::now();
-    let t3 = cubenxnxn::c3::T3::new();
+    let t3 = anycube::c3::T3::new();
     lap("3x3x3 tables", t);
     let t = Instant::now();
-    let _b1 = cubenxnxn::big1::Big1::load(&t3);
+    let _b1 = anycube::big1::Big1::load(&t3);
     lap("domino table (map)", t);
     let t = Instant::now();
-    let _b2 = cubenxnxn::big2::Big2::load(&t3);
+    let _b2 = anycube::big2::Big2::load(&t3);
     lap("slice table (map + small)", t);
     let t = Instant::now();
-    let _c = cubenxnxn::ctab::Ctab::load(&tabs.bp, &tabs.ranks);
+    let _c = anycube::ctab::Ctab::load(&tabs.bp, &tabs.ranks);
     lap("centre table (map + index)", t);
     let t = Instant::now();
-    let _n = cubenxnxn::ctab::Near::new(&tabs.bp);
+    let _n = anycube::ctab::Near::new(&tabs.bp);
     lap("near-goal centre table", t);
 }
 
@@ -1520,7 +1520,7 @@ fn facelets(args: &[String]) {
     if n < 2 {
         fail("supported sizes: 2 and up");
     }
-    let g = cubenxnxn::cuben::Geometry::new(n);
+    let g = anycube::cuben::Geometry::new(n);
     let tokens: Vec<&str> =
         args.iter().map(String::as_str).filter(|a| !a.starts_with("--") && *a != n.to_string()).collect();
     let moves = g.parse_moves(&tokens.join(" ")).unwrap_or_else(|e| fail(&e));
@@ -1535,7 +1535,7 @@ fn verify(args: &[String]) {
     let n = opt(args, "--size").and_then(|s| s.parse::<usize>().ok()).unwrap_or_else(|| usage());
     let path = args.iter().find(|a| !a.starts_with("--") && **a != n.to_string()).unwrap_or_else(|| usage());
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
-    let g = cubenxnxn::cuben::Geometry::new(n);
+    let g = anycube::cuben::Geometry::new(n);
     let only_facelets = args.iter().any(|a| a == "--facelets");
     let (mut ok, mut total, mut moves) = (0usize, 0usize, 0usize);
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -1566,8 +1566,8 @@ fn verify(args: &[String]) {
 
 /// 5x5x5 centre staging on a scramble file: lengths and times.
 fn stage5(args: &[String]) {
-    use cubenxnxn::c5::{tables5, Cube5};
-    use cubenxnxn::stage5::Stage5;
+    use anycube::c5::{tables5, Cube5};
+    use anycube::stage5::Stage5;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
@@ -1617,8 +1617,8 @@ fn stage5(args: &[String]) {
 
 /// 5x5x5 on a scramble file: full solves, lengths per stage and times.
 fn bench5(args: &[String]) {
-    use cubenxnxn::c5::tables5;
-    use cubenxnxn::solver5::Solver5;
+    use anycube::c5::tables5;
+    use anycube::solver5::Solver5;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
@@ -1645,7 +1645,7 @@ fn bench5(args: &[String]) {
             let moves = solver.reduce(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
             times.push(t.elapsed().as_secs_f64() * 1e3);
             g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
-            let reduced = cubenxnxn::c5::Cube5::from_facelets(&f).is_ok_and(|c| cubenxnxn::edges5::is_reduced(&c));
+            let reduced = anycube::c5::Cube5::from_facelets(&f).is_ok_and(|c| anycube::edges5::is_reduced(&c));
             if !reduced {
                 fail(&format!("cube {}: the moves do not reduce the cube", n));
             }
@@ -1697,10 +1697,10 @@ fn bench5(args: &[String]) {
         times[times.len() - 1]
     );
     println!("length histogram: {:?}", hist);
-    let work = |k: usize| cubenxnxn::edges5::POSITIONS[k].load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6;
+    let work = |k: usize| anycube::edges5::POSITIONS[k].load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6;
     println!(
         "positions per cube, millions: centres {:.2}, phase C {:.2}, P {:.2}, E {:.2}",
-        cubenxnxn::stage5::POSITIONS.load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6,
+        anycube::stage5::POSITIONS.load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6,
         work(0),
         work(1),
         work(2)
@@ -1709,8 +1709,8 @@ fn bench5(args: &[String]) {
 
 /// 5x5x5 centres in one step, on a scramble file: lengths, bounds and times.
 fn centres5(args: &[String]) {
-    use cubenxnxn::c5::{tables5, Cube5};
-    use cubenxnxn::centres5::{Budget, Centres5};
+    use anycube::c5::{tables5, Cube5};
+    use anycube::centres5::{Budget, Centres5};
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
@@ -1731,7 +1731,7 @@ fn centres5(args: &[String]) {
         for s in &sols {
             let mut c = cube;
             c.apply_seq(s);
-            if !cubenxnxn::stage5::Stage5::is_staged(&c) {
+            if !anycube::stage5::Stage5::is_staged(&c) {
                 fail(&format!("cube {}: a result does not stage the centres", i));
             }
         }
@@ -1755,7 +1755,7 @@ fn scrambles(args: &[String]) {
         seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
         (seed >> 33) as usize % n
     };
-    let g = cubenxnxn::cuben::Geometry::new(size);
+    let g = anycube::cuben::Geometry::new(size);
     for _ in 0..count {
         let mut names = Vec::with_capacity(length);
         let mut last = usize::MAX;
@@ -1773,13 +1773,13 @@ fn scrambles(args: &[String]) {
 
 /// 6x6x6 centre staging on a scramble file: lengths and times per step.
 fn stage6(args: &[String]) {
-    use cubenxnxn::stage6::Stage6;
+    use anycube::stage6::Stage6;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (limit, width) = (num("--limit", usize::MAX), num("--width", 8));
     let t0 = Instant::now();
-    let s5 = cubenxnxn::stage5::Stage5::load();
+    let s5 = anycube::stage5::Stage5::load();
     let s6 = Stage6::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let (mut sums, mut total, mut ms, mut n, mut cpu) = ([0usize; 3], 0usize, 0.0, 0usize, 0.0);
@@ -1793,8 +1793,8 @@ fn stage6(args: &[String]) {
         if hold > 0 {
             f = s6.g.held(&f, &s6.g.holds()[hold]);
         }
-        let (t, c) = (Instant::now(), cubenxnxn::clock::cpu_ms());
-        let wide = cubenxnxn::stage6::Wide {
+        let (t, c) = (Instant::now(), anycube::clock::cpu_ms());
+        let wide = anycube::stage6::Wide {
             width,
             fan: num("--fan", width),
             beam: num("--beam", 20_000),
@@ -1807,7 +1807,7 @@ fn stage6(args: &[String]) {
             have[k] += 1;
         }
         ms += t.elapsed().as_secs_f64() * 1e3;
-        cpu += cubenxnxn::clock::cpu_ms() - c;
+        cpu += anycube::clock::cpu_ms() - c;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
         s6.g.apply_seq(&mut f, &best.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
         if !s6.is_staged(&f) {
@@ -1836,7 +1836,7 @@ fn stage6(args: &[String]) {
 
 /// 6x6x6 on a scramble file: full solves, lengths per step and times.
 fn bench6(args: &[String]) {
-    use cubenxnxn::solver6::Solver6;
+    use anycube::solver6::Solver6;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
@@ -1855,10 +1855,10 @@ fn bench6(args: &[String]) {
         let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = g.solved();
         g.apply_seq(&mut f, &scramble);
-        let (t, c) = (Instant::now(), cubenxnxn::clock::cpu_ms());
+        let (t, c) = (Instant::now(), anycube::clock::cpu_ms());
         let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
         let ms = t.elapsed().as_secs_f64() * 1e3;
-        cpu += cubenxnxn::clock::cpu_ms() - c;
+        cpu += anycube::clock::cpu_ms() - c;
         g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
         if !g.is_solved(&f) {
             fail(&format!("cube {}: the solution does not solve the cube", n));
@@ -1898,13 +1898,13 @@ fn bench6(args: &[String]) {
 
 /// 7x7x7 centre staging on a scramble file: lengths and times per step.
 fn stage7(args: &[String]) {
-    use cubenxnxn::stage7::Stage7;
+    use anycube::stage7::Stage7;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (limit, width) = (num("--limit", usize::MAX), num("--width", 4));
     let t0 = Instant::now();
-    let s5 = cubenxnxn::stage5::Stage5::load();
+    let s5 = anycube::stage5::Stage5::load();
     let s7 = Stage7::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let (mut sums, mut total, mut ms, mut n) = ([0usize; 5], 0usize, 0.0, 0usize);
@@ -1913,7 +1913,7 @@ fn stage7(args: &[String]) {
         let mut f = s7.g.solved();
         s7.g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
-        let wide = cubenxnxn::stage7::Wide {
+        let wide = anycube::stage7::Wide {
             width,
             fan: num("--fan", width),
             beam: num("--beam", 20_000),
@@ -1951,8 +1951,8 @@ fn stage7(args: &[String]) {
     println!("mean time {:.0} ms", ms / nf);
 }
 
-fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
-    use cubenxnxn::solver7::Params7;
+fn params7(args: &[String]) -> anycube::solver7::Params7 {
+    use anycube::solver7::Params7;
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let d = match opt(args, "--mode") {
         Some("fast") => Params7::fast(),
@@ -1974,7 +1974,7 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
         rest: num("--rest", d.rest as usize) == 1,
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
-        inner: cubenxnxn::solver5::Params5 {
+        inner: anycube::solver5::Params5 {
             labellings: num("--inner-labellings", d.inner.labellings),
             c_keep: num("--inner-c", d.inner.c_keep),
             p_keep: num("--inner-p", d.inner.p_keep),
@@ -1982,7 +1982,7 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
             ..d.inner
         },
         reductions: num("--reductions", d.reductions),
-        outer: cubenxnxn::solver5::Params5 {
+        outer: anycube::solver5::Params5 {
             labellings: num("--labellings", d.outer.labellings),
             c_keep: num("--c-keep", d.outer.c_keep),
             p_keep: num("--p-keep", d.outer.p_keep),
@@ -1997,7 +1997,7 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
 
 /// 7x7x7 on a scramble file: full solves, lengths per step and times.
 fn bench7(args: &[String]) {
-    use cubenxnxn::solver7::Solver7;
+    use anycube::solver7::Solver7;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);

@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "target", "release", "cubenxnxn")
+BIN = os.path.join(ROOT, "target", "release", "anycube")
 DATA = os.path.join(ROOT, "bench", "releases.tsv")
 README = os.path.join(ROOT, "README.md")
 HEAD = "release\tcommit\tdate\tsize\tcubes\tmoves\tseconds\tlongest\tmemory_mb"

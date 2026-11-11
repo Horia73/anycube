@@ -68,7 +68,7 @@ Idei rămase, în ordinea în care le-aș încerca:
 
 ## Banc cu reduceri de lungime cunoscută (2026-11-10)
 
-`cubenxnxn known --walk K`: un cub redus aleator primește K mutări aleatoare
+`anycube known --walk K`: un cub redus aleator primește K mutări aleatoare
 din toate cele 36, deci există o reducere de cel mult K mutări. Cifrele sunt
 în `bench/RESULTS.md`; pe scurt, 30 de cuburi pe lungime:
 

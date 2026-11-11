@@ -1,6 +1,6 @@
 """Experiment: a network that estimates how many moves a 4x4x4 is away from a reduced cube.
 
-Data comes from `cubenxnxn free-dump`: 52-byte records (24 centres, 24 partner positions,
+Data comes from `anycube free-dump`: 52-byte records (24 centres, 24 partner positions,
 parity bits, K = length of the walk away from a reduced cube, exact distance if at most 6,
 hand score). The network sees only what decides the reductions of a cube:
 
@@ -10,7 +10,7 @@ hand score). The network sees only what decides the reductions of a cube:
 - the parity of the wing permutation.
 
 Usage:
-  python ml/reduce_net.py train --bin ./target/release/cubenxnxn --work DIR [--epochs 30]
+  python ml/reduce_net.py train --bin ./target/release/anycube --work DIR [--epochs 30]
   python ml/reduce_net.py eval --work DIR
 """
 import argparse, os, subprocess, time
@@ -138,7 +138,7 @@ def evaluate(args):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("mode", choices=["train", "eval"])
-    ap.add_argument("--bin", default="./target/release/cubenxnxn")
+    ap.add_argument("--bin", default="./target/release/anycube")
     ap.add_argument("--work", required=True)
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--samples", type=int, default=8_000_000)

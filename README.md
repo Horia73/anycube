@@ -2,7 +2,7 @@
   <img src="docs/logo.svg" width="96" alt="">
 </p>
 
-<h1 align="center">cubenxnxn</h1>
+<h1 align="center">anycube</h1>
 
 <p align="center">
   <b>Any cube, solved short.</b><br>
@@ -28,7 +28,7 @@
 
 ---
 
-cubenxnxn finds **short solutions in seconds** for cubes of **any size**. It
+anycube finds **short solutions in seconds** for cubes of **any size**. It
 is measured on every size from 2x2x2 to 21x21x21, the largest cube that is
 mass-produced.
 
@@ -96,10 +96,10 @@ is Rust's own installer:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Then one line fetches cubenxnxn and builds it:
+Then one line fetches anycube and builds it:
 
 ```bash
-git clone https://github.com/Horia73/cubenxnxn.git && cd cubenxnxn && cargo build --release
+git clone https://github.com/Horia73/anycube.git && cd anycube && cargo build --release
 ```
 
 The first solve of a size builds its lookup tables, once, into `tables/`:
@@ -115,44 +115,44 @@ is read from the number of stickers.
 
 ```bash
 # 2x2x2
-./target/release/cubenxnxn solve --state BFRRDRRDUFLDUBDLUBFFULBL
+./target/release/anycube solve --state BFRRDRRDUFLDUBDLUBFFULBL
 
 # 3x3x3
-./target/release/cubenxnxn solve --state LFUBUFUUFUURLRRULFLRRBFURLLBBFRDDFFLDDBFLUDBDBDBDBLDRR
+./target/release/anycube solve --state LFUBUFUUFUURLRRULFLRRBFURLLBBFRDDFFLDDBFLUDBDBDBDBLDRR
 
 # 4x4x4
-./target/release/cubenxnxn solve --state FUDLLDRRLLBULBDULBUFFDBDRLURRDULFRFBULDRUFDDRLBBBDRUBBRBFRRFFDDBRFFDLUULFFBLRULDUFBDRFFBULURDBLU
+./target/release/anycube solve --state FUDLLDRRLLBULBDULBUFFDBDRLURRDULFRFBULDRUFDDRLBBBDRUBBRBFRRFFDDBRFFDLUULFFBLRULDUFBDRFFBULURDBLU
 
 # 5x5x5
-./target/release/cubenxnxn solve --state RFBBRLFBRLFLUFBFBDBRRDDLBDBRFFUBLRRFBRULDFLFFUDUDFFRBBRFDRLBFDFRUFDBUBBUBULURLLFDLDRLLLDURUBDURDFFFLUBRLULFUUUDRLFLLUFRDLRDBLDUUUBBDULDUFBRRRLBDUDRDDB
+./target/release/anycube solve --state RFBBRLFBRLFLUFBFBDBRRDDLBDBRFFUBLRRFBRULDFLFFUDUDFFRBBRFDRLBFDFRUFDBUBBUBULURLLFDLDRLLLDURUBDURDFFFLUBRLULFUUUDRLFLLUFRDLRDBLDUUUBBDULDUFBRRRLBDUDRDDB
 
 # 6x6x6
-./target/release/cubenxnxn solve --state FRDFLFRLDRRRDBDUDRURUFLLBBULUFDFLUULURDUBRDBUUULUDDFLLLUDLRRLLFLRLDULFFBRUURRFRFFLUFDUBRBFBFURUFRFDBDBBBDRDFRURBLLFLBBDFLLDUFFFDBLRDBBDUFRDBUDBLRBBBLBDRBRBDRFLBRLURBRBULUBLRDLDRBDUUURFUDFDFLDLBDRFUDBDFLFFFFFRLUUUBLDB
+./target/release/anycube solve --state FRDFLFRLDRRRDBDUDRURUFLLBBULUFDFLUULURDUBRDBUUULUDDFLLLUDLRRLLFLRLDULFFBRUURRFRFFLUFDUBRBFBFURUFRFDBDBBBDRDFRURBLLFLBBDFLLDUFFFDBLRDBBDUFRDBUDBLRBBBLBDRBRBDRFLBRLURBRBULUBLRDLDRBDUUURFUDFDFLDLBDRFUDBDFLFFFFFRLUUUBLDB
 
 # 7x7x7
-./target/release/cubenxnxn solve --state LUFDFDUBLRLFFRBLUUDDFBUFUDUFBLFLRFRLRLDFUDFRDUFUFDBULUFRFLBUFRDFDFRRURDDLRLFBFDFUUULFUUDUFBDLBLLURRFBBLBLLRBBLDLUDFDDFLURRFBLFBRUUBRDBBBLLLLLBLLUDBBDBDBFRULURUFDRFDUBFDRFBDFFUULLRBBBBBDFFRLFRUFDFUDRRRRDDUBUURFBLBLFRBLLRLLFLFLDLBULULDDBBUUURFUDFUBRRRRFBRBLBRDRDRLDDRUDDBBRBBDRBDRUDLDBRDUUFDFRRUL
+./target/release/anycube solve --state LUFDFDUBLRLFFRBLUUDDFBUFUDUFBLFLRFRLRLDFUDFRDUFUFDBULUFRFLBUFRDFDFRRURDDLRLFBFDFUUULFUUDUFBDLBLLURRFBBLBLLRBBLDLUDFDDFLURRFBLFBRUUBRDBBBLLLLLBLLUDBBDBDBFRULURUFDRFDUBFDRFBDFFUULLRBBBBBDFFRLFRUFDFUDRRRRDDUBUURFBLBLFRBLLRLLFLFLDLBULULDDBBUUURFUDFUBRRRRFBRBLBRDRDRLDDRUDDBBRBBDRBDRUDLDBRDUUFDFRRUL
 ```
 
 Or as the moves that scrambled it, with the size of the cube:
 
 ```bash
 # 3x3x3, 25 random moves
-./target/release/cubenxnxn solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
+./target/release/anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 
 # the same cube in the fewest moves there are: 18, after about 25 seconds
-./target/release/cubenxnxn solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'" --mode full
+./target/release/anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'" --mode full
 
 # 5x5x5, 60 random moves, the quick way
-./target/release/cubenxnxn solve --size 5 "Bw2 D2 L' F Dw R B U L2 F2 Dw L Dw2 Fw Lw' B' R' Dw Bw' D2 F Lw2 Dw R' B' Rw2 U2 Bw Uw Bw' R2 Dw Fw Dw L' Fw' Lw' Uw2 Bw Dw2 B' Dw2 Bw' L2 Dw' Bw' Lw2 Bw Lw2 U' L2 B2 Lw2 U2 R2 Uw Rw Fw' L2 Uw" --mode fast
+./target/release/anycube solve --size 5 "Bw2 D2 L' F Dw R B U L2 F2 Dw L Dw2 Fw Lw' B' R' Dw Bw' D2 F Lw2 Dw R' B' Rw2 U2 Bw Uw Bw' R2 Dw Fw Dw L' Fw' Lw' Uw2 Bw Dw2 B' Dw2 Bw' L2 Dw' Bw' Lw2 Bw Lw2 U' L2 B2 Lw2 U2 R2 Uw Rw Fw' L2 Uw" --mode fast
 
 # 7x7x7, 100 random moves
-./target/release/cubenxnxn solve --size 7 "Rw2 3Uw 3Rw Uw' B2 3Uw2 3Fw2 R Fw' 3Uw' F2 D2 3Fw 3Dw2 Lw2 3Uw 3Bw' Lw2 3Uw' Rw' 3Uw2 3Lw' 3Bw' Uw' F2 Lw2 B' 3Rw Uw Fw' R' B' Lw2 U F' Dw 3Lw2 Uw2 Bw' Rw2 U R' F Uw2 B2 3Lw' Uw' Lw 3Uw' Bw2 U2 3Rw2 3Dw 3Bw' D2 3Bw Uw2 Bw2 Uw' 3Rw2 Bw U' Rw2 Fw2 3Rw Fw L2 3Fw U 3Bw L2 F Uw Rw2 Dw2 R2 3Bw Uw F 3Dw2 Fw2 3Rw Uw 3Bw Dw2 3Fw' 3Lw 3Bw Rw Uw B Rw Uw' F2 Lw' Dw B' 3Lw 3Bw U"
+./target/release/anycube solve --size 7 "Rw2 3Uw 3Rw Uw' B2 3Uw2 3Fw2 R Fw' 3Uw' F2 D2 3Fw 3Dw2 Lw2 3Uw 3Bw' Lw2 3Uw' Rw' 3Uw2 3Lw' 3Bw' Uw' F2 Lw2 B' 3Rw Uw Fw' R' B' Lw2 U F' Dw 3Lw2 Uw2 Bw' Rw2 U R' F Uw2 B2 3Lw' Uw' Lw 3Uw' Bw2 U2 3Rw2 3Dw 3Bw' D2 3Bw Uw2 Bw2 Uw' 3Rw2 Bw U' Rw2 Fw2 3Rw Fw L2 3Fw U 3Bw L2 F Uw Rw2 Dw2 R2 3Bw Uw F 3Dw2 Fw2 3Rw Uw 3Bw Dw2 3Fw' 3Lw 3Bw Rw Uw B Rw Uw' F2 Lw' Dw B' 3Lw 3Bw U"
 
 # the first 21x21x21 of the benchmark, 1,050 random moves
-./target/release/cubenxnxn solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
+./target/release/anycube solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
 
 # the stickers of a scrambled cube, to pass to --state
-./target/release/cubenxnxn facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
+./target/release/anycube facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 ```
 
 It prints the solution and, on a second line, what it took. The 4x4x4 state

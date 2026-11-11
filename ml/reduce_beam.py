@@ -3,9 +3,9 @@ reduce_net.py. Every level keeps the `width` cubes the network puts closest to a
 and stops at the first level that contains a reduced cube.
 
 Usage:
-  ./target/release/cubenxnxn free-export bench/scrambles-1000.txt --limit 20 --solve > DIR/cubes.json
+  ./target/release/anycube free-export bench/scrambles-1000.txt --limit 20 --solve > DIR/cubes.json
   python ml/reduce_beam.py --work DIR --widths 1024,4096,16384 --out DIR/found.tsv
-  ./target/release/cubenxnxn free-verify DIR/found.tsv
+  ./target/release/anycube free-verify DIR/found.tsv
 """
 import argparse, json, os, time
 import numpy as np

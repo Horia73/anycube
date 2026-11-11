@@ -1,5 +1,5 @@
 [package]
-name = "cubenxnxn"
+name = "anycube"
 version = "0.1.0"
 edition = "2021"
 description = "Rubik's cube solver for any size from 2x2x2 up, aiming for shorter solutions than the existing reduction solvers"
@@ -14,7 +14,7 @@ rayon = "1"
 memmap2 = "0.9"
 
 [[bin]]
-name = "cubenxnxn"
+name = "anycube"
 path = "src/main.rs"
 
 [profile.release]

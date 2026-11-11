@@ -1,6 +1,6 @@
 # Lookup tables
 
-Generated on first use into `tables/` (set `CUBENXNXN_TABLES` to move them).
+Generated on first use into `tables/` (set `ANYCUBE_TABLES` to move them).
 The 4x4x4 set is 4.9 GB; its large files take about four minutes on 8 cores,
 once.
 

@@ -9,16 +9,16 @@ Metric: OBTM. Every solution was applied to the cube model and verified.
 | Solver | Phase 1 | Phase 2 | Phase 3 | 3x3x3 | Total | Min | Max |
 |---|---|---|---|---|---|---|---|
 | TPR (Java, `tpr-results.tsv`) | 6.727 | 5.847 | 12.362 | 19.638 | 44.574 | 40 | 48 |
-| cubenxnxn `--n3 1 --probes 500` (`m1-results.tsv`) | 6.666 | 6.021 | 12.323 | 19.828 | 44.838 | 40 | 48 |
-| cubenxnxn default (`n3-2000-results.tsv`) | 6.652 | 6.223 | 12.605 | 17.438 | 42.918 | 38 | 47 |
+| anycube `--n3 1 --probes 500` (`m1-results.tsv`) | 6.666 | 6.021 | 12.323 | 19.828 | 44.838 | 40 | 48 |
+| anycube default (`n3-2000-results.tsv`) | 6.652 | 6.223 | 12.605 | 17.438 | 42.918 | 38 | 47 |
 
 ## Time per solve
 
 | Solver | Mean | Median | Max | Cubes timed |
 |---|---|---|---|---|
 | TPR (Java, after JIT warm-up) | 146 ms | 121 ms | 2.4 s | 1,000 |
-| cubenxnxn `--n3 1 --probes 500` | 121 ms | 101 ms | 1.4 s | 1,000 |
-| cubenxnxn default (`timing-200.tsv`) | 950 ms | 748 ms | 6.6 s | 200 |
+| anycube `--n3 1 --probes 500` | 121 ms | 101 ms | 1.4 s | 1,000 |
+| anycube default (`timing-200.tsv`) | 950 ms | 748 ms | 6.6 s | 200 |
 
 The time column in `n3-2000-results.tsv` is not a timing: that run solved
 several cubes at once (`--parallel`).
@@ -92,7 +92,7 @@ File: `default-results.tsv`. Cubes solved one at a time.
 | Solver | Joint phase | Phase 3 | 3x3x3 | Total | Min | Max |
 |---|---|---|---|---|---|---|
 | TPR (phases 1+2: 12.574) | | 12.362 | 19.638 | 44.574 | 40 | 48 |
-| cubenxnxn default | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
+| anycube default | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
 
 Length histogram: 37: 2, 38: 8, 39: 73, 40: 286, 41: 500, 42: 128, 43: 3.
 
@@ -160,8 +160,8 @@ File: `default-results.tsv` (replaces the earlier run). Cubes solved one at a ti
 | Solver | Joint phase | Phase 3 | 3x3x3 | Total | Min | Max |
 |---|---|---|---|---|---|---|
 | TPR (phases 1+2: 12.574) | | 12.362 | 19.638 | 44.574 | 40 | 48 |
-| cubenxnxn, previous default (8 s limit) | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
-| cubenxnxn, new default (4 s limit) | 12.802 | 10.809 | 16.986 | 40.597 | 37 | 44 |
+| anycube, previous default (8 s limit) | 12.775 | 10.895 | 17.000 | 40.670 | 37 | 43 |
+| anycube, new default (4 s limit) | 12.802 | 10.809 | 16.986 | 40.597 | 37 | 44 |
 
 Length histogram: 37: 1, 38: 13, 39: 89, 40: 311, 41: 467, 42: 112, 43: 4, 44: 3.
 
@@ -192,10 +192,10 @@ checked on the sticker model:
 | Solver | Phase A | Phase B | Total | Mean time | Max time |
 |---|---|---|---|---|---|
 | cube555, phases 1 + 2 | 10.22 | 8.06 | 18.28 | | |
-| cubenxnxn `bench5 --extra 0` | 9.63 | 8.56 | 18.19 | 43 ms | 1.1 s |
-| cubenxnxn `bench5 --extra 1 --time 300` | 10.11 | 7.47 | 17.58 | 0.23 s | 0.82 s |
-| cubenxnxn `bench5 --extra 1` (no limit) | 10.25 | 7.11 | 17.36 | 0.92 s | 23 s |
-| cubenxnxn `bench5 --extra 2 --time 2000` | 10.60 | 6.50 | 17.10 | 1.5 s | 2.1 s |
+| anycube `bench5 --extra 0` | 9.63 | 8.56 | 18.19 | 43 ms | 1.1 s |
+| anycube `bench5 --extra 1 --time 300` | 10.11 | 7.47 | 17.58 | 0.23 s | 0.82 s |
+| anycube `bench5 --extra 1` (no limit) | 10.25 | 7.11 | 17.36 | 0.92 s | 23 s |
+| anycube `bench5 --extra 2 --time 2000` | 10.60 | 6.50 | 17.10 | 1.5 s | 2.1 s |
 
 `--extra` is how many moves past the shortest phase A are searched; each
 phase-A solution is completed by an optimal phase B from its exact table.
@@ -211,9 +211,9 @@ model. The machine was busy with other work during these runs (load average
 | Solver | Centres | Edges (three phases) | 3x3x3 | Total | Mean time | Max time | Cubes |
 |---|---|---|---|---|---|---|---|
 | cube555 + min2phase | 10.22 + 8.06 | 6.34 + 12.66 + 14.05 | 19.23 | 70.58 | 1.08 s | 4.6 s | 200 |
-| cubenxnxn `--mode fast` | 10.37 + 8.21 | 7.02 + 12.55 + 14.10 | 17.93 | 70.17 | 0.44 s | 2.3 s | 200 |
-| cubenxnxn, default | 10.51 + 8.02 | 7.08 + 12.48 + 13.72 | 17.16 | 68.98 | 2.2 s | 4.9 s | 200 |
-| cubenxnxn `--mode full` | 10.50 + 7.95 | 7.62 + 12.43 + 13.50 | 16.20 | 68.20 | 8.7 s | 26 s | first 40 |
+| anycube `--mode fast` | 10.37 + 8.21 | 7.02 + 12.55 + 14.10 | 17.93 | 70.17 | 0.44 s | 2.3 s | 200 |
+| anycube, default | 10.51 + 8.02 | 7.08 + 12.48 + 13.72 | 17.16 | 68.98 | 2.2 s | 4.9 s | 200 |
+| anycube `--mode full` | 10.50 + 7.95 | 7.62 + 12.43 + 13.50 | 16.20 | 68.20 | 8.7 s | 26 s | first 40 |
 
 Cube by cube against cube555 (its mean on the first 40 cubes is 70.85):
 
@@ -239,7 +239,7 @@ What the pieces were worth, on the first 40 cubes:
 | + edge-against-centre tables for phases P and E | 68.83 | about 1 s |
 | 20 times wider (`--c-keep 10000 --p-keep 10000 --e-keep 1000 --staged 1000`) | 68.20 | about 10 s |
 
-Reproduce with `cubenxnxn bench5 bench/scrambles555-200.txt [--mode fast|full] [--limit 40]`.
+Reproduce with `anycube bench5 bench/scrambles555-200.txt [--mode fast|full] [--limit 40]`.
 
 ## 5x5x5 after the phase C table was reduced by symmetry (2026-11-10)
 
@@ -297,7 +297,7 @@ solution of his is 32 moves of reduction and 20 of 3x3x3.
 
 ## 6x6x6: centre staging (2026-11-10)
 
-`cubenxnxn stage6 bench/scrambles666-100.txt --limit 20`: every centre of the
+`anycube stage6 bench/scrambles666-100.txt --limit 20`: every centre of the
 four orbits on a face of its own axis, both wing orbits even; every result
 checked on the sticker model. dwalton76 spends about 38 moves on the same job
 (his own figure for the four phases, from comments in his code).
@@ -315,7 +315,7 @@ the three exact orbit tables as bound did not finish one cube in ten minutes.
 
 ## 6x6x6: first complete solver (2026-11-10)
 
-`cubenxnxn bench6 bench/scrambles666-100.txt --width 4`, first 6 cubes (the run
+`anycube bench6 bench/scrambles666-100.txt --width 4`, first 6 cubes (the run
 was cut off after ten minutes), every solution checked on the sticker model.
 File: `six666-first6.tsv`. dwalton76 on the first 10 cubes of the same set:
 136.10 moves, 43 s per cube.
@@ -399,7 +399,7 @@ More things that did not pay:
 ## 6x6x6: beam searches (2026-11-11, later)
 
 First 20 cubes of `scrambles666-100.txt`, nothing else running; both files
-checked with `cubenxnxn verify --size 6` (20 of 20 each). dwalton76: 136.10
+checked with `anycube verify --size 6` (20 of 20 each). dwalton76: 136.10
 moves on the first 10 cubes; the target is 108.9.
 
 | Mode | Staging | Wing split | Inner reduction | Outer 5x5x5 | Total | Mean time | Max time | Against dwalton76 |
@@ -491,7 +491,7 @@ eight times as many results when that happens.
 ## 6x6x6: modes as they stand (2026-11-11, night)
 
 First 20 cubes of `scrambles666-100.txt`; every file checked with
-`cubenxnxn verify --size 6` (20 of 20 each). dwalton76: 136.10 moves and
+`anycube verify --size 6` (20 of 20 each). dwalton76: 136.10 moves and
 43 s per cube on the first 10 cubes; the target is 108.9.
 
 | Mode | Staging | Wing split | Inner reduction | Outer 5x5x5 | Total | First 10 cubes | Mean time | Max time | Against dwalton76 |
@@ -523,7 +523,7 @@ cubes gives 154.80, the same as before.
 Set: `scrambles777-100.txt`, 250 random moves each. Metric: outer block turns
 (a turn of one, two or three layers of a face is one move). Every solution
 was applied to the scrambled cube on the sticker model and left it solved;
-the file below was also checked with `cubenxnxn verify --size 7`. Another
+the file below was also checked with `anycube verify --size 7`. Another
 benchmark was running on the same machine and these runs had 4 of its 8
 cores (`RAYON_NUM_THREADS=4`), so the times are rough.
 
@@ -654,7 +654,7 @@ carried from step to step 54.33; 8 candidates 53.33 to 53.50 (3.5 s).
 - The lengths move by a move or two with the order of equal states in the
   beams, so the mean of 10 cubes is good to about half a move.
 
-Reproduce with `cubenxnxn bench7 bench/scrambles777-100.txt --limit 10
+Reproduce with `anycube bench7 bench/scrambles777-100.txt --limit 10
 [--mode fast] [--restarts 3] [--out file]`; tables are generated on first
 use (`stage777-*.bin`, about 300 MB).
 
@@ -669,16 +669,16 @@ Run from `shorter-solutions` with all eight cores and nothing else running:
 | `--mode fast` | cubes 31 to 50 | 155.60 | 3.3 s | 4.7 s |
 
 Both default runs were written out as scramble and solution and checked
-with `cubenxnxn verify --size 7`: 30 of 30 solved. With the 30 cubes above,
+with `anycube verify --size 7`: 30 of 30 solved. With the 30 cubes above,
 the default is at 154.56 on the first 50 cubes, 20.5% below dwalton76's
 194.40 (measured on the first 10 only).
 
 ## Any size: the general solver (2026-11-11)
 
-`cubenxnxn benchn bench/scrambles888-20.txt --size 8` and the same for 9
+`anycube benchn bench/scrambles888-20.txt --size 8` and the same for 9
 and 10: 20 scrambles each of 40 random moves per layer of size (seeds 888,
 999, 1110). Every solution was applied on the sticker model, and the result
-files checked again with `cubenxnxn verify`. dwalton76 ran on the first 5
+files checked again with `anycube verify`. dwalton76 ran on the first 5
 cubes of each set (`dwalton888-results.tsv` and neighbours; all verified).
 
 | Size | Centres | Edges | 3x3x3 | Total | First 5 cubes | dwalton76, those 5 | Mean time | Max time | dwalton76 time |
@@ -738,7 +738,7 @@ small cube anyway, bring the rest home with them. No centre is brought home
 by itself and the 4x4x4 solve at the start of an even cube is gone.
 
 20 cubes each, every solution applied on the sticker model and the files
-checked again with `cubenxnxn verify`. "Bound" is the number of positions
+checked again with `anycube verify`. "Bound" is the number of positions
 of the cube counted in moves (log of the positions over log of the number
 of moves): no solver can average less.
 
@@ -819,7 +819,7 @@ step, as the x and t centres of a 5x5x5 (phase A, then phase B, of the
 5x5x5 solver).
 
 20 cubes each, every solution applied on the sticker model and the files
-checked again with `cubenxnxn verify`.
+checked again with `anycube verify`.
 
 | Size | Bound | dwalton76 (5 cubes) | This morning | Before this change | Now | Now, his 5 cubes | Against dwalton76 | Now over bound | Moves per piece | Mean time |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -857,7 +857,7 @@ many they are, and a step deals with that one column and the one or two it
 adds. The score of a step is an exact table over the four orbits of a new
 column and the column it has to be like, per axis, the three axes added.
 
-On random staged cubes (`cubenxnxn rowtest --size N --row 1`), row 1:
+On random staged cubes (`anycube rowtest --size N --row 1`), row 1:
 
 | Row of | All columns in one search (8 choices of sign) | From the middle outwards |
 |---|---|---|
@@ -868,7 +868,7 @@ On random staged cubes (`cubenxnxn rowtest --size N --row 1`), row 1:
 Rows of up to four centres still try the one search first.
 
 Whole solves, 20 cubes each, every solution applied on the sticker model
-and the files checked again with `cubenxnxn verify`:
+and the files checked again with `anycube verify`:
 
 | Size | Bound | dwalton76 (5 cubes) | Before | Now | Now, his 5 cubes | Against dwalton76 | Now over bound | Moves per piece |
 |---|---|---|---|---|---|---|---|---|
@@ -1240,7 +1240,7 @@ The staging passes of `nnn` are now a pipeline over candidates: cubes
 carried from step to step, the row-forming steps of 7x7x7 type one
 `beam_roots` search for all of them (`Stage7::rows`), the cube started
 along each of its three axes and continued with either of the other two.
-`cubenxnxn stagen <scrambles> --size N` runs the staging alone and checks
+`anycube stagen <scrambles> --size N` runs the staging alone and checks
 it. Staging only, same cubes:
 
 | Size | Cubes | As it was | 1 candidate, 1 order | 8 carried, 4 kept of each, beam 20,000 | 16, 8, beam 100,000 |
@@ -1290,7 +1290,7 @@ to be run again on the joined code.
 
 ## 4x4x4: cubes with a known short reduction (2026-11-10)
 
-`cubenxnxn known --walk K --count 30 --time 30000`: a random 3x3x3 state on
+`anycube known --walk K --count 30 --time 30000`: a random 3x3x3 state on
 the 4x4x4 (40 random face turns) gets K random moves out of all 36, so a
 reduction of at most K moves exists: the walk undone. The walk starts with a
 wide move, keeps face turns off the axis of its first moves and never has two
@@ -1354,7 +1354,7 @@ random cube should have its shortest reduction at about 21 moves.
 
 ### Phase 3 against the shortest reduction with any move
 
-`cubenxnxn free3 --walk W --forward F --ball 6`: a reduced cube gets W random
+`anycube free3 --walk W --forward F --ball 6`: a reduced cube gets W random
 phase-3 moves; the shortest phase-3 solution is compared with the shortest
 reduction with all moves, which is exact up to F + 6 moves (every sequence of
 F moves is tried against the table above).
@@ -1372,7 +1372,7 @@ by having to pass through a state with staged centres.
 
 ### What a cube K moves from a reduced cube looks like
 
-`cubenxnxn free-features`, 200 cubes per K: exact staging distance of the
+`anycube free-features`, 200 cubes per K: exact staging distance of the
 centres (best of the six ways of giving the colour pairs an axis) and dedges
 already paired.
 
@@ -1389,7 +1389,7 @@ already paired.
 
 ### Beam search with all moves on the known-reduction cubes
 
-`cubenxnxn free-beam --walk K --depth K-2 --solver bench/known444-wK.tsv`:
+`anycube free-beam --walk K --depth K-2 --solver bench/known444-wK.tsv`:
 each level keeps the 300,000 cubes with the lowest 2 × staging distance −
 dedges paired, and a path ends as soon as it is within 6 moves of a reduced
 cube. It can find reductions of up to K + 4 moves (24 for the random cubes).
@@ -1427,7 +1427,7 @@ none of those is a real result.
 - **Wide move in front**: the solution of "w then scramble", followed by one
   wide move, was taken to solve the scramble.
 
-Applied to the real cubes with `cubenxnxn verify --size 4`:
+Applied to the real cubes with `anycube verify --size 4`:
 
 | Claimed solutions | Solve the cube |
 |---|---|
@@ -1450,7 +1450,7 @@ gives 40.88 in 2.75 s, twice the effort in one direction 40.57 in 4.42 s, and
 
 ## 4x4x4: is the end of the reduction as short as it could be? (2026-11-11)
 
-`cubenxnxn free-tail bench/scrambles-1000.txt --limit 24 --back 3`: the cube
+`anycube free-tail bench/scrambles-1000.txt --limit 24 --back 3`: the cube
 is solved with the default flags, the reduction of the solution is cut j moves
 before the end of the joint phase, and what follows (j moves of the joint
 phase plus phase 3) is compared with the shortest reduction from that point
@@ -1510,7 +1510,7 @@ is found in 11 moves at width 4,096).
 
 ## 4x4x4: lightly scrambled cubes (2026-11-11)
 
-`cubenxnxn known --walk N --base solved --count 20`, default flags: the
+`anycube known --walk N --base solved --count 20`, default flags: the
 solved cube gets N random moves.
 
 | N | Solver, mean length |
@@ -1522,7 +1522,7 @@ solved cube gets N random moves.
 
 The machine was running the beam search above on its GPU during these runs.
 
-`cubenxnxn short --walk N --forward F --ball 5`: the shortest solution found
+`anycube short --walk N --forward F --ball 5`: the shortest solution found
 exactly (every sequence of up to F moves against a table of the 5.3 million
 cubes within 5 moves of solved), next to the solver's default solution. Every
 exact solution was applied to the cube and solves it.
