@@ -163,6 +163,7 @@ fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
     Params6 {
         width: num("--width", d.width),
         tries: num("--tries", d.tries),
+        holds: num("--holds", d.holds),
         finals: num("--finals", d.finals),
         budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
         beam: num("--beam", d.beam),
@@ -927,9 +928,16 @@ fn stage6(args: &[String]) {
         let scramble = s6.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = s6.g.solved();
         s6.g.apply_seq(&mut f, &scramble);
+        let hold = num("--hold", 0);
+        if hold > 0 {
+            f = s6.g.held(&f, &s6.g.holds()[hold]);
+        }
         let (t, c) = (Instant::now(), cubenxnxn::clock::cpu_ms());
         let wide = cubenxnxn::stage6::Wide { width, fan: num("--fan", width), beam: num("--beam", 20_000) };
         let found = s6.stage_wide(&s5, &f, &wide, 0..3);
+        if opt(args, "--each").is_some() {
+            eprintln!("cube {} hold {}: {:?}", n, hold, found.iter().map(|x| x.moves.len()).collect::<Vec<_>>());
+        }
         ms += t.elapsed().as_secs_f64() * 1e3;
         cpu += cubenxnxn::clock::cpu_ms() - c;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };

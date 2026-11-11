@@ -308,10 +308,10 @@ impl Stage5 {
         self.b[(x * N_UD + t) * 2 + odd as usize]
     }
 
-    /// Asks for the memory `b_dist` will read.
+    /// Asks for the entry `b_dist` will read (see `search::fetch`).
     #[inline(always)]
-    pub fn b_prefetch(&self, x: usize, t: usize) {
-        crate::search::prefetch(self.b.as_ptr().wrapping_add((x * N_UD + t) * 2));
+    pub fn b_fetch(&self, x: usize, t: usize, odd: bool) {
+        crate::search::fetch(&self.b, (x * N_UD + t) * 2 + odd as usize);
     }
 
     /// An optimal phase B from the positions of the U/D centres among the
@@ -349,27 +349,11 @@ impl Stage5 {
                 return true;
             }
         }
-        // The tables are larger than the cache: the states one move on are
-        // made first and their entries asked for, then judged in order.
-        let mut kids = [(0u32, 0u32); 36];
         for m in 0..36u8 {
             if skip_move(last, m) {
                 continue;
             }
             let (a, b) = (self.bx.apply(m, x), self.bt.apply(m, t));
-            if rem > 1 && rem - 1 <= NEAR_A {
-                crate::search::prefetch(self.near.as_ptr().wrapping_add(bucket(a, b) >> 1));
-            } else if rem > 1 {
-                crate::search::prefetch(self.ax.as_ptr().wrapping_add(a as usize));
-                crate::search::prefetch(self.at.as_ptr().wrapping_add(b as usize));
-            }
-            kids[m as usize] = (a, b);
-        }
-        for m in 0..36u8 {
-            if skip_move(last, m) {
-                continue;
-            }
-            let (a, b) = kids[m as usize];
             if rem == 1 {
                 if a != GOAL_RL || b != GOAL_RL {
                     continue;

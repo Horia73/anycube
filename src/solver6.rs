@@ -61,13 +61,26 @@ struct Move3 {
 
 /// State of step 3: the inner 4x4x4 as its last phase sees it, and where
 /// the obliques of each orbit show U, R or F.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct Node3 {
     sigma: [u8; 12],
+    /// `sigma_rank` of it, kept because every use of a state needs it.
+    rank: u32,
     centres: u32,
     parity: u8,
     a: u32,
     b: u32,
+}
+
+impl std::hash::Hash for Node3 {
+    /// The rank says nothing the pairing does not.
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.sigma.hash(state);
+        self.centres.hash(state);
+        self.parity.hash(state);
+        self.a.hash(state);
+        self.b.hash(state);
+    }
 }
 
 /// The quick way: face turns and wide half turns until, on every axis, the
@@ -579,7 +592,7 @@ impl Inner6 {
     fn bound(&self, solver: &Solver, n: &Node3, slack: usize, obliques: bool) -> usize {
         let t = &solver.tabs;
         if !obliques {
-            return (t.sigma[sigma_rank(&n.sigma)] as usize).max(t.ct3[t.ct3_index(n.centres, n.parity)] as usize);
+            return (t.sigma[n.rank as usize] as usize).max(t.ct3[t.ct3_index(n.centres, n.parity)] as usize);
         }
         let mut halves = 0;
         for axis in 0..3 {
@@ -589,7 +602,7 @@ impl Inner6 {
                 d => halves += d as usize,
             }
         }
-        let inner = (t.sigma[sigma_rank(&n.sigma)] as usize).max(t.ct3[t.ct3_index(n.centres, n.parity)] as usize);
+        let inner = (t.sigma[n.rank as usize] as usize).max(t.ct3[t.ct3_index(n.centres, n.parity)] as usize);
         let obliques = halves.div_ceil(2);
         let both = if inner.min(obliques) >= slack { inner + obliques - slack } else { 0 };
         inner.max(obliques).max(both)
@@ -601,7 +614,9 @@ impl Inner6 {
             let col = s6.orbits[o].colours(f);
             (0..24).fold(0u32, |m, i| m | ((col[i] < 3) as u32) << i)
         };
-        Node3 { sigma: sigma_of(inner), centres: ct3_mask(inner), parity: ct3_parity(inner), a: primary(OBL_A), b: primary(OBL_B) }
+        let sigma = sigma_of(inner);
+        let rank = sigma_rank(&sigma) as u32;
+        Node3 { sigma, rank, centres: ct3_mask(inner), parity: ct3_parity(inner), a: primary(OBL_A), b: primary(OBL_B) }
     }
 
     /// What step 3 will need, for choosing among the results of step 2: the
@@ -639,7 +654,7 @@ impl Inner6 {
                 let pat = |x: u32| self.rank8[((x >> (8 * axis)) & 255) as usize] as usize;
                 halves += self.joint[axis][(pat(n.centres) * 70 + pat(n.a)) * 70 + pat(n.b)] as u32;
             }
-            let inner = (t.sigma[sigma_rank(&n.sigma)] as u32).max(t.ct3[t.ct3_index(n.centres, n.parity)] as u32);
+            let inner = (t.sigma[n.rank as usize] as u32).max(t.ct3[t.ct3_index(n.centres, n.parity)] as u32);
             // In half moves, the inner cube weighing half as much again.
             3 * inner + halves
         };
@@ -677,7 +692,7 @@ impl Inner6 {
             let t = &solver.tabs;
             eprintln!(
                 "    step 3 bounds: pairing {}, centres {}, centres with obliques (half moves) {:?}",
-                t.sigma[sigma_rank(&root.sigma)],
+                t.sigma[root.rank as usize],
                 t.ct3[t.ct3_index(root.centres, root.parity)],
                 (0..3)
                     .map(|axis| {
@@ -741,8 +756,10 @@ impl crate::search::Problem for Reduce3<'_> {
 
     fn next(&self, n: &Node3, k: usize) -> Node3 {
         let (mv, t) = (&self.inner.moves3[k], &self.solver.tabs);
+        let sigma = sigma_move(&t.pl[mv.k], &t.phinv[mv.k], &n.sigma);
         Node3 {
-            sigma: sigma_move(&t.pl[mv.k], &t.phinv[mv.k], &n.sigma),
+            sigma,
+            rank: sigma_rank(&sigma) as u32,
             centres: t.bp.apply(P3_MOVES[mv.k], n.centres),
             parity: n.parity ^ mv.deep as u8,
             a: self.s6.perms[OBL_A].apply(mv.m, n.a),
@@ -759,10 +776,18 @@ impl crate::search::Problem for Reduce3<'_> {
         n.a == n.b && self.bound(n) == 0
     }
 
+    /// A beam that misses the way through ends on states one 3-layer half
+    /// turn short of a reduced inner cube with every pair of obliques made:
+    /// the score says three half moves, the turn would unmake the pairs,
+    /// and the beam held nothing else for the twenty levels it was given.
+    fn patience(&self) -> usize {
+        4
+    }
+
     #[inline(always)]
     fn prefetch(&self, n: &Node3) {
         // The pairing table is 240 MB; the others stay in the cache.
-        crate::search::prefetch(self.solver.tabs.sigma.as_ptr().wrapping_add(sigma_rank(&n.sigma)));
+        crate::search::fetch(&self.solver.tabs.sigma, n.rank as usize);
     }
 
     fn done(&self, n: &Node3) -> bool {
@@ -845,8 +870,10 @@ impl Run3<'_> {
             return false;
         }
         let t = &self.solver.tabs;
+        let sigma = sigma_move(&t.pl[mv.k], &t.phinv[mv.k], &n.sigma);
         let next = Node3 {
-            sigma: sigma_move(&t.pl[mv.k], &t.phinv[mv.k], &n.sigma),
+            sigma,
+            rank: sigma_rank(&sigma) as u32,
             centres: t.bp.apply(P3_MOVES[mv.k], n.centres),
             parity: n.parity ^ mv.deep as u8,
             a: self.s6.perms[OBL_A].apply(mv.m, n.a),
@@ -891,8 +918,14 @@ impl Run3<'_> {
 pub struct Params6 {
     /// Stagings carried from step to step in step 1.
     pub width: usize,
-    /// Stagings taken on to step 2.
+    /// Stagings taken on to step 2, in each hold.
     pub tries: usize,
+    /// Ways the cube is held (1 to 6). The cube has no fixed centres, so
+    /// any pair of colours may lie on any axis, and the steps treat the
+    /// axes differently: every hold is the same cube as another problem.
+    /// The lengths of the holds differ by a few moves and the shortest is
+    /// kept, which is worth more than one hold searched as many times as wide.
+    pub holds: usize,
     /// Cubes taken through the 5x5x5 solver.
     pub finals: usize,
     /// Positions the exact step 3 may visit for one staging; 0 skips it.
@@ -908,7 +941,7 @@ impl Params6 {
     /// more reductions than its own fast mode does.
     pub fn fast() -> Params6 {
         let outer = Params5 { e_keep: 200, pool: 60, time_ms: 1500, ..Params5::fast() };
-        Params6 { width: 4, tries: 3, finals: 24, budget: 0, beam: 50_000, outer }
+        Params6 { width: 4, tries: 3, holds: 1, finals: 24, budget: 0, beam: 50_000, outer }
     }
 
     /// Wider, and the 5x5x5 with more reductions and more 3x3x3 searches
@@ -918,7 +951,7 @@ impl Params6 {
     pub fn normal() -> Params6 {
         let outer =
             Params5 { c_keep: 4000, p_keep: 4000, e_keep: 800, pool: 240, probes: 10_000, time_ms: 0, ..Params5::normal() };
-        Params6 { width: 8, tries: 6, finals: 64, budget: 0, beam: 100_000, outer }
+        Params6 { width: 8, tries: 6, holds: 1, finals: 64, budget: 0, beam: 100_000, outer }
     }
 
     /// Wider everywhere, and no clock in the 5x5x5, whose last steps get
@@ -927,7 +960,7 @@ impl Params6 {
     /// cubes for less than a move.
     pub fn full() -> Params6 {
         let outer = Params5 { c_keep: 6000, p_keep: 6000, e_keep: 3000, pool: 800, probes: 10_000, time_ms: 0, ..Params5::normal() };
-        Params6 { width: 16, tries: 12, finals: 128, budget: 0, beam: 300_000, outer }
+        Params6 { width: 16, tries: 12, holds: 1, finals: 128, budget: 0, beam: 300_000, outer }
     }
 }
 
@@ -946,6 +979,9 @@ pub struct Solver6 {
     pub solver4: Solver,
     pub outer: Solver5,
     g5: Geometry,
+    /// The six holds of the cube: the turns, and the move of the cube as
+    /// given for each move of the cube as held.
+    holds: Vec<(Vec<usize>, Vec<u8>)>,
 }
 
 /// A cube part of the way through: moves so far, their count per step, the cube.
@@ -956,7 +992,16 @@ impl Solver6 {
         let s6 = Stage6::load();
         let inner = Inner6::new(&s6);
         let quads = Quads::new(&s6);
-        Solver6 { s6, inner, quads, solver4: Solver::new(), outer: Solver5::load(), g5: Geometry::new(5) }
+        let holds = s6
+            .g
+            .holds()
+            .into_iter()
+            .map(|turns| {
+                let map = s6.g.frame_moves(&turns).into_iter().map(|m| m as u8).collect();
+                (turns, map)
+            })
+            .collect();
+        Solver6 { s6, inner, quads, solver4: Solver::new(), outer: Solver5::load(), g5: Geometry::new(5), holds }
     }
 
     fn apply(&self, f: &[u8], moves: &[u8]) -> Vec<u8> {
@@ -1070,14 +1115,19 @@ impl Solver6 {
                 eprintln!("  {:10} at {:6.0} ms, {:6.0} ms of processor", what, clock.elapsed().as_secs_f64() * 1e3, crate::clock::cpu_ms() - cpu);
             }
         };
-        let staged = self.s6.stage(&self.outer.stage, facelets, p.width);
-        lap("staged");
-        let mut cands: Vec<Partial> = staged[..staged.len().min(p.tries)]
-            .iter()
-            .flat_map(|st| self.inner_steps(&st.moves, &self.apply(facelets, &st.moves), p.budget, p.beam))
-            .collect();
-        lap("reduced");
-        cands.sort_by_key(|c| c.0.len());
+        // Steps 1 to 3 in each hold: (hold, cube part of the way through).
+        let mut cands: Vec<(usize, Partial)> = Vec::new();
+        for hold in 0..p.holds.clamp(1, self.holds.len()) {
+            let held = g.held(facelets, &self.holds[hold].0);
+            let staged = self.s6.stage(&self.outer.stage, &held, p.width);
+            lap("staged");
+            for st in &staged[..staged.len().min(p.tries)] {
+                let found = self.inner_steps(&st.moves, &self.apply(&held, &st.moves), p.budget, p.beam);
+                cands.extend(found.into_iter().map(|c| (hold, c)));
+            }
+            lap("reduced");
+        }
+        cands.sort_by_key(|c| c.1 .0.len());
         cands.truncate(p.finals);
         if cands.is_empty() {
             return Err("no reduction of the inner cube found".to_string());
@@ -1086,15 +1136,17 @@ impl Solver6 {
         // its centres; the 5x5x5 solver picks among them by total length.
         let outers: Vec<(Vec<u8>, usize)> = cands
             .iter()
-            .map(|(moves, _, f)| (self.g5.reframe(&g.sub_facelets(f, &[0, 1, 2, 4, 5]), &[]), moves.len()))
+            .map(|(_, (moves, _, f))| (self.g5.reframe(&g.sub_facelets(f, &[0, 1, 2, 4, 5]), &[]), moves.len()))
             .collect();
         let (which, sol5) = self.outer.solve_any(&outers, &p.outer)?;
-        let (moves, lens, _) = &cands[which];
+        let (hold, (moves, lens, _)) = &cands[which];
         if trace {
-            eprintln!("  steps so far {:?}, outer steps {:?}, chosen among {}", lens, sol5.lens, cands.len());
+            eprintln!("  hold {}, steps so far {:?}, outer steps {:?}, chosen among {}", hold, lens, sol5.lens, cands.len());
         }
         lap("solved");
-        let all: Vec<u8> = moves.iter().chain(sol5.moves.iter()).copied().collect();
+        // Back from the cube as held to the cube as given.
+        let given = &self.holds[*hold].1;
+        let all: Vec<u8> = moves.iter().chain(sol5.moves.iter()).map(|&m| given[m as usize]).collect();
         Ok(Solution6 { moves: all, lens: [lens[0], lens[1], lens[2], sol5.moves.len()] })
     }
 }

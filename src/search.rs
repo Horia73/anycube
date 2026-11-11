@@ -80,6 +80,16 @@ pub trait Problem: Sync {
     fn solved(&self, n: &Self::Node) -> bool {
         self.bound(n) == 0 && self.done(n)
     }
+    /// Levels on which every state kept may have one and the same score
+    /// before the beam gives up. Most problems cross such plateaus on their
+    /// way (the matching of a long row of centres does for many levels) and
+    /// say nothing here. A problem that is known to fill up with states
+    /// that look close and are not, and does not leave them, says how soon
+    /// to stop: its caller does better with another start.
+    #[inline(always)]
+    fn patience(&self) -> usize {
+        usize::MAX
+    }
     /// Asks for the memory that the bound and the score of this state will
     /// read. The beam calls it for a batch of states before it rates any of
     /// them, so that the reads of large tables overlap instead of queueing.
@@ -87,27 +97,25 @@ pub trait Problem: Sync {
     fn prefetch(&self, _n: &Self::Node) {}
 }
 
-/// Levels on which every state kept has the same score, after which a beam gives up.
-const STUCK: usize = 4;
-
 /// Parents whose children are made, and their memory asked for, before any
 /// child is rated.
 const BATCH: usize = 8;
 
-/// Asks for the cache line at `p`. Reading past the end of a table is never
-/// done through this; a wrong address only wastes the request.
+/// Tells the processor that `table[index]` will be read soon.
 #[inline(always)]
-pub fn prefetch<T>(p: *const T) {
+pub fn fetch(table: &[u8], index: usize) {
+    debug_assert!(index < table.len());
+    // A hint only: it reads nothing and cannot fault.
     #[cfg(target_arch = "aarch64")]
     unsafe {
-        std::arch::asm!("prfm pldl1keep, [{0}]", in(reg) p, options(nostack, preserves_flags, readonly));
+        std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) table.as_ptr().wrapping_add(index), options(nostack, preserves_flags, readonly));
     }
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        std::arch::x86_64::_mm_prefetch(p as *const i8, std::arch::x86_64::_MM_HINT_T0);
+        std::arch::x86_64::_mm_prefetch(table.as_ptr().wrapping_add(index) as *const i8, std::arch::x86_64::_MM_HINT_T0);
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-    let _ = p;
+    let _ = (table, index);
 }
 
 /// Level by level, only the `width` states with the lowest `score` are
@@ -250,16 +258,13 @@ where
                 cut
             );
         }
-        // A beam whose states all share one score, level after level, has
-        // filled up with states that look close and are not: it is on a
-        // plateau it does not leave (seen for twenty levels and more), and
-        // the caller does better with another start.
+        // See `Problem::patience`.
         match (next.first(), next.last()) {
             (Some(a), Some(b)) if a.0 == b.0 && a.0 == flat => flat_for += 1,
             (Some(a), Some(b)) if a.0 == b.0 => (flat, flat_for) = (a.0, 1),
             _ => (flat, flat_for) = (u32::MAX, 0),
         }
-        if flat_for >= STUCK {
+        if flat_for >= p.patience() {
             return Vec::new();
         }
         trail.push(next.iter().map(|x| (x.3, x.4)).collect());

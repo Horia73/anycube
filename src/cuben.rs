@@ -140,6 +140,52 @@ impl Geometry {
         f
     }
 
+    /// The same cube held differently and its colours renamed after the
+    /// faces they belong on in that hold: a solved cube stays the solved
+    /// cube. For cubes without fixed centres, which may be solved any way
+    /// round: to a solver that treats the axes differently this is another
+    /// cube with the same answer, and a move `m` of its solution is the
+    /// move `frame_moves(turns)[m]` of the cube as it was.
+    pub fn held(&self, facelets: &[u8], turns: &[usize]) -> Vec<u8> {
+        let nn = self.n * self.n;
+        let solved = self.turned(&self.solved(), turns);
+        let mut name = [0u8; 6];
+        for face in 0..6 {
+            name[solved[face * nn] as usize] = face as u8;
+        }
+        self.turned(facelets, turns).iter().map(|&c| name[c as usize]).collect()
+    }
+
+    /// The six holds that differ in which pair of colours lies on which
+    /// axis, as whole-cube turns for `held`; the first is the cube as it
+    /// is. The first three differ in the colours of the R/L axis, the
+    /// other three have those again with the other two axes exchanged.
+    pub fn holds(&self) -> Vec<Vec<usize>> {
+        let nn = self.n * self.n;
+        let mut seen: Vec<(u8, u8)> = Vec::new();
+        let mut out: Vec<Vec<usize>> = Vec::new();
+        let mut frames: Vec<Vec<usize>> = vec![Vec::new()];
+        let mut at = 0;
+        while at < frames.len() {
+            let turns = frames[at].clone();
+            at += 1;
+            let solved = self.turned(&self.solved(), &turns);
+            // The colour pairs on the R/L axis and on the U/D axis.
+            let roles = (solved[nn] % 3, solved[0] % 3);
+            if !seen.contains(&roles) {
+                seen.push(roles);
+                out.push(turns.clone());
+            }
+            if turns.len() < 3 {
+                frames.extend((0..3).map(|t| turns.iter().copied().chain([t]).collect()));
+            }
+        }
+        // The first hold with each pair of colours on the R/L axis, then the rest.
+        let first = |i: usize| (0..i).all(|j| seen[j].0 != seen[i].0);
+        let order = (0..out.len()).filter(|&i| first(i)).chain((0..out.len()).filter(|&i| !first(i)));
+        order.map(|i| out[i].clone()).collect()
+    }
+
     /// For a frame reached by `turns`: `out[m]` is the move of the original cube
     /// that does what move `m` does in the new frame.
     pub fn frame_moves(&self, turns: &[usize]) -> Vec<usize> {

@@ -473,7 +473,7 @@ impl crate::search::Problem for PairUd<'_> {
 
     #[inline(always)]
     fn prefetch(&self, n: &Node34) {
-        crate::search::prefetch(self.s.obl_ud.as_ptr().wrapping_add(n.a as usize * N_UD + n.b as usize));
+        crate::search::fetch(&self.s.obl_ud, n.a as usize * N_UD + n.b as usize);
     }
 }
 
@@ -516,9 +516,9 @@ impl crate::search::Problem for Step34<'_> {
 
     #[inline(always)]
     fn prefetch(&self, n: &Node34) {
-        crate::search::prefetch(self.s.obl_ud.as_ptr().wrapping_add(n.a as usize * N_UD + n.b as usize));
-        self.s5.b_prefetch(n.o as usize, n.a as usize);
-        self.s5.b_prefetch(n.o as usize, n.b as usize);
+        crate::search::fetch(&self.s.obl_ud, n.a as usize * N_UD + n.b as usize);
+        self.s5.b_fetch(n.o as usize, n.a as usize, n.odd & 2 != 0);
+        self.s5.b_fetch(n.o as usize, n.b as usize, n.odd & 2 != 0);
     }
 }
 
@@ -571,8 +571,8 @@ impl Run1<'_> {
         for m2 in 0..54u8 {
             if !skip54(m, m2) {
                 let k = [s.perms[X_IN].apply(m2, next[0]), s.perms[OBL_A].apply(m2, next[1]), s.perms[OBL_B].apply(m2, next[2])];
-                crate::search::prefetch(s.in_rl.as_ptr().wrapping_add(k[0] as usize));
-                crate::search::prefetch(s.unpaired.as_ptr().wrapping_add((k[1] ^ k[2]) as usize));
+                crate::search::fetch(&s.in_rl, k[0] as usize);
+                crate::search::fetch(&s.unpaired, (k[1] ^ k[2]) as usize);
                 kids[m2 as usize] = k;
             }
         }
