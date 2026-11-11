@@ -439,3 +439,22 @@ three-phase search came across. Every reduction was checked. Logs:
 
 The machine was very busy during these runs (load average 50 to 95 on 8
 cores), so the times are upper estimates.
+
+## 4x4x4: solving the inverse cube as well (2026-11-11)
+
+A solution of the inverse cube, undone, solves the cube: its 3x3x3 moves come
+first and the reduction last. First 60 cubes of `scrambles-1000.txt`, default
+flags, cubes solved one at a time; the inverse scrambles were solved with the
+same `bench` command.
+
+| Run | Mean length | Mean time |
+|---|---|---|
+| cube | 40.88 | 2.75 s |
+| inverse cube | 40.77 | 2.70 s |
+| shorter of the two | 40.37 | 5.45 s |
+| cube, twice the effort (`--time 8000 --n2 20000 --k3 20000 --n3 4000 --joint-nodes 2000`) | 40.57 | 4.42 s |
+
+The inverse was shorter on 23 cubes, equal on 18, longer on 19. The machine
+was quiet for the first two runs and became busy during the third (load
+average 40), which works against the double-effort run: the comparison of the
+last two lines is not clean.
