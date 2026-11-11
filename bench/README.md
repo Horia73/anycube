@@ -13,8 +13,8 @@ Moves, lower is better:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | **anycube v0.1.0** | **40.7** | **67.8** | **108.9** | **152.8** | **235.7** | **314.7** | **406.1** |
 | [dwalton76](https://github.com/dwalton76/rubiks-cube-NxNxN-solver) | 51.7 | 79.8 | 136.1 | 194.4 | 308.4 | 368.0 | 523.4 |
-| [Chen Shuang](https://github.com/cs0x7f) | 44.5 | 70.6 | | | | | |
 | [gullicube](https://github.com/rokicki/gullicube) | 97.3 | 166.3 | 273.7 | 396.3 | 566.0 | 703.0 | 890.3 |
+| [Chen Shuang](https://github.com/cs0x7f) | 44.5 | 70.6 | | | | | |
 
 Seconds, lower is better:
 
@@ -22,8 +22,8 @@ Seconds, lower is better:
 |---|---:|---:|---:|---:|---:|---:|---:|
 | **anycube v0.1.0** | 2.8 | **0.58** | **8.4** | **3.8** | 12.9 | **3.7** | 16.6 |
 | dwalton76 | 1.6 | 4.6 | 43 | 9.4 | 15.8 | 11.0 | 24.8 |
-| Chen Shuang | **0.14** | 1.1 | | | | | |
 | gullicube | 9.8 | 8.1 | 8.5 | 4.2 | **8.9** | 6.0 | **10.5** |
+| Chen Shuang | **0.14** | 1.1 | | | | | |
 
 Chen Shuang's solvers are [TPR](https://github.com/cs0x7f/TPR-4x4x4-Solver)
 for the 4x4x4 and [cube555](https://github.com/cs0x7f/cube555) for the 5x5x5.
@@ -34,10 +34,9 @@ numbers yet; a report of different results is welcome.
 
 gullicube was run on the first 3 cubes of each size, with its own time budget
 of about ten seconds. It counts in SSTM, the single slice turn metric (every
-layer turned is one move); here its solutions are counted in OBTM like the
-others, turns on one axis that follow each other merged into the fewest
-outer block turns. In SSTM it is the shorter one from 8x8x8 up: 344 against
-our 455 on the 8x8x8, 528 against 930 on the 10x10x10.
+layer turned is one move), and that is what it is built to keep low; here
+its solutions are counted in OBTM like the others, turns on one axis that
+follow each other merged into the fewest outer block turns.
 
 anycube on every size from 2 to 21, with the slowest cube and the memory
 of each: the [README](../README.md#results).
