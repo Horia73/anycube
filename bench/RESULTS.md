@@ -458,3 +458,36 @@ The inverse was shorter on 23 cubes, equal on 18, longer on 19. The machine
 was quiet for the first two runs and became busy during the third (load
 average 40), which works against the double-effort run: the comparison of the
 last two lines is not clean.
+
+The same with `--mode full`, first 30 cubes (the machine became busy during
+these runs, load average 20 to 30; full mode took 15.9 s on a quiet machine):
+
+| Run | Mean length | Mean time |
+|---|---|---|
+| default, cube | 40.97 | 2.9 s |
+| default, shorter of cube and inverse | 40.43 | 5.5 s |
+| full, cube | 40.10 | 18.2 s |
+| full, inverse cube | 40.23 | 19.8 s |
+| full, shorter of the two | 39.67 | 38.0 s |
+
+Histogram of the last line: 38: 1, 39: 12, 40: 13, 41: 4.
+
+## 4x4x4: our solutions in single-layer quarter turns (2026-11-11)
+
+CayleyPy (arXiv 2502.13266) reports 4x4x4 results in the metric of the Kaggle
+Santa 2023 challenge: every quarter turn of a single layer is one move, no
+piece is fixed. On 43 scrambles of that challenge: 53.49 for the best
+submissions combined, 48.98 for one network with beam width 2^24, 46.51 for
+29 networks. On its first 20 scrambles, one network gives about 58 at width
+2^18, 55 at 2^20, 52 at 2^22 and 50 at 2^24.
+
+Our 1,000 default solutions (`default-results.tsv`, 40.60 in OBTM) counted in
+that metric: 71.36 move by move (wide quarter turn 2, half turn 2, wide half
+turn 4), 66.50 when each run of turns on one axis is written in the cheapest
+way. The solver does not optimise for this metric, and their solutions are
+not published, so they cannot be counted in OBTM.
+
+Counting bound, the same for both metrics: canonical sequences grow 20.73
+times per move in OBTM and 18.52 times per single-layer quarter turn; their
+number reaches the 7.4×10^45 positions at length 35 in OBTM and 37 in
+single-layer quarter turns.
