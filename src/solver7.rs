@@ -386,9 +386,9 @@ pub struct Params7 {
     /// is continued by a step.
     pub width: usize,
     pub fan: usize,
-    /// States kept per level in the beam searches (two staging steps and
-    /// the matching), and how many times each is run with its ties broken
-    /// differently.
+    /// States kept per level in the beam searches of the staging and of
+    /// the matching (`restarts`: how many times each is run with its ties
+    /// broken differently).
     pub beam: usize,
     pub match_beam: usize,
     /// How many lengths past the shortest the matching goes on for: the
@@ -419,13 +419,13 @@ pub struct Params7 {
 }
 
 impl Params7 {
-    /// About ten seconds per cube.
+    /// Narrow beams.
     pub fn fast() -> Params7 {
         Params7 {
             width: 8,
             fan: 8,
             beam: 20_000,
-            match_beam: 20_000,
+            match_beam: 100_000,
             match_more: 1,
             restarts: 1,
             many: 400,
@@ -443,9 +443,11 @@ impl Params7 {
         }
     }
 
-    /// About half a minute per cube.
+    /// The default. The matching is one search from every staging, so
+    /// its beam can be wide: its length still falls at 300,000 states,
+    /// where the staging's has stopped at 100,000.
     pub fn normal() -> Params7 {
-        Params7 { beam: 100_000, match_beam: 100_000, ..Params7::fast() }
+        Params7 { beam: 100_000, match_beam: 300_000, ..Params7::fast() }
     }
 }
 
