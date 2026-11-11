@@ -203,9 +203,12 @@ detail is the last section of `bench/RESULTS.md` on that branch.
 
   So what the sessions did adds up on the large cubes. The third
   10x10x10 cube found no matching there and took the long way (456
-  moves); at 71341bb it is matched (405 moves), so that was either a fault
-  of the merge in between or a search that does not always succeed. A run
-  of all 20 cubes will tell.
+  moves). The session of the 6x6x6 then turned the frame onto the colours'
+  own axes before its step for the innermost ring (f9e8980).
+- `together` at 1ccbd0a (16:01, with this file and that fix), checked the
+  same way: it builds, its 25 tests pass; 8x8x8 235 and 233 moves, 9x9x9
+  320 and 325, 10x10x10 393, 402, 399 and 384, none the long way. A run of
+  all 20 cubes of each size on a quiet machine is still to be done.
 - On even cubes the staging of `src/staging.rs` may leave the colours of
   an axis on the faces of another axis (every centre is still staged). The
   matching in `src/rings.rs` needs only four of each colour per axis and
