@@ -87,6 +87,59 @@ test("warm room light and a dim room", () => {
   }
 });
 
+// Harder light than a face being brighter or darker than the next: the
+// camera choosing another white balance for every picture, a warm lamp, a
+// shadow lying across half of a face. Red and orange are the pair that
+// gives way first.
+function hardPhotograph(facelets, n, colours, rnd, { cast, perFace = false, light, noise, shadow = 0 }) {
+  const nn = n * n;
+  const one = perFace ? null : cast(rnd);
+  const faces = Array.from({ length: 6 }, () => ({
+    gain: light[0] + rnd() * (light[1] - light[0]),
+    cast: one ?? cast(rnd),
+    across: rnd() < 0.5,
+    from: Math.floor(rnd() * n),
+    dark: shadow && rnd() < 0.8 ? shadow : 1,
+  }));
+  return Array.from(facelets, (c, i) => {
+    const f = faces[Math.floor(i / nn)];
+    const [r, col] = [Math.floor((i % nn) / n), i % n];
+    const shade = (f.across ? r : col) >= f.from ? f.dark : 1;
+    return colours[c].map((v, d) => {
+      const bell = (rnd() + rnd() + rnd() - 1.5) * 2 * noise;
+      return Math.max(0, Math.min(255, v * f.gain * f.cast[d] * shade + bell));
+    });
+  });
+}
+
+const HARD = {
+  "a warm lamp": { cast: () => [1.18, 0.95, 0.62], light: [0.5, 1.0], noise: 6 },
+  "a white balance of its own for every picture": { cast: (rnd) => [0.9 + rnd() * 0.25, 1, 0.75 + rnd() * 0.35], perFace: true, light: [0.6, 1.0], noise: 5 },
+  "a shadow across each face": { cast: () => [1, 1, 1], light: [0.6, 1.0], noise: 5, shadow: 0.45 },
+};
+
+for (const [name, scene] of Object.entries(HARD)) {
+  test(`red and orange under ${name}`, () => {
+    for (const n of [3, 4, 5]) {
+      const model = new CubeModel(n);
+      const rnd = random(1000 + n);
+      let wrong = 0;
+      const cubes = 40;
+      for (let round = 0; round < cubes; round++) {
+        const truth = model.applyAll(model.solved(), model.randomScramble(50, rnd));
+        const { facelets } = classify(hardPhotograph(truth, n, SETS.usual, rnd, scene), n);
+        if (!(n % 2 === 1 ? facelets.every((c, i) => c === truth[i]) : sameGroups(facelets, truth))) wrong++;
+      }
+      // Measured: none wrong under the lamp and the changing white balance; under
+      // the shadow one or two in forty at size 3, up to five at size 5, each with
+      // one red and one orange exchanged, which putting the cube together mends
+      // (scan-fit.test.mjs). Before the sorting compared colours as directions it
+      // was one in six at size 3 and one in three at size 5.
+      assert.ok(wrong <= (scene.shadow ? (n === 5 ? 6 : 3) : 0), `size ${n}: ${wrong} of ${cubes} cubes wrong`);
+    }
+  });
+}
+
 test("six of each colour, whatever the picture", () => {
   // Noise only: the answer is still a count the cube could have.
   const rnd = random(5);

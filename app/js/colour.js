@@ -10,20 +10,30 @@
 // from the six samples furthest apart, and a corner says which group
 // belongs on which face.
 //
+// Red and orange are the pair that goes wrong, so the comparison is built
+// for them:
+//
+// - A colour is a direction, not a point: the same sticker in shadow or
+//   in a darker exposure is the same red, green and blue made smaller
+//   together. A sample is compared with a group by how far it lies from
+//   the line of that group's colour at every brightness, measured in the
+//   camera's own noise (a few steps of its scale, whatever the
+//   brightness), so a dark sample, which could be many colours, counts for
+//   little, and a dark orange is not taken for a red because it is dark.
+// - A different white balance multiplies the red, the green and the blue
+//   of a whole picture, each by its own number. Those three numbers are
+//   estimated for each of the six pictures, from how its samples sit
+//   against the groups they fell into, and taken out; the camera changes
+//   its white balance between one face and the next.
+// - Every colour is on exactly N*N stickers, so all samples are placed
+//   together, the surest first.
+//
 // No DOM here, so that the tests can load it under Node.
 
 import { CubeModel } from "./cube-model.js";
 
 // The page's sticker colours, in face order U R F D L B.
 export const STICKERS = ["#f4f4ef", "#d92b3a", "#1faa59", "#f7d038", "#f58220", "#2f6fde"];
-
-// How much lightness counts next to hue. The same sticker is lighter on one
-// face than on another, as each was held to the light differently, so
-// samples are compared by what stays the same when the light changes: the
-// two colour axes of CIELAB divided by the lightness (all three grow with
-// the cube root of the light, so the ratios do not move). Lightness itself
-// is kept with a small weight, to tell white from the rest when colours are pale.
-const LIGHTNESS = 0.25;
 
 function toLab([r, g, b]) {
   const lin = (v) => {
@@ -38,15 +48,42 @@ function toLab([r, g, b]) {
   return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
 }
 
-// A colour as the three numbers samples are compared by. Dividing by the
-// lightness alone would make the hue of a dark sample (a black sticker, a
-// face in shadow) a matter of noise; the constant added to it trades a
-// little of the independence from light for that: measured on made-up
-// pictures, black stickers go wrong in half the cubes without it and in
-// one in forty with it.
+// A colour as three numbers that say what it looks like to the eye:
+// lightness, with a small weight, and the two colour axes of CIELAB made
+// nearly independent of the light. Used to find the page colour nearest a
+// group of stickers, where the group's mean has little noise left.
 export function feature(rgb) {
   const [L, a, b] = toLab(rgb);
-  return [L * LIGHTNESS, (100 * a) / (L + 60), (100 * b) / (L + 60)];
+  return [L * 0.25, (100 * a) / (L + 60), (100 * b) / (L + 60)];
+}
+
+// What the sorting itself compares: how far a sample lies from the line
+// through black and a group's colour, in units of what the camera's noise
+// and a sticker's own unevenness would move it.
+const NOISE = 6; // the camera's noise, in steps of its 8-bit scale
+const UNEVEN = 0.05; // how much one sticker's colour differs across it and from its fellows, as a share
+
+function apart(sample, toward) {
+  const [r, g, b] = sample;
+  const along = r * toward[0] + g * toward[1] + b * toward[2];
+  const length2 = r * r + g * g + b * b;
+  const off2 = along > 0 ? Math.max(0, length2 - along * along) : length2;
+  return Math.sqrt(off2 / (NOISE * NOISE + UNEVEN * UNEVEN * length2));
+}
+
+// Brightness says little: a shadow halves it. But a sample several times
+// darker or lighter than a group is (a black sticker among coloured ones)
+// is not of that group, whatever line its noise puts it nearest. Nothing is
+// counted up to a difference a shadow could make, and more beyond it.
+const SHADE = 0.9; // as a logarithm: about two and a half times
+function unlike(length, usual) {
+  const beyond = Math.abs(Math.log((length + NOISE) / (usual + NOISE))) - SHADE;
+  return beyond > 0 ? 3 * beyond : 0;
+}
+
+function unit(v) {
+  const length = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / length, v[1] / length, v[2] / length];
 }
 
 function distance(p, q) {
@@ -86,16 +123,24 @@ function bestMatch(cost) {
 // Sorts the samples into six groups of equal size. `seeds` are six sample
 // indices to start the groups from; `pinned` says whether a seed stays in
 // its own group whatever happens (the middle stickers of an odd cube).
-function group(lab, seeds, pinned) {
-  const total = lab.length;
-  const each = total / 6;
-  let centres = seeds.map((i) => lab[i]);
+// `cast` is what to divide the samples of each picture by before comparing
+// (see `sortColours`).
+function group(samples, seeds, pinned, each, cast, start) {
+  const total = samples.length;
+  const at = samples.map((p, i) => {
+    const c = cast[Math.floor(i / each)];
+    return [p[0] / c[0], p[1] / c[1], p[2] / c[2]];
+  });
+  const length = at.map((p) => Math.hypot(p[0], p[1], p[2]));
+  let centres = start?.centres ?? seeds.map((i) => unit(at[i]));
+  // How bright each group's samples usually are.
+  let usual = start?.usual ?? seeds.map((i) => length[i]);
   let labels = new Int8Array(total).fill(-1);
   const fixed = new Int8Array(total).fill(-1);
   if (pinned) seeds.forEach((i, k) => (fixed[i] = k));
   let cost = [];
   for (let round = 0; round < 16; round++) {
-    cost = lab.map((p) => centres.map((c) => distance(p, c)));
+    cost = at.map((m, i) => centres.map((c, k) => Math.hypot(apart(m, c), unlike(length[i], usual[k]))));
     const next = new Int8Array(total).fill(-1);
     const room = new Array(6).fill(each);
     for (let i = 0; i < total; i++) {
@@ -135,23 +180,140 @@ function group(lab, seeds, pinned) {
     const same = next.every((v, i) => v === labels[i]);
     labels = next;
     if (same) break;
-    centres = centres.map((_, k) => {
+    // The colour of each group: the directions of its samples laid end to
+    // end, each counted for what it can say (a dark sample little). Not their
+    // sum as they are: one bright sample that strayed into a group of dark
+    // ones would then be that group's colour by itself.
+    centres = centres.map((old, k) => {
       const sum = [0, 0, 0];
-      for (let i = 0; i < total; i++) if (labels[i] === k) for (let d = 0; d < 3; d++) sum[d] += lab[i][d];
-      return sum.map((v) => v / each);
+      for (let i = 0; i < total; i++) {
+        if (labels[i] !== k) continue;
+        const weight = 1 / Math.sqrt(at[i][0] ** 2 + at[i][1] ** 2 + at[i][2] ** 2 + 4 * NOISE * NOISE);
+        for (let d = 0; d < 3; d++) sum[d] += at[i][d] * weight;
+      }
+      return sum[0] + sum[1] + sum[2] > 0 ? unit(sum) : old;
+    });
+    usual = usual.map((old, k) => {
+      let sum = 0;
+      let count = 0;
+      for (let i = 0; i < total; i++) {
+        if (labels[i] !== k) continue;
+        sum += Math.log(length[i] + NOISE);
+        count++;
+      }
+      return count ? Math.exp(sum / count) - NOISE : old;
     });
   }
-  // How unsure each sample is: 0 when its group is far nearer than any other, 1 when two are as near.
+  // How unsure each sample is: 0 when its group is far nearer than any other, 1 when two are
+  // as near; and which group that other is.
   const doubt = new Float32Array(total);
+  const second = new Int8Array(total);
   for (let i = 0; i < total; i++) {
     const own = cost[i][labels[i]];
-    let other = Infinity;
-    for (let c = 0; c < 6; c++) if (c !== labels[i]) other = Math.min(other, cost[i][c]);
-    doubt[i] = Math.max(0, Math.min(1, own / (other + 1e-6)));
+    let other = -1;
+    for (let c = 0; c < 6; c++) if (c !== labels[i] && (other < 0 || cost[i][c] < cost[i][other])) other = c;
+    second[i] = other;
+    doubt[i] = Math.max(0, Math.min(1, own / (cost[i][other] + 1e-6)));
   }
   let spread = 0;
   for (let i = 0; i < total; i++) spread += cost[i][labels[i]];
-  return { labels, doubt, spread };
+  return { labels, doubt, second, spread, centres, usual, at };
+}
+
+// What each picture's red, green and blue are multiplied by, next to the
+// others: for each channel, the number that best turns the group colours
+// of the picture's samples (each at its sample's brightness) into what the
+// samples are. A face with one or two colours on it says little about that
+// (the numbers and the colours cannot be told apart there), so its numbers
+// are taken in part only, and left at one where a single colour fills the face.
+function casts(sorted, each) {
+  const { labels, centres, at } = sorted;
+  const out = [];
+  for (let f = 0; f < 6; f++) {
+    const top = [0, 0, 0];
+    const bottom = [0, 0, 0];
+    const seen = new Set();
+    for (let i = f * each; i < (f + 1) * each; i++) {
+      const c = centres[labels[i]];
+      seen.add(labels[i]);
+      const along = Math.max(0, at[i][0] * c[0] + at[i][1] * c[1] + at[i][2] * c[2]);
+      for (let d = 0; d < 3; d++) {
+        top[d] += at[i][d] * along * c[d];
+        bottom[d] += (along * c[d]) ** 2;
+      }
+    }
+    const share = Math.max(0, Math.min(1, (seen.size - 1) / 3));
+    const raw = top.map((t, d) => (bottom[d] > 1 ? Math.max(0.5, Math.min(2, t / bottom[d])) : 1));
+    // Only how the three differ from each other: brightness is not a cast.
+    const middle = Math.cbrt(raw[0] * raw[1] * raw[2]);
+    out.push(raw.map((v) => (v / middle) ** share));
+  }
+  return out;
+}
+
+/**
+ * Sorts the camera's samples into six groups of n*n, without naming them.
+ * The samples are in six runs of n*n, one run per picture (in any order of
+ * faces, each picture turned any way: the sorting does not depend on it).
+ *
+ * @returns `labels` (0 to 5 per sample; on a cube of odd size group k is
+ *   the one the middle sample of run k is in), `doubt` (0 to 1 per sample:
+ *   how nearly it belonged to another group), `second` (that other group)
+ *   and `colours` (the mean colour the camera saw for each group).
+ */
+export function sortColours(samples, n) {
+  const nn = n * n;
+  if (samples.length !== 6 * nn) throw new Error("expected 6 faces of n by n samples");
+  const none = Array.from({ length: 6 }, () => [1, 1, 1]);
+  const run = (seeds, pinned) => {
+    let cast = none;
+    let best = group(samples, seeds, pinned, nn, cast, null);
+    // The pictures' own casts, taken out a few times over: each sorting says them better.
+    for (let round = 0; round < 3; round++) {
+      const more = casts(best, nn);
+      if (more.every((c) => c.every((v) => Math.abs(v - 1) < 0.004))) break;
+      cast = cast.map((c, f) => c.map((v, d) => v * more[f][d]));
+      best = group(samples, seeds, pinned, nn, cast, best);
+    }
+    return best;
+  };
+  let best;
+  if (n % 2 === 1) {
+    const mid = Math.floor(nn / 2);
+    best = run([0, 1, 2, 3, 4, 5].map((f) => f * nn + mid), true);
+  } else {
+    // Six samples far apart: one to begin with, then each time the one
+    // furthest from all chosen so far. A glint or a shadow can be one of
+    // them and spoil the start, so several beginnings are tried and the
+    // sorting whose groups are tightest is kept.
+    const units = samples.map(unit);
+    const between = (i, j) => Math.min(apart(samples[i], units[j]), apart(samples[j], units[i]));
+    const grey = unit([1, 1, 1]);
+    const colourful = (i) => apart(samples[i], grey);
+    const byColour = samples.map((_, i) => i).sort((i, j) => colourful(j) - colourful(i));
+    const starts = [0, 0.2, 0.4, 0.6, 0.8, 1].map((q) => byColour[Math.round(q * (byColour.length - 1))]);
+    for (const first of starts) {
+      const seeds = [first];
+      const near = samples.map((_, i) => between(i, first));
+      while (seeds.length < 6) {
+        let far = 0;
+        near.forEach((d, i) => {
+          if (d > near[far]) far = i;
+        });
+        seeds.push(far);
+        samples.forEach((_, i) => (near[i] = Math.min(near[i], between(i, far))));
+      }
+      const tried = run(seeds, false);
+      if (!best || tried.spread < best.spread) best = tried;
+    }
+  }
+  const { labels, doubt, second } = best;
+  const colours = [0, 1, 2, 3, 4, 5].map((k) => {
+    const sum = [0, 0, 0];
+    for (let i = 0; i < labels.length; i++) if (labels[i] === k) for (let d = 0; d < 3; d++) sum[d] += samples[i][d];
+    return sum.map((v) => v / nn);
+  });
+  return { labels, doubt, second, colours };
 }
 
 // The eight corners as triples of facelet indices, by their place: bit 0
@@ -171,7 +333,7 @@ function corners(n) {
 // Which face each group of an even cube belongs on, from its corners: two
 // colours that never meet at a corner are opposite, and the corner at the
 // bottom, back and left is taken to be at home, which fixes the rest.
-function nameByCorner(n, labels) {
+export function nameByCorner(n, labels) {
   const meet = Array.from({ length: 6 }, () => new Array(6).fill(false));
   const cs = corners(n);
   for (const c of cs) {
@@ -201,56 +363,39 @@ function nameByCorner(n, labels) {
  * @param {number[][]} samples 6*n*n colours as [r, g, b], in facelet order
  * @param {number} n the size of the cube
  * @returns facelets (0 to 5 for URFDLB, per sample), `doubt` (0 to 1 per
- *   sample: how nearly it belonged to another colour), `palette` (the page
- *   colour to show each face's stickers in) and `seen` (the mean colour the
- *   camera saw for each face's stickers).
+ *   sample: how nearly it belonged to another colour), `second` (that other
+ *   colour, as a face), `palette` (the page colour to show each face's
+ *   stickers in) and `seen` (the mean colour the camera saw for each face's
+ *   stickers).
  */
 export function classify(samples, n) {
-  const nn = n * n;
-  if (samples.length !== 6 * nn) throw new Error("expected 6 faces of n by n samples");
-  const lab = samples.map(feature);
-  let best;
-  if (n % 2 === 1) {
-    const mid = Math.floor(nn / 2);
-    best = group(lab, [0, 1, 2, 3, 4, 5].map((f) => f * nn + mid), true);
-  } else {
-    // Six samples far apart: one to begin with, then each time the one
-    // furthest from all chosen so far. A glint or a shadow can be one of
-    // them and spoil the start, so several beginnings are tried and the
-    // grouping whose groups are tightest is kept.
-    const colourful = (i) => Math.hypot(lab[i][1], lab[i][2]);
-    const byColour = lab.map((_, i) => i).sort((i, j) => colourful(j) - colourful(i));
-    const starts = [0, 0.2, 0.4, 0.6, 0.8, 1].map((q) => byColour[Math.round(q * (byColour.length - 1))]);
-    for (const first of starts) {
-      const seeds = [first];
-      const near = lab.map((p) => distance(p, lab[first]));
-      while (seeds.length < 6) {
-        let far = 0;
-        near.forEach((d, i) => {
-          if (d > near[far]) far = i;
-        });
-        seeds.push(far);
-        lab.forEach((p, i) => (near[i] = Math.min(near[i], distance(p, lab[far]))));
-      }
-      const tried = group(lab, seeds, false);
-      if (!best || tried.spread < best.spread) best = tried;
-    }
-  }
-  const { labels, doubt } = best;
+  const sorted = sortColours(samples, n);
+  return named(n, sorted, sorted.labels);
+}
 
-  const mean = (k) => {
-    const sum = [0, 0, 0];
-    for (let i = 0; i < labels.length; i++) if (labels[i] === k) for (let d = 0; d < 3; d++) sum[d] += samples[i][d];
-    return sum.map((v) => v / nn);
-  };
-  const groupColour = [0, 1, 2, 3, 4, 5].map(mean);
+/**
+ * Names the groups of `sortColours` by the faces they belong on, for
+ * samples laid out as a cube: `labels` are the groups in facelet order
+ * (the same groups, moved to where an arrangement of the pictures puts
+ * them), `doubt` and `second` likewise if given.
+ */
+export function named(n, sorted, labels, doubt = sorted.doubt, second = sorted.second) {
+  const nn = n * n;
+  const groupColour = sorted.colours;
   // The page colour nearest each group, each used once.
   const reference = STICKERS.map((hex) => feature(hexToRgb(hex)));
   const look = bestMatch(groupColour.map((c) => reference.map((r) => distance(feature(c), r))));
-
-  // Odd: group k grew from the middle of face k. Even: ask a corner, and
-  // if the corners make no sense yet, go by what the colours look like.
-  const name = n % 2 === 1 ? [0, 1, 2, 3, 4, 5] : nameByCorner(n, labels) || look;
+  // Odd: a group is named by the face its middle sticker is on. Even: ask a
+  // corner, and if the corners make no sense yet, go by what the colours look like.
+  let name;
+  if (n % 2 === 1) {
+    const mid = Math.floor(nn / 2);
+    name = new Array(6).fill(-1);
+    for (let f = 0; f < 6; f++) name[labels[f * nn + mid]] = f;
+    if (name.includes(-1)) name = look;
+  } else {
+    name = nameByCorner(n, labels) || look;
+  }
   const facelets = Uint8Array.from(labels, (k) => name[k]);
   const palette = new Array(6);
   const seen = new Array(6);
@@ -258,7 +403,30 @@ export function classify(samples, n) {
     palette[name[k]] = STICKERS[look[k]];
     seen[name[k]] = groupColour[k].map(Math.round);
   }
-  return { facelets, doubt, palette, seen };
+  return { facelets, doubt, second: Int8Array.from(second, (k) => name[k]), palette, seen };
+}
+
+// The page's own colours as directions, for a first guess at one sample.
+const STANDARD = STICKERS.map((hex) => unit(hexToRgb(hex)));
+
+/**
+ * What one sample looks like by itself, before a whole cube has been seen:
+ * the nearest of the page's six colours, and how nearly it was the next
+ * nearest (0 to 1). Only for showing while the camera is held up: the cube
+ * is sorted afterwards, all its stickers together, without this.
+ */
+export function guess(rgb) {
+  const far = STANDARD.map((c, k) => Math.hypot(apart(rgb, c), k === 0 ? 0 : unlike(Math.hypot(rgb[0], rgb[1], rgb[2]), 255)));
+  let first = 0;
+  let next = -1;
+  for (let k = 1; k < 6; k++) if (far[k] < far[first]) first = k;
+  for (let k = 0; k < 6; k++) if (k !== first && (next < 0 || far[k] < far[next])) next = k;
+  return { colour: first, doubt: Math.max(0, Math.min(1, far[first] / (far[next] + 1e-6))) };
+}
+
+/** How unlike two samples are, in the measure the sorting uses: under 3 or so they could be one colour. */
+export function unalike(a, b) {
+  return Math.max(apart(a, unit(b)), apart(b, unit(a)));
 }
 
 /**
