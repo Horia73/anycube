@@ -15,10 +15,9 @@
 # Rust; this script does not install it, it says how.
 set -eu
 
-# The repository on GitHub, as owner/name. Filled in when it is published;
-# until then there are no releases to fetch from and the script builds
-# from the clone it is run in.
-REPO="OWNER/REPO"
+# The repository on GitHub, as owner/name: where ready-made programs are
+# fetched from (its releases) and, without a clone, the source.
+REPO="Horia73/anycube"
 
 BIN_DIR="${ANYCUBE_BIN_DIR:-$HOME/.local/bin}"
 BIN="$BIN_DIR/anycube"
@@ -85,7 +84,7 @@ here=$(cd "$(dirname "$0")" 2>/dev/null && pwd || pwd)
 got=""
 
 # A ready-made program from the releases, if there is one for this system.
-if [ "$source_only" = no ] && [ "$REPO" != "OWNER/REPO" ] && command -v curl >/dev/null 2>&1; then
+if [ "$source_only" = no ] && command -v curl >/dev/null 2>&1; then
     asset="anycube-$OS-$ARCH.tar.gz"
     if curl -fsSL "https://github.com/$REPO/releases/latest/download/$asset" -o "$work/$asset" 2>/dev/null \
         && tar -xzf "$work/$asset" -C "$work" 2>/dev/null && [ -f "$work/anycube" ]; then
@@ -106,12 +105,12 @@ if [ -z "$got" ]; then
     fi
     if [ -f "$here/Cargo.toml" ] && grep -q '^name = "anycube"' "$here/Cargo.toml"; then
         src="$here"
-    elif [ "$REPO" != "OWNER/REPO" ] && command -v git >/dev/null 2>&1; then
+    elif command -v git >/dev/null 2>&1; then
         say "Fetching the source..."
         git clone --quiet --depth 1 "https://github.com/$REPO" "$work/src"
         src="$work/src"
     else
-        fail "run this from a clone of the anycube repository"
+        fail "building from source needs git to fetch it, or run this from a clone of the repository"
     fi
     say "Building (a minute or two)..."
     (cd "$src" && cargo build --release --quiet)

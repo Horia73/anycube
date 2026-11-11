@@ -16,7 +16,7 @@ export const APP_HTML = `
       <rect x="1" y="8.8" width="6.4" height="6.4" rx="1.4" class="m3"/><rect x="8.8" y="8.8" width="6.4" height="6.4" rx="1.4" class="m4"/><rect x="16.6" y="8.8" width="6.4" height="6.4" rx="1.4" class="m5"/>
       <rect x="1" y="16.6" width="6.4" height="6.4" rx="1.4" class="m1"/><rect x="8.8" y="16.6" width="6.4" height="6.4" rx="1.4" class="m5"/><rect x="16.6" y="16.6" width="6.4" height="6.4" rx="1.4" class="m3"/>
     </svg>
-    <span>cube<b>n</b>x<b>n</b>x<b>n</b></span>
+    <span>anycube</span>
   </a>
   <div class="top-extra" id="top-extra"></div>
 </header>
