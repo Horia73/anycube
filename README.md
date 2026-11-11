@@ -195,9 +195,11 @@ other people's. Thank you to:
   8-step method) and [cube555](https://github.com/cs0x7f/cube555). The 4x4x4
   and 5x5x5 solvers here follow the way his are built.
 - **[dwalton76](https://github.com/dwalton76)**, for the
-  [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver), which
-  showed that one program can solve a cube of any size. The general solver
-  here began from how his works.
+  [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver) he
+  wrote for his LEGO robots that solve cubes. It is the inspiration for this
+  project, and the general solver here began from how his works. We have a
+  LEGO cube robot of our own, and driving it is the first thing this solver
+  is for.
 
 ## Licence
 
