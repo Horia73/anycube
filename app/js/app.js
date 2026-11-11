@@ -155,10 +155,12 @@ export async function mount(root, options = {}) {
     clearInterval(state.ticker);
     if (!kind) {
       box.hidden = true;
+      drawWait(null);
       return;
     }
     box.hidden = false;
     box.className = `status ${kind}`;
+    if (kind !== "busy") drawWait(null);
     const mark =
       kind === "busy"
         ? el("span", { class: "busy", "aria-hidden": "true" }, [el("i"), el("i"), el("i"), el("i")])
@@ -168,6 +170,20 @@ export async function mount(root, options = {}) {
     box.replaceChildren(mark, body);
     if (more) box.append(el("p", { class: "more-line", text: more }));
     if (extra) box.append(extra);
+  }
+
+  // While a solve is under way the same is said large where the solution
+  // will be: a place in the line is not to be missed.
+  function drawWait(title, more = "", extra = null) {
+    const box = $("wait");
+    $("solution").classList.toggle("waiting", Boolean(title));
+    box.hidden = !title;
+    if (!title) return box.replaceChildren();
+    const head = el("p", { class: "wait-title" });
+    head.append(...(Array.isArray(title) ? title : [title]));
+    box.replaceChildren(head);
+    if (extra) box.append(extra);
+    if (more) box.append(el("p", { class: "wait-more", text: more }));
   }
 
   // What it says when no solve is under way: what is wrong with the cube
@@ -578,27 +594,41 @@ export async function mount(root, options = {}) {
 
   // ---------------------------------------------------------------- solve
 
+  // 1st, 2nd, 3rd, 4th, 11th, 21st.
+  const ordinal = (k) => k + (k % 100 >= 11 && k % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][k % 10] ?? "th");
+
   function onJob(job) {
     if (job.status === "browser") {
       drawStatus("busy", "Solving in your browser…");
+      drawWait("Solving in your browser…");
     } else if (job.status === "queued") {
       // The line as it stands: those ahead, this one, those behind.
-      const line = el("div", { class: "line", "aria-hidden": "true" });
-      for (let k = 1; k <= job.waiting; k++) line.append(el("i", { class: k < job.position ? "ahead" : k === job.position ? "you" : "" }));
-      const ahead = job.position === 1 ? "You are next." : `${job.position - 1} ahead of you.`;
-      drawStatus("busy", ["Waiting in line: ", el("b", { text: `position ${job.position} of ${job.waiting}` }), "."], `${ahead} One cube is solved at a time.`, line);
+      const line = () => {
+        const row = el("div", { class: "line", "aria-hidden": "true" });
+        for (let k = 1; k <= job.waiting; k++) row.append(el("i", { class: k < job.position ? "ahead" : k === job.position ? "you" : "" }));
+        return row;
+      };
+      // The place is the server's own number: 1 is the next cube to be solved.
+      const place = job.position === 1 ? "next" : ordinal(job.position);
+      const ahead = job.position === 1 ? "The cube before yours is being solved." : `${job.position - 1} waiting ahead of you, and one being solved.`;
+      drawStatus("busy", ["You are ", el("b", { text: place }), " in line"], `${ahead} One cube is solved at a time.`, line());
+      drawWait(["You are ", el("b", { text: place }), " in line"], `${ahead} One cube is solved at a time.`, line());
     } else if (job.status === "running" && job.phase === "loading") {
       // The first solve of a size builds its tables: what the solver says it is doing is shown as it goes.
-      drawStatus("busy", `Loading the tables for the ${name(job.size)}…`, job.progress || "The first time a size is solved its tables are built, which takes minutes.");
+      const what = job.progress || "The first time a size is solved its tables are built, which takes minutes.";
+      drawStatus("busy", `Loading the tables for the ${name(job.size)}…`, what);
+      drawWait(`Loading the tables for the ${name(job.size)}…`, what);
     } else if (job.status === "running") {
       const since = performance.now() - job.for_ms;
-      // The seconds are for the eye only: a screen reader hears "Searching" once.
-      const clock = el("span", { "aria-hidden": "true" });
+      // The seconds are for the eye only: a screen reader hears "Solving" once.
+      const clocks = [el("span", { "aria-hidden": "true" }), el("span", { "aria-hidden": "true" })];
       const say = () => {
         const s = (performance.now() - since) / 1000;
-        clock.textContent = ` ${s.toFixed(s < 10 ? 1 : 0)} s`;
+        for (const clock of clocks) clock.textContent = ` ${s.toFixed(s < 10 ? 1 : 0)} s`;
       };
-      drawStatus("busy", ["Searching…", clock], solver.config.time_cap_s ? `A search may take ${solver.config.time_cap_s} s here.` : job.progress || "");
+      const cap = solver.config.time_cap_s ? `A search may take ${solver.config.time_cap_s} s here.` : job.progress || "";
+      drawStatus("busy", ["Solving…", clocks[0]], cap);
+      drawWait(["Solving…", clocks[1]], cap);
       say();
       state.ticker = setInterval(say, 100);
     }
@@ -631,7 +661,9 @@ export async function mount(root, options = {}) {
     state.job = job;
     state.result = null;
     setBusy(true);
-    drawStatus("busy", solver.inBrowser(size) ? "Solving in your browser…" : solver.config.local ? "Solving…" : "Sending the cube to the server…");
+    const first = solver.inBrowser(size) ? "Solving in your browser…" : solver.config.local ? "Solving…" : "Sending the cube to the server…";
+    drawStatus("busy", first);
+    drawWait(first);
     let result = null;
     let failure = null;
     try {

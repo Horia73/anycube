@@ -11,10 +11,12 @@ export const APP_HTML = `
 
 <header class="top">
   <a class="brand" href="./" aria-label="anycube">
-    <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
-      <rect x="1" y="1" width="6.4" height="6.4" rx="1.4" class="m0"/><rect x="8.8" y="1" width="6.4" height="6.4" rx="1.4" class="m1"/><rect x="16.6" y="1" width="6.4" height="6.4" rx="1.4" class="m2"/>
-      <rect x="1" y="8.8" width="6.4" height="6.4" rx="1.4" class="m3"/><rect x="8.8" y="8.8" width="6.4" height="6.4" rx="1.4" class="m4"/><rect x="16.6" y="8.8" width="6.4" height="6.4" rx="1.4" class="m5"/>
-      <rect x="1" y="16.6" width="6.4" height="6.4" rx="1.4" class="m1"/><rect x="8.8" y="16.6" width="6.4" height="6.4" rx="1.4" class="m5"/><rect x="16.6" y="16.6" width="6.4" height="6.4" rx="1.4" class="m3"/>
+    <!-- The project's mark, as in docs/logo.svg. -->
+    <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+      <rect width="24" height="24" rx="5" fill="#0e1014"/>
+      <rect x="3" y="3" width="5.2" height="5.2" rx="1.2" fill="#f4f4ef"/><rect x="9.4" y="3" width="5.2" height="5.2" rx="1.2" fill="#d92b3a"/><rect x="15.8" y="3" width="5.2" height="5.2" rx="1.2" fill="#1faa59"/>
+      <rect x="3" y="9.4" width="5.2" height="5.2" rx="1.2" fill="#f7d038"/><rect x="9.4" y="9.4" width="5.2" height="5.2" rx="1.2" fill="#f58220"/><rect x="15.8" y="9.4" width="5.2" height="5.2" rx="1.2" fill="#2f6fde"/>
+      <rect x="3" y="15.8" width="5.2" height="5.2" rx="1.2" fill="#d92b3a"/><rect x="9.4" y="15.8" width="5.2" height="5.2" rx="1.2" fill="#2f6fde"/><rect x="15.8" y="15.8" width="5.2" height="5.2" rx="1.2" fill="#f7d038"/>
     </svg>
     <span>anycube</span>
   </a>
@@ -134,6 +136,7 @@ export const APP_HTML = `
         <button type="button" class="button small" id="copy" hidden>Copy</button>
         <div id="moves" class="moves"></div>
         <p class="placeholder" id="placeholder"></p>
+        <div class="wait" id="wait" hidden></div>
       </section>
       <div class="cube-host scan-slot" id="scan-slot"></div>
     </div>

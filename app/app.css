@@ -170,12 +170,6 @@ kbd {
   font-weight: 600;
   color: var(--ink-3);
 }
-.brand .m0 { fill: var(--u); }
-.brand .m1 { fill: var(--r); }
-.brand .m2 { fill: var(--f); }
-.brand .m3 { fill: var(--d); }
-.brand .m4 { fill: var(--l); }
-.brand .m5 { fill: var(--b); }
 
 /* What the hosting page puts in the bar. */
 .top-extra {
@@ -361,21 +355,21 @@ kbd {
   font-weight: 700;
 }
 /* Four stickers taking turns: the page is busy. */
-.busy {
+span.busy {
   width: 20px;
   height: 20px;
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 2px;
 }
-.busy i {
+span.busy i {
   border-radius: 2.5px;
   animation: pulse 1.2s infinite ease-in-out;
 }
-.busy i:nth-child(1) { background: var(--d); }
-.busy i:nth-child(2) { background: var(--r); animation-delay: 0.15s; }
-.busy i:nth-child(4) { background: var(--b); animation-delay: 0.3s; }
-.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
+span.busy i:nth-child(1) { background: var(--d); }
+span.busy i:nth-child(2) { background: var(--r); animation-delay: 0.15s; }
+span.busy i:nth-child(4) { background: var(--b); animation-delay: 0.3s; }
+span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 @keyframes pulse {
   0%, 100% { opacity: 0.25; }
   40% { opacity: 1; }
@@ -621,6 +615,55 @@ kbd {
   font-size: 0.84rem;
   line-height: 1.4;
   color: var(--ink-3);
+}
+/* While a solve waits or runs, its state stands where the solution will be. */
+.wait {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: stretch;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 0 8px;
+}
+.wait[hidden] {
+  display: none;
+}
+.wait-title {
+  margin: 0;
+  font-size: 1.35rem;
+  line-height: 1.2;
+  font-weight: 500;
+}
+.wait-title b {
+  font-weight: 750;
+}
+.wait-title span {
+  font-variant-numeric: tabular-nums;
+}
+.wait-more {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.wait .line {
+  width: min(100%, 260px);
+  justify-content: center;
+  margin: 0;
+}
+.wait .line i {
+  height: 8px;
+  border-radius: 4px;
+}
+.solution.waiting .moves,
+.solution.waiting .placeholder,
+.solution.waiting #copy {
+  display: none;
 }
 .scan-slot {
   flex: 1;
@@ -1306,7 +1349,7 @@ textarea.bad {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .busy i {
+  span.busy i {
     animation: none;
     opacity: 0.8;
   }
