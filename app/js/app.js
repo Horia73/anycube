@@ -99,6 +99,7 @@ export async function mount(root, options = {}) {
     scramble: { moves: [], problem: null },
     painted: new Map(), // size -> { facelets, palette, doubt }
     carried: null, // the scramble's cube as it stood when Paint was last left for it (see setTab)
+    shows: "scramble", // whose cube is on screen, with any solution of it: the scramble's or the painted one
     scan: null, // while the camera reads a cube: the colours seen so far, per facelet
     job: null, // an AbortController while a solve is under way
     ticker: 0,
@@ -135,6 +136,7 @@ export async function mount(root, options = {}) {
         ? { facelets: Array.from(p.facelets), palette: p.palette, doubt: p.doubt ? Array.from(p.doubt) : null, second: p.second ? Array.from(p.second) : null, note: $("paint-note").textContent }
         : null,
       carried: state.carried,
+      shows: state.shows,
       solution: solution ? { moves: model.names(solution.moves), parts: solution.parts ?? [], label: solution.label ?? "", optimal: !!solution.optimal } : null,
       position: player.position,
       rot: Array.from(view.rot),
@@ -166,7 +168,7 @@ export async function mount(root, options = {}) {
         if (page.painted.facelets?.length !== model.count || page.painted.palette?.length !== 6) return null;
         page.painted.facelets = model.withCentres(Uint8Array.from(page.painted.facelets));
       }
-      if (page.input !== "scramble" && page.painted && page.size <= PAINT_MAX) {
+      if (page.input !== "scramble" && page.painted && page.size <= PAINT_MAX && page.shows !== "scramble") {
         start = page.painted.facelets;
         palette = page.painted.palette;
       }
@@ -359,8 +361,20 @@ export async function mount(root, options = {}) {
     view.setColours({ palette: cube.palette });
     view.setMarks(state.input === "scramble" || state.scan ? null : painted().doubt);
     player.load(state.model, cube.start, []);
+    state.shows = state.input === "scramble" ? "scramble" : "painted";
     view.setRaw(state.scan);
     renderSolution(null);
+    restStatus();
+    judge(cube);
+    keepLater();
+  }
+
+  // The tab changed and the cube on screen is the one the new tab is about:
+  // it stays as it is, a solution and how far it was played with it. Only
+  // what the tab says about it is brought up to date.
+  function stay() {
+    const cube = entered();
+    view.setMarks(state.input === "scramble" ? null : painted().doubt);
     restStatus();
     judge(cube);
     keepLater();
@@ -385,8 +399,13 @@ export async function mount(root, options = {}) {
       return;
     }
     // Painted or scanned: every piece is looked at before Solve may be pressed.
-    setValid("wait", "Checking the cube…");
+    // The check is back at once as a rule; only one that takes a moment is
+    // said, so that the line and the button do not blink at every change.
+    const slow = setTimeout(() => {
+      if (mine === checking) setValid("wait", "Checking the cube…");
+    }, 400);
     const error = await solver.check(size, "facelets", cube.input);
+    clearTimeout(slow);
     if (mine !== checking) return;
     if (!error) {
       setValid("ok", good("every piece checked"));
@@ -516,24 +535,35 @@ export async function mount(root, options = {}) {
     // The solution's tab only shows what there is; the cube stays as it is.
     if (tab === "moves" || (from === "moves" && tab === state.input)) return;
     const came = state.input;
-    // Paint starts from the cube on screen: the scramble's, with as much of
-    // a solution as was played, there to be corrected sticker by sticker.
-    // Only a cube painted before and not changed under Scramble since is
-    // left as it was painted.
-    if (tab === "paint" && came === "scramble" && state.size <= PAINT_MAX && !state.scramble.problem) {
+    const paintable = state.size <= PAINT_MAX;
+    // Whether the cube on screen is the cube the new tab is about: then it
+    // stays, with its solution and how far that was played.
+    let same = false;
+    if (tab !== "scramble" && came === "scramble" && paintable && !state.scramble.problem) {
+      // Paint (and the camera's tab, before a scan) start from the cube on
+      // screen: the scramble's, with as much of a solution as was played,
+      // there to be corrected sticker by sticker. Only a cube painted before
+      // and not changed under Scramble since is left as it was painted.
       const shown = state.model.toText(player.facelets);
       if (shown !== state.carried) {
         state.painted.set(state.size, { facelets: player.facelets.slice(), palette: STICKERS.slice(), doubt: null });
         $("paint-note").textContent = PAINT_NOTE;
       }
+      same = state.model.toText(painted().facelets) === shown;
+    } else if (tab === "scramble" && came !== "scramble") {
+      // Back to the scramble: its cube is still on screen if nothing was painted meanwhile.
+      same = state.shows === "scramble" && !state.scramble.problem;
+    } else if (tab !== "scramble" && came !== "scramble") {
+      same = true;
     }
     state.input = tab;
     setTouch();
-    if (tab !== "scramble" && state.size <= PAINT_MAX) {
+    if (tab !== "scramble" && paintable) {
       const p = painted();
       paint.set(state.size, p.facelets, p.palette, p.doubt, p.second);
     }
-    show();
+    if (same && !state.scan) stay();
+    else show();
     if (tab === "scramble" && came !== "scramble") state.carried = state.model.toText(player.facelets);
   }
 
@@ -907,6 +937,7 @@ export async function mount(root, options = {}) {
     }
     state.solution = { ...result, moves, label: size === 2 ? "the fewest there are" : `${mode} search` };
     player.load(state.model, cube.start, moves);
+    state.shows = state.input === "scramble" ? "scramble" : "painted";
     renderSolution(state.solution);
     player.onchange();
     const secs = result.ms / 1000;
@@ -983,6 +1014,15 @@ export async function mount(root, options = {}) {
   let marked = -1;
   player.onchange = () => {
     const { position, length, playing } = player;
+    // Under Paint with the scramble's cube still on screen, the cube to
+    // paint is the cube on screen, wherever its solution has been played to.
+    if (state.input !== "scramble" && state.shows === "scramble" && !player.moving && !state.scan && state.size <= PAINT_MAX) {
+      const p = painted();
+      if (state.model.toText(p.facelets) !== state.model.toText(player.facelets)) {
+        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: STICKERS.slice(), doubt: null });
+        paint.set(state.size, painted().facelets, painted().palette, null);
+      }
+    }
     $("at").textContent = String(position);
     $("total").textContent = String(length);
     const scrub = $("scrub");
@@ -1117,11 +1157,16 @@ export async function mount(root, options = {}) {
     readScramble();
     if (was.input !== "scramble") show();
     if (was.solution && was.moves.length) {
-      const cube = entered();
+      // The cube the solution is of: the scramble's even under Paint, if it was that cube on screen.
+      const ofScramble = was.shows === "scramble" && !state.scramble.problem;
+      const start = ofScramble ? state.model.applyAll(state.model.solved(), state.scramble.moves) : entered().start;
       // Once more against the cube the page itself arrived at.
-      if (state.model.isSolved(state.model.applyAll(cube.start, was.moves))) {
+      if (state.model.isSolved(state.model.applyAll(start, was.moves))) {
         state.solution = { moves: was.moves, parts: was.solution.parts, label: was.solution.label, optimal: was.solution.optimal };
-        player.load(state.model, cube.start, was.moves);
+        player.load(state.model, start, was.moves);
+        state.shows = ofScramble ? "scramble" : "painted";
+        view.setColours({ palette: STICKERS });
+        if (!ofScramble) view.setColours({ palette: entered().palette });
         renderSolution(state.solution);
         player.seek(was.position);
       }
