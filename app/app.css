@@ -1132,7 +1132,9 @@ textarea.bad {
   grid-template-columns: repeat(6, 1fr);
   gap: 5px;
   margin: 0;
-  padding: 0;
+  /* Room for the frame round the face in hand, which is drawn outside it:
+     without it the box this strip scrolls in cuts the frame's left side. */
+  padding: 3px;
   list-style: none;
   max-width: 330px;
 }
