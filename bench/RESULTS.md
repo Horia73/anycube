@@ -897,3 +897,117 @@ What was tried for long rows before this and did not work:
   four: each requirement alone is met in 6 to 8 moves, two of them in 10
   or 11, all three together not at all within 50 moves.
 
+
+
+## 5x5x5: shorter and with a third of the work (2026-11-11, branch `faster-555`)
+
+The machine ran five or six benchmarks of other sessions at once during all
+of this (load average 60 to 240 on 10 cores), so wall-clock times mean
+nothing here. What is compared is lengths without a clock (`--time 0`,
+the same cube then gives the same solution however busy the machine is),
+processor time of old and new run side by side on the same cubes, and
+positions visited, which `bench5` now prints per phase.
+
+Old and new at the same time, first 12 cubes, `--time 0`:
+
+| Mode | Old length | New length | Old processor time | New processor time |
+|---|---|---|---|---|
+| fast | 70.00 | 69.00 | 74.7 s | 22.6 s |
+| default | 68.83 | 67.75 | 196.5 s | 61.7 s |
+
+On more cubes, new code, `--time 0`:
+
+| Mode | Centres | Edges | 3x3x3 | Total | Recorded before | Positions per cube (centres, C, P, E), millions | Cubes |
+|---|---|---|---|---|---|---|---|
+| fast | 11.20 + 6.92 | 6.85 + 11.91 + 14.15 | 17.80 | 68.84 | 70.16 | 0.68, 0.10, 0.58, 0.92 | 200 |
+| default | 11.63 + 6.30 | 7.00 + 11.70 + 14.03 | 17.23 | 67.90 | 68.6 on the same cubes | 2.17, 0.33, 1.15, 1.65 | first 30 |
+
+The fast mode is now as short as the default was (68.84 against 68.82 on
+the 200 cubes; longest 71, was 72 for the default). The default was stopped
+after 34 of the 200 cubes (67.91) to free the machine; it and the full mode
+are still to be run on the whole set, and all times on a quiet machine.
+File: `fast555-results.tsv` is from the old code; the new runs are not in
+the folder yet.
+
+What changed, in the order of what it was worth:
+
+- **Phase A of the centres, one length further.** With no clock, the old
+  search spent 62% of the processor time in phase A, and its second length
+  (optimum + 1) was worth 1.85 moves (70.65 with the optimum only, 68.80
+  with the next length, 20 cubes). A third length is worth 0.65 more
+  (68.15) and a fourth 0.3 (67.70 on 10 cubes), but each costs about thirty
+  times the one before. Three things make them affordable:
+  - the table of states near the goal reaches 7 moves instead of 6 in the
+    same 64 MB, by storing one state of every 16 that are images of one
+    another under the symmetries that keep the R/L axis (20,561,744 states;
+    the 17,168,476 states within 6 moves that the unreduced table found
+    are counted again from the reduced one as a check), and one bit per
+    state says "within 8 moves" (256 MB, 15% of the bits set);
+  - the length of phase B is read from its table at every phase-A solution
+    from the positions of the U/D centres alone; only the few hundred
+    stagings that are kept are worked out on the cube;
+  - lengths past optimum + 1 are searched in part: a branch is followed or
+    dropped after three moves by a hash of them, a small first part
+    measures how large the level is, a second part fills the budget
+    (`--a-budget`, positions per length). Part of length three within the
+    budget of length two gives 67.93 where the whole of length two gave
+    68.10 (30 cubes).
+  The two per-orbit tables are indexed by the rank of the mask (0.7 MB
+  each, in the cache) instead of by the mask (16 MB each).
+- **Edge phases: least slack first.** A start whose estimate is far below
+  the total being searched is searched with that much slack, and every move
+  of slack makes its search about ten times as large. Within one total the
+  starts now go in order of slack, and the level ends when the phase has
+  what it was asked for. Before, the last level was always searched to the
+  end and returned up to eight times what was asked. Positions in P and E
+  went from about 19 and 6.5 million per cube (3 cubes) to 5.2 and 3.5 at
+  the same widths and the same length (68.90 against 68.80, 20 cubes).
+- **Widths.** With that, the widths that matter are not the ones that were
+  large: `p-keep` 700, 2000 and 6000 give 68.25, 68.20, 68.25 and `e-keep`
+  100, 200, 600 give 68.30, 68.33, 68.20, while more stagings, labellings
+  and phase-C results (cheap) and more 3x3x3 searches each give 0.1 to 0.3.
+  The modes are set accordingly (see the README).
+- **3x3x3, second phase.** An exact table of corners and U/D edges together
+  (2,768 classes of corner permutations under 16 symmetries times 40,320
+  edge permutations, 57 MB, 3 s to generate, checked by a test). The same
+  solutions in two thirds of the time at 20,000 probes (4.2 s against
+  6.1 s for 40 cubes, one thread); used by every size.
+- The children of a position are looked up together in C, P, E and A, and
+  the last move is tested on the coordinates alone: about 20% in P,
+  nothing measurable in E.
+
+Tried, not kept:
+
+- Tables of whole states near the goal for phases P and E (exact to 6
+  moves and one bit for 7 in P, 8 and 9 in E, 400 MB each): the number of
+  positions did not change. The existing tables are already exact that
+  close to the goal; the work is in the first three or four moves of each
+  start, where every table says "possible".
+- Phase A five lengths past its optimum, sampled: the sampling after three
+  moves is too coarse there and a single branch takes minutes.
+
+For the other sizes:
+
+- A phase now returns about what it is asked for, not up to eight times
+  as much. Solvers that pass their own widths (6x6x6, 7x7x7) get fewer
+  reductions for the same numbers. On the first 10 cubes of the 7x7x7 set
+  the unchanged widths gave 155.0 against 154.8 recorded (3x3x3 17.2
+  against 16.6); its outer cube now asks for 2,000 and 600 instead of
+  inheriting 700 and 100, which gave 155.4 on the first 8 cubes (155.1
+  recorded for those), so nothing is gained there yet and nothing lost
+  beyond the noise. The 6x6x6 was not measured with this code.
+- A cube that arrives with its centres staged (every 5x5x5 the larger
+  cubes hand over) skips the lengths of phase A past optimum + 1; without
+  that the 6x6x6 spent minutes there.
+- General solver: every 5x5x5 step runs with the default widths and no
+  clock (reduction alone on 30 scrambles: 51.30 moves with the old fast
+  widths, 50.57 with the new fast ones, 49.83 with the default), and the
+  last rows of a ring are chosen among the ways found by their length plus
+  that of the ring going onto its faces. Measured on few cubes, each
+  against the recorded run of the same cubes: 10x10x10 475.5 against
+  478.0 (6 cubes), 8x8x8 253 and 248 against 269 and 254, 9x9x9 332 and
+  321 against 358 and 324. The centres differ by up to ten moves between
+  two runs of the same code, so these say "not worse", not how much
+  better. In these steps the centres arrive solved or nearly so (an inner
+  5x5x5 step of an 8x8x8 takes 35 moves before and after), so what the
+  5x5x5 gained in its centres does not reach them.

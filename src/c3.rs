@@ -7,6 +7,10 @@
 use crate::big1::Big1;
 use crate::cache::{Reader, Writer};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
+use crate::sym::{closure, conjugators};
+use crate::tables::{load_or_gen, table_dir, Bytes};
+use rayon::prelude::*;
+use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 pub const N_TWIST: usize = 2187;
 pub const N_FLIP: usize = 2048;
@@ -18,6 +22,127 @@ const G1_MOVES: [u8; 10] = [0, 1, 2, 9, 10, 11, 4, 13, 7, 16];
 const SLICE_GOAL_MASK: usize = 0xF00;
 const UNREACHED: u8 = 255;
 const CACHE_FILE: &str = "cube333.bin";
+
+// Phase 2, corners and U/D edges together: the exact number of moves to
+// put both in place, for every pair of their permutations within `CE_DEPTH`
+// moves of solved. The slice edges are left out, so it is a lower bound for
+// the phase, but a close one: the two small tables the search used before
+// each see one of the two permutations with the slice, and their maximum is
+// far below the truth for most positions, which made the second phase the
+// larger part of the time a 3x3x3 takes.
+//
+// A corner permutation and its images under the sixteen symmetries that
+// keep the U/D axis are equally far, so the table has one row per class of
+// corner permutations (2,768 of them) and the edges are turned along.
+// One file: class of every corner permutation, the symmetry that takes it
+// to its class's first member, the edge permutations under each symmetry,
+// and the distances, four bits each.
+const N_CLASS: usize = 2768;
+const CE_DEPTH: u8 = 13;
+const CE_FAR: u8 = 15;
+const CE_CLASS: usize = 0;
+const CE_SYM: usize = CE_CLASS + 2 * N_PERM;
+const CE_CONJ: usize = CE_SYM + N_PERM;
+const CE_TABLE: usize = CE_CONJ + 2 * 16 * N_PERM;
+const CE_LEN: usize = CE_TABLE + N_CLASS * N_PERM / 2;
+const CE_FILE: &str = "phase2-333.bin";
+
+/// The moves of the second phase renamed by a symmetry of the cube that
+/// keeps the U/D axis: where each face goes (U R F D L B) and whether the
+/// turns change direction.
+fn g1_renamed(faces: [u8; 6], mirrored: bool) -> Vec<(usize, usize)> {
+    (0..G1_MOVES.len())
+        .map(|k| {
+            let m = G1_MOVES[k];
+            let power = if mirrored { 2 - m % 3 } else { m % 3 };
+            let to = faces[(m / 3) as usize] * 3 + power;
+            (k, G1_MOVES.iter().position(|&x| x == to).expect("the symmetry keeps the moves of phase 2"))
+        })
+        .collect()
+}
+
+fn gen_corners_edges(cperm_mv: &[[u16; 10]], uperm_mv: &[[u16; 10]]) -> Vec<u8> {
+    // A quarter turn of the cube about the U/D axis, a half turn about the R/L axis, the mirror image left to right.
+    let renamings = [g1_renamed([0, 5, 1, 3, 2, 4], false), g1_renamed([3, 1, 5, 0, 4, 2], false), g1_renamed([0, 4, 2, 3, 1, 5], true)];
+    let corner = |k: usize, x: usize| cperm_mv[x][k] as usize;
+    let edge = |k: usize, x: usize| uperm_mv[x][k] as usize;
+    let generators: Vec<Vec<Vec<u32>>> = renamings
+        .iter()
+        .map(|pairs| {
+            let c = conjugators(N_PERM, pairs, &corner, &corner, &[(0, 0)]);
+            let u = conjugators(N_PERM, pairs, &edge, &edge, &[(0, 0)]);
+            assert!(c.len() == 1 && u.len() == 1, "one map of the corners and one of the edges per symmetry");
+            vec![c[0].clone(), u[0].clone()]
+        })
+        .collect();
+    let syms = closure(&generators);
+    assert_eq!(syms.len(), 16, "symmetries of phase 2");
+    // Classes of corner permutations: the smallest image names the class.
+    let best: Vec<(u32, u8)> =
+        (0..N_PERM).map(|c| (0..16).map(|s| (syms[s][0][c], s as u8)).min().unwrap()).collect();
+    let mut reps: Vec<u32> = best.iter().map(|b| b.0).collect();
+    reps.sort_unstable();
+    reps.dedup();
+    assert_eq!(reps.len(), N_CLASS, "classes of corner permutations");
+    let class: Vec<u16> = best.iter().map(|b| reps.binary_search(&b.0).unwrap() as u16).collect();
+    // The symmetries that keep a class's first member in place: its states have that many names.
+    let stab: Vec<u16> =
+        reps.iter().map(|&r| (0..16).fold(0u16, |a, s| a | ((syms[s][0][r as usize] == r) as u16) << s)).collect();
+    let cells: Vec<AtomicU8> = (0..N_CLASS * N_PERM / 2).into_par_iter().map(|_| AtomicU8::new(0xFF)).collect();
+    let get = |i: usize| (cells[i >> 1].load(Relaxed) >> ((i & 1) * 4)) & 15;
+    let put = |c: usize, u: usize, v: u8| -> u64 {
+        let mut new = 0;
+        let mut st = stab[c];
+        while st != 0 {
+            let s = st.trailing_zeros() as usize;
+            st &= st - 1;
+            let i = c * N_PERM + syms[s][1][u] as usize;
+            let (cell, shift) = (&cells[i >> 1], (i & 1) * 4);
+            let mut cur = cell.load(Relaxed);
+            while (cur >> shift) & 15 == CE_FAR {
+                match cell.compare_exchange_weak(cur, (cur & !(15 << shift)) | v << shift, Relaxed, Relaxed) {
+                    Ok(_) => {
+                        new += 1;
+                        break;
+                    }
+                    Err(now) => cur = now,
+                }
+            }
+        }
+        new
+    };
+    put(class[0] as usize, syms[best[0].1 as usize][1][0] as usize, 0);
+    let mut total = 1u64;
+    for depth in 0..CE_DEPTH {
+        let new: u64 = (0..N_CLASS)
+            .into_par_iter()
+            .map(|c| {
+                let mut new = 0;
+                for u in 0..N_PERM {
+                    if get(c * N_PERM + u) != depth {
+                        continue;
+                    }
+                    for k in 0..10 {
+                        let (c2, u2) = (cperm_mv[reps[c] as usize][k] as usize, uperm_mv[u][k] as usize);
+                        new += put(class[c2] as usize, syms[best[c2].1 as usize][1][u2] as usize, depth + 1);
+                    }
+                }
+                new
+            })
+            .sum();
+        total += new;
+        eprintln!("  3x3x3 phase 2 table: depth {:2}  {:>10} new  {:>10} total", depth + 1, new, total);
+    }
+    let mut out = Vec::with_capacity(CE_LEN);
+    out.extend(class.iter().flat_map(|c| c.to_le_bytes()));
+    out.extend(best.iter().map(|b| b.1));
+    for s in 0..16 {
+        out.extend(syms[s][1].iter().flat_map(|&u| (u as u16).to_le_bytes()));
+    }
+    out.extend(cells.into_iter().map(|c| c.into_inner()));
+    out
+}
+
 pub const UNBOUNDED: usize = 30;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -136,6 +261,8 @@ pub struct T3 {
     p_tf: Vec<u8>,
     p_cs: Vec<u8>,
     p_us: Vec<u8>,
+    /// Phase 2: corners and U/D edges together; see `gen_corners_edges`.
+    ce: Bytes,
     /// Frames used to retry the search along the three axes.
     pub(crate) frames: Vec<(usize, C3, C3)>,
 }
@@ -210,7 +337,9 @@ impl T3 {
         let p_cs = r.get(N_PERM * N_SPERM)?;
         let p_us = r.get(N_PERM * N_SPERM)?;
         let slice_goal = slice_rank[SLICE_GOAL_MASK] as usize;
+        let ce = T3::corners_edges(&cperm_mv, &uperm_mv);
         Some(T3 {
+            ce,
             moves: T3::base_moves(),
             twist_mv,
             flip_mv,
@@ -228,6 +357,21 @@ impl T3 {
             slice_goal,
             frames: T3::base_frames(),
         })
+    }
+
+    fn corners_edges(cperm_mv: &[[u16; 10]], uperm_mv: &[[u16; 10]]) -> Bytes {
+        load_or_gen(&table_dir().join(CE_FILE), CE_LEN, || gen_corners_edges(cperm_mv, uperm_mv))
+    }
+
+    /// Moves to put the corners and the U/D edges in place together, exactly
+    /// up to `CE_DEPTH`; `CE_FAR` stands for more.
+    #[inline(always)]
+    fn corners_and_edges(&self, c: usize, u: usize) -> u8 {
+        let d = &self.ce[..];
+        let class = u16::from_le_bytes([d[CE_CLASS + 2 * c], d[CE_CLASS + 2 * c + 1]]) as usize;
+        let at = CE_CONJ + 2 * (d[CE_SYM + c] as usize * N_PERM + u);
+        let i = class * N_PERM + u16::from_le_bytes([d[at], d[at + 1]]) as usize;
+        (d[CE_TABLE + (i >> 1)] >> ((i & 1) * 4)) & 15
     }
 
     fn base_moves() -> [C3; 18] {
@@ -351,7 +495,9 @@ impl T3 {
         let p_cs = bfs2::<10>(N_PERM, N_SPERM, cm, spm, (0, 0));
         let p_us = bfs2::<10>(N_PERM, N_SPERM, um, spm, (0, 0));
         let frames = T3::base_frames();
+        let ce = T3::corners_edges(&cperm_mv, &uperm_mv);
         T3 {
+            ce,
             moves,
             twist_mv,
             flip_mv,
@@ -388,7 +534,7 @@ impl T3 {
 
     #[inline(always)]
     fn h2(&self, c: usize, u: usize, s: usize) -> u8 {
-        self.p_cs[c * N_SPERM + s].max(self.p_us[u * N_SPERM + s])
+        self.p_cs[c * N_SPERM + s].max(self.p_us[u * N_SPERM + s]).max(self.corners_and_edges(c, u))
     }
 
     /// Finds a short solution (outer moves, 0..18). `probes` is the minimum
@@ -563,7 +709,11 @@ impl Search<'_> {
             }
             let (a, b, c) =
                 (t.cperm_mv[cp][k] as usize, t.uperm_mv[up][k] as usize, t.sperm_mv[sp][k] as usize);
-            if t.h2(a, b, c) as usize > rem - 1 {
+            // The small tables are in the cache and turn most moves away; the large one is asked only then.
+            if t.p_cs[a * N_SPERM + c].max(t.p_us[b * N_SPERM + c]) as usize > rem - 1 {
+                continue;
+            }
+            if t.corners_and_edges(a, b) as usize > rem - 1 {
                 continue;
             }
             self.path[depth] = m;
@@ -579,6 +729,39 @@ impl Search<'_> {
 mod tests {
     use super::*;
     use crate::cube::parse_moves;
+
+    /// The table of corners and U/D edges: zero only when both are in
+    /// place, never more than one apart across a move, and from every
+    /// position within its depth some move leads one nearer. Together these
+    /// make its entries the exact distances.
+    #[test]
+    fn corners_and_edges_are_exact() {
+        let t = T3::new();
+        assert_eq!(t.corners_and_edges(0, 0), 0);
+        let mut seed = 7u64;
+        let mut rnd = |n: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        for round in 0..20_000 {
+            // Half of the positions near solved, half anywhere.
+            let (mut c, mut u) = (0, 0);
+            for _ in 0..if round % 2 == 0 { rnd(12) } else { 40 } {
+                let k = rnd(10);
+                (c, u) = (t.cperm_mv[c][k] as usize, t.uperm_mv[u][k] as usize);
+            }
+            let d = t.corners_and_edges(c, u);
+            assert_eq!(d == 0, c == 0 && u == 0);
+            let next: Vec<u8> =
+                (0..10).map(|k| t.corners_and_edges(t.cperm_mv[c][k] as usize, t.uperm_mv[u][k] as usize)).collect();
+            if d <= CE_DEPTH {
+                assert!(next.iter().all(|&n| n + 1 >= d && n <= d + 1 || n == CE_FAR && d == CE_DEPTH));
+                assert!(d == 0 || next.iter().any(|&n| n + 1 == d));
+            } else {
+                assert!(next.iter().all(|&n| n >= CE_DEPTH));
+            }
+        }
+    }
 
     #[test]
     fn solves_outer_move_scrambles() {

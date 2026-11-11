@@ -10,9 +10,10 @@
 
 use crate::c5::{tables5, Cube5};
 use crate::cube::{skip_move, tables as cube_tables};
+use crate::sym::{axis_move_maps, closure, conjugators, destinations, renamed, CombRank, MaskMap};
 use crate::tables::{gen_stage, load_or_gen, load_or_gen_quiet, table_dir, BitPerm, Bytes, Ranks, UNREACHED};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 const GOAL_RL: u32 = 0xFF_0000;
@@ -27,9 +28,12 @@ pub struct Stage5 {
     bx: BitPerm,
     bt: BitPerm,
     ranks: Ranks,
-    /// Moves to bring one orbit's R/L centres onto R and L, by mask.
-    ax: Bytes,
-    at: Bytes,
+    /// Moves to bring one orbit's R/L centres onto R and L, by the rank of
+    /// their mask among the 735,471 there are: small enough to stay in the
+    /// processor's cache, which the same table indexed by the mask is not.
+    ax: Vec<u8>,
+    at: Vec<u8>,
+    rank8: CombRank,
     /// Exact length of phase B.
     b: Bytes,
     x_mv: Vec<[u16; 22]>,
@@ -38,62 +42,194 @@ pub struct Stage5 {
     frames: Vec<(Vec<usize>, Vec<usize>)>,
     /// Phase-A lower bound near the goal; see `gen_near`.
     near: Bytes,
+    /// The symmetries of phase A, as they move the x and the t positions.
+    syms: Vec<(MaskMap, MaskMap)>,
 }
 
 /// Phase-A lower bound near the goal. Every state within `NEAR_A` moves of
 /// the goal writes its exact distance into a bucket chosen by a hash; a
 /// bucket keeps the smallest value written, and an untouched bucket means
-/// "further than `NEAR_A`". Four bits per bucket, about six buckets per state,
-/// so most far states are recognised as far. Never more than the true distance.
-const NEAR_A: usize = 6;
-const NEAR_A_STATES: usize = 17_168_476;
+/// "further than `NEAR_A`". Four bits per bucket, so most far states are
+/// recognised as far. Never more than the true distance.
+///
+/// One move further out there are eighteen times as many states. They get
+/// one bit each in a second part of the table: set for every state within
+/// `NEAR_A + 1` moves, so a clear bit says "further than that".
+///
+/// States that are images of one another under the sixteen symmetries that
+/// keep the R/L axis are equally far, so only one of each kind is stored
+/// (`canonical`). Each move further the table reaches cuts the search
+/// before it by a factor of about thirty.
+const NEAR_A: usize = 7;
+const NEAR_A_STATES: usize = 20_561_744;
+/// States within six moves counted without the symmetries, as the table
+/// that stored every one of them found: a check on the reduction.
+const WITHIN_SIX: usize = 17_168_476;
 const BUCKETS: usize = 1 << 27;
+/// Bits of the part that reaches one move further.
+const SHELL: usize = 1 << 31;
+const NEAR_BYTES: usize = BUCKETS / 2 + SHELL / 8;
 
 #[inline(always)]
-fn bucket(x: u32, t: u32) -> usize {
-    let key = (x as u64) << 24 | t as u64;
+fn bucket(key: u64) -> usize {
     (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 37) as usize & (BUCKETS - 1)
 }
 
-fn gen_near(bx: &BitPerm, bt: &BitPerm) -> Vec<u8> {
+#[inline(always)]
+fn shell_bit(key: u64) -> usize {
+    (key.wrapping_mul(0xC2B2_AE3D_27D4_EB4F) >> 33) as usize & (SHELL - 1)
+}
+
+/// Every map of the x and t positions that commutes with the moves up to
+/// renaming them and keeps the R/L faces in place.
+fn a_symmetries() -> Vec<(MaskMap, MaskMap)> {
+    let all: Vec<u8> = (0..36).collect();
+    let dx = destinations(&cube_tables().ct_src);
+    let dt = destinations(&tables5().t_src);
+    let mut generators = Vec::new();
+    for mu in axis_move_maps() {
+        let pairs = renamed(&all, &mu);
+        let xa = |m: usize, p: usize| dx[m][p] as usize;
+        let ta = |m: usize, p: usize| dt[m][p] as usize;
+        for px in conjugators(24, &pairs, &xa, &xa, &[]) {
+            for pt in conjugators(24, &pairs, &ta, &ta, &[]) {
+                if MaskMap::new(&px).apply(GOAL_RL) == GOAL_RL && MaskMap::new(&pt).apply(GOAL_RL) == GOAL_RL {
+                    generators.push(vec![px.clone(), pt]);
+                }
+            }
+        }
+    }
+    closure(&generators).into_iter().map(|e| (MaskMap::new(&e[0]), MaskMap::new(&e[1]))).collect()
+}
+
+/// The smallest image of a state under the symmetries, as one number.
+#[inline(always)]
+fn canonical(syms: &[(MaskMap, MaskMap)], x: u32, t: u32) -> u64 {
+    let mut best = u64::MAX;
+    for (sx, st) in syms {
+        best = best.min((sx.apply(x) as u64) << 24 | st.apply(t) as u64);
+    }
+    best
+}
+
+fn gen_near(bx: &BitPerm, bt: &BitPerm, syms: &[(MaskMap, MaskMap)]) -> Vec<u8> {
     let far = (NEAR_A + 1) as u8;
     let mut table = vec![far | far << 4; BUCKETS / 2];
-    let mut put = |x: u32, t: u32, d: u8| {
-        let b = bucket(x, t);
+    let mut put = |key: u64, d: u8| {
+        let b = bucket(key);
         let shift = (b & 1) * 4;
         if (table[b >> 1] >> shift) & 15 > d {
             table[b >> 1] = (table[b >> 1] & !(15 << shift)) | d << shift;
         }
     };
-    let key = |x: u32, t: u32| (x as u64) << 24 | t as u64;
-    let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    seen.insert(key(GOAL_RL, GOAL_RL));
-    put(GOAL_RL, GOAL_RL, 0);
-    let mut frontier = vec![(GOAL_RL, GOAL_RL)];
-    for depth in 1..=NEAR_A {
-        let mut next = Vec::new();
-        for &(x, t) in &frontier {
-            for m in 0..36u8 {
-                let (a, b) = (bx.apply(m, x), bt.apply(m, t));
-                if seen.insert(key(a, b)) {
-                    put(a, b, depth as u8);
-                    next.push((a, b));
-                }
-            }
+    let shell: Vec<AtomicU64> = (0..SHELL / 64).into_par_iter().map(|_| AtomicU64::new(0)).collect();
+    let mark = |key: u64| {
+        let b = shell_bit(key);
+        let (cell, bit) = (&shell[b >> 6], 1u64 << (b & 63));
+        if cell.load(Relaxed) & bit == 0 {
+            cell.fetch_or(bit, Relaxed);
         }
-        frontier = next;
+    };
+    // Level by level; a neighbour of a state is one level nearer, as near, or one further.
+    let goal = canonical(syms, GOAL_RL, GOAL_RL);
+    put(goal, 0);
+    mark(goal);
+    let (mut before, mut level) = (Vec::new(), vec![goal]);
+    let mut states = 1;
+    // How many states one stored state stands for.
+    let images = |k: u64| {
+        let (x, t) = ((k >> 24) as u32, (k & 0xFF_FFFF) as u32);
+        let mut all: Vec<u64> = syms.iter().map(|(sx, st)| (sx.apply(x) as u64) << 24 | st.apply(t) as u64).collect();
+        all.sort_unstable();
+        all.dedup();
+        all.len()
+    };
+    let neighbours = |k: u64| {
+        let (x, t) = ((k >> 24) as u32, (k & 0xFF_FFFF) as u32);
+        (0..36u8).map(move |m| canonical(syms, bx.apply(m, x), bt.apply(m, t)))
+    };
+    let mut within_six = 1;
+    for depth in 1..=NEAR_A {
+        let mut next: Vec<u64> = level.par_iter().flat_map_iter(|&k| neighbours(k)).collect();
+        next.par_sort_unstable();
+        next.dedup();
+        next.retain(|k| before.binary_search(k).is_err() && level.binary_search(k).is_err());
+        for &k in &next {
+            put(k, depth as u8);
+        }
+        next.par_iter().for_each(|&k| mark(k));
+        states += next.len();
+        if depth <= 6 {
+            within_six += next.par_iter().map(|&k| images(k)).sum::<usize>();
+        }
+        before = level;
+        level = next;
     }
-    assert_eq!(seen.len(), NEAR_A_STATES);
+    assert_eq!(within_six, WITHIN_SIX, "states of phase A within six moves of the goal");
+    assert_eq!(states, NEAR_A_STATES, "states of phase A within {} moves of the goal, up to symmetry", NEAR_A);
+    // One move further: every neighbour of the last level. The ones that
+    // are nearer have their bit already.
+    level.par_iter().for_each(|&k| neighbours(k).for_each(|n| mark(n)));
+    let set: u64 = shell.par_iter().map(|c| c.load(Relaxed).count_ones() as u64).sum();
+    eprintln!("  5x5x5 phase A near table: {} states within {} moves, {:.1}% of the bits for {} moves set", states, NEAR_A, set as f64 * 100.0 / SHELL as f64, NEAR_A + 1);
+    table.reserve(SHELL / 8);
+    for c in shell {
+        table.extend_from_slice(&c.into_inner().to_le_bytes());
+    }
     table
 }
+
+/// Positions visited by phase A since the program started.
+pub static POSITIONS: AtomicU64 = AtomicU64::new(0);
 
 struct Ctx<'a> {
     out: &'a mut Vec<Vec<u8>>,
     limit: usize,
     nodes: u64,
+    /// Of these, the positions below the depth at which a level is sampled:
+    /// only they grow and shrink with the part that is searched.
+    deep: u64,
     stop: &'a AtomicBool,
     deadline: Option<Instant>,
+    /// With this, a phase-A solution is kept only if phase B after it is short enough.
+    score: Option<Score<'a>>,
+    /// Of the ways to make the first `SAMPLE_AT` moves, the part that is
+    /// followed, as a range of 65536ths, and what tells one level's choice
+    /// from another's.
+    part: (u32, u32),
+    salt: u64,
+    /// Positions this level has visited, in all its jobs, and how many it may:
+    /// a level that turns out much larger than it was taken for ends there.
+    spent: &'a AtomicU64,
+    cap: u64,
 }
+
+/// A level of phase A that is too large to search whole is searched in
+/// part: after this many moves a branch is followed or dropped, by a hash
+/// of those moves, so that what is searched is spread over the whole level.
+const SAMPLE_AT: usize = 3;
+/// How much larger than the one before a level of phase A may be. The
+/// first part of a level is sized as if it were this much larger; what
+/// that part took tells how large the level is, and the second part is
+/// sized by that.
+const GROWTH: f64 = 400.0;
+
+/// What it takes to know the length of phase B at the end of a phase-A
+/// solution without making its moves on the whole cube: where the U/D
+/// centres of both orbits are before it, and the parity of the wings.
+struct Score<'a> {
+    ud_x: u32,
+    ud_t: u32,
+    odd: bool,
+    /// The shortest staging found so far, by any job.
+    best: &'a AtomicUsize,
+    /// Phase-A solutions seen, kept or not.
+    seen: &'a AtomicUsize,
+}
+
+/// Stagings this much longer than the shortest one found are not kept:
+/// the edge phases that follow cannot make up for more.
+const SLACK: usize = 3;
 
 /// A way to stage the centres.
 pub struct Staged {
@@ -110,6 +246,11 @@ fn ud_mask(colours: &[u8; 24]) -> u32 {
     (0..16).fold(0, |m, i| m | ((colours[i] % 3 == 0) as u32) << i)
 }
 
+/// The same over all 24 positions, for a cube whose R/L centres are not yet on their faces.
+fn ud_mask_all(colours: &[u8; 24]) -> u32 {
+    (0..24).fold(0, |m, i| m | ((colours[i] % 3 == 0) as u32) << i)
+}
+
 /// Wide quarter turns move one inner slice a quarter turn: an odd wing permutation.
 fn flips_parity(m: u8) -> bool {
     m >= 18 && m % 3 != 1
@@ -123,8 +264,13 @@ impl Stage5 {
         let ranks = Ranks::new();
         let all: Vec<u8> = (0..36).collect();
         let dir = table_dir();
-        let ax = load_or_gen_quiet(&dir.join("stage555-x.bin"), 1 << 24, &|| gen_stage(&bx, GOAL_RL, &all));
-        let at = load_or_gen_quiet(&dir.join("stage555-t.bin"), 1 << 24, &|| gen_stage(&bt, GOAL_RL, &all));
+        let rank8 = CombRank::new(8);
+        let by_rank = |file: &str, bp: &BitPerm| -> Vec<u8> {
+            let by_mask = load_or_gen_quiet(&dir.join(file), 1 << 24, &|| gen_stage(bp, GOAL_RL, &all));
+            rank8.unrank.iter().map(|&mask| by_mask[mask as usize]).collect()
+        };
+        let ax = by_rank("stage555-x.bin", &bx);
+        let at = by_rank("stage555-t.bin", &bt);
         // Phase-B moves keep the R/L centres on their faces, so the other 16
         // positions of each orbit are permuted among themselves.
         let table = |bp: &BitPerm| -> Vec<[u16; 22]> {
@@ -151,8 +297,10 @@ impl Stage5 {
                 (turns, map)
             })
             .collect();
-        let near = load_or_gen(&dir.join("stage555-near.bin"), BUCKETS / 2, || gen_near(&bx, &bt));
-        Stage5 { bx, bt, ranks, ax, at, b, x_mv, t_mv, frames, near }
+        let syms = a_symmetries();
+        assert_eq!(syms.len(), 16, "symmetries of phase A");
+        let near = load_or_gen(&dir.join("stage555-near8.bin"), NEAR_BYTES, || gen_near(&bx, &bt, &syms));
+        Stage5 { bx, bt, ranks, ax, at, rank8, b, x_mv, t_mv, frames, near, syms }
     }
 
     fn b_index(&self, c: &Cube5) -> usize {
@@ -180,8 +328,18 @@ impl Stage5 {
 
     /// The shortest ways found to stage the centres of a cube given as 150
     /// facelets: phase A is enumerated up to `extra` moves past its optimum
-    /// (at most `limit` solutions per frame and length), each completed
-    /// optimally by phase B. Returns the best `keep`, shortest first.
+    /// (at most `limit` solutions kept per frame, first move and length),
+    /// each completed optimally by phase B. Returns the best `keep`,
+    /// shortest first.
+    ///
+    /// The length of phase B is read from its table at the end of every
+    /// phase-A solution, from the positions of the U/D centres alone; only
+    /// the solutions that give a short staging are worked out on the cube.
+    ///
+    /// The optimal length of phase A and the next are searched whole. The
+    /// lengths after them hold about thirty times as many solutions each;
+    /// with a `budget` (positions per length, 0 for no limit) each is
+    /// searched only in the part that fits it, spread evenly over the level.
     ///
     /// Past `deadline` the search stops as soon as it has a result: the optimal
     /// phase-A length is always completed, the extra lengths may be cut short.
@@ -191,6 +349,7 @@ impl Stage5 {
         extra: usize,
         limit: usize,
         keep: usize,
+        budget: u64,
         deadline: Option<Instant>,
     ) -> Result<Vec<Staged>, String> {
         let g = &tables5().geometry;
@@ -199,57 +358,146 @@ impl Stage5 {
             let cube = Cube5::from_facelets(&g.reframe(facelets, turns))?;
             roots.push((cube, map));
         }
-        let h = |c: &Cube5| self.ax[rl_mask(&c.c4.ct) as usize].max(self.at[rl_mask(&c.t) as usize]) as usize;
+        let h = |c: &Cube5| self.a_bound(rl_mask(&c.c4.ct), rl_mask(&c.t)) as usize;
         let first = roots.iter().map(|(c, _)| h(c)).min().unwrap();
-        let mut all: Vec<(usize, Staged)> = Vec::new();
+        // (length of the staging, frame, phase A)
+        let mut all: Vec<(usize, usize, Vec<u8>)> = Vec::new();
         let mut optimum = None;
         let stop = AtomicBool::new(false);
+        let best = AtomicUsize::new(usize::MAX);
+        let mut level_size = 1.0f64;
         for depth in first..=first + 12 {
             if optimum.is_some_and(|o| depth > o + extra) || stop.load(Relaxed) {
                 break;
             }
+            // A cube whose centres are staged as it comes (as the larger
+            // cubes hand them over) has nothing to gain past one more move.
+            if best.load(Relaxed) == 0 && optimum.is_some_and(|o| depth > o + 1) {
+                break;
+            }
             // Only the lengths past the optimum may be cut short.
             let cut = if optimum.is_some() { deadline } else { None };
+            let seen = AtomicUsize::new(0);
             // One job per frame and first move.
             let jobs: Vec<(usize, u8)> =
                 (0..roots.len()).flat_map(|f| (0..36u8).map(move |m| (f, m))).collect();
-            let found: Vec<(usize, Staged)> = jobs
-                .par_iter()
-                .flat_map_iter(|&(f, m)| {
-                    let (cube, map) = &roots[f];
-                    let mut out = Vec::new();
-                    if depth == 0 {
-                        if m == 0 && h(cube) == 0 {
-                            out.push(Vec::new());
+            let whole = optimum.is_none_or(|o| depth <= o + 1) || budget == 0;
+            let spent = AtomicU64::new(0);
+            let cap = if whole { u64::MAX } else { budget * 2 };
+            // Searches one part of the level; returns what it kept and the
+            // positions it visited below the depth at which the level is sampled.
+            let search = |part: (u32, u32)| -> (Vec<(usize, usize, Vec<u8>)>, u64) {
+                let visited = AtomicU64::new(0);
+                let found = jobs
+                    .par_iter()
+                    .flat_map_iter(|&(f, m)| {
+                        let cube = &roots[f].0;
+                        let mut out = Vec::new();
+                        let score = || Score {
+                            ud_x: ud_mask_all(&cube.c4.ct),
+                            ud_t: ud_mask_all(&cube.t),
+                            odd: cube.c4.wing_parity() != 0,
+                            best: &best,
+                            seen: &seen,
+                        };
+                        let mut ctx = Ctx {
+                            out: &mut out,
+                            limit,
+                            nodes: 0,
+                            deep: 0,
+                            stop: &stop,
+                            deadline: cut,
+                            score: Some(score()),
+                            part,
+                            salt: (depth * 3 + f) as u64,
+                            spent: &spent,
+                            cap,
+                        };
+                        if depth == 0 {
+                            if m == 0 && h(cube) == 0 {
+                                self.leaf(&[], &mut ctx);
+                            }
+                        } else {
+                            let (x, t) = (self.bx.apply(m, rl_mask(&cube.c4.ct)), self.bt.apply(m, rl_mask(&cube.t)));
+                            if self.a_bound(x, t) as usize <= depth - 1 {
+                                let mut path = [0u8; 32];
+                                path[0] = m;
+                                self.dfs_a(x, t, depth - 1, m, 1, &mut path, &mut ctx);
+                            }
                         }
-                    } else {
-                        let (x, t) = (self.bx.apply(m, rl_mask(&cube.c4.ct)), self.bt.apply(m, rl_mask(&cube.t)));
-                        if self.ax[x as usize].max(self.at[t as usize]) as usize <= depth - 1 {
-                            let mut path = [0u8; 32];
-                            path[0] = m;
-                            let mut ctx = Ctx { out: &mut out, limit, nodes: 0, stop: &stop, deadline: cut };
-                            self.dfs_a(x, t, depth - 1, m, 1, &mut path, &mut ctx);
-                        }
-                    }
-                    out.into_iter()
-                        .map(|a| {
-                            let mut c = *cube;
-                            c.apply_seq(&a);
-                            let b = self.solve_b(&c);
-                            let moves: Vec<u8> = a.iter().chain(b.iter()).map(|&m| map[m as usize] as u8).collect();
-                            (moves.len(), Staged { moves, len_a: a.len() })
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-            if !found.is_empty() && optimum.is_none() {
+                        POSITIONS.fetch_add(ctx.nodes, Relaxed);
+                        visited.fetch_add(ctx.deep, Relaxed);
+                        let score = score();
+                        out.into_iter().map(|a| (a.len() + self.b_after(&score, &a), f, a)).collect::<Vec<_>>()
+                    })
+                    .collect();
+                (found, visited.load(Relaxed))
+            };
+            if whole {
+                let (found, visited) = search((0, 65536));
+                level_size = visited.max(1) as f64;
+                all.extend(found);
+            } else {
+                // A first part small enough for the largest level there could be, then the rest of the budget.
+                let first = ((budget as f64 / 8.0 / (level_size * GROWTH) * 65536.0) as u32).clamp(1, 65536);
+                let (found, visited) = search((0, first));
+                all.extend(found);
+                let per_part = visited.max(1) as f64 / first as f64;
+                let upto = ((budget as f64 / per_part) as u32).clamp(first, 65536);
+                let mut total = visited;
+                if upto > first && !stop.load(Relaxed) {
+                    let (found, visited) = search((first, upto));
+                    all.extend(found);
+                    total += visited;
+                }
+                level_size = (total.max(1) as f64 / (upto as f64 / 65536.0)).max(1.0);
+            }
+            if seen.load(Relaxed) > 0 && optimum.is_none() {
                 optimum = Some(depth);
             }
-            all.extend(found);
         }
-        all.sort_by_key(|s| s.0);
+        // Among stagings of one length, no frame or first move comes first.
+        let mix = |a: &[u8]| a.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, &m| (h ^ m as u64).wrapping_mul(0x100_0000_01B3));
+        all.sort_by_cached_key(|s| (s.0, mix(&s.2), s.1));
         all.truncate(keep);
-        Ok(all.into_iter().map(|s| s.1).collect())
+        Ok(all
+            .into_par_iter()
+            .map(|(len, f, a)| {
+                let (cube, map) = &roots[f];
+                let mut c = *cube;
+                c.apply_seq(&a);
+                let b = self.solve_b(&c);
+                let moves: Vec<u8> = a.iter().chain(b.iter()).map(|&m| map[m as usize] as u8).collect();
+                assert_eq!(moves.len(), len, "phase B is as long as its table said");
+                Staged { moves, len_a: a.len() }
+            })
+            .collect())
+    }
+
+    /// The length of phase B after a phase-A solution.
+    fn b_after(&self, score: &Score, a: &[u8]) -> usize {
+        let (mut x, mut t, mut odd) = (score.ud_x, score.ud_t, score.odd);
+        for &m in a {
+            x = self.bx.apply(m, x);
+            t = self.bt.apply(m, t);
+            odd ^= flips_parity(m);
+        }
+        debug_assert!(x < 1 << 16 && t < 1 << 16, "phase A leaves the U/D centres off the R and L faces");
+        self.b_dist(self.ranks.rank16[x as usize] as usize, self.ranks.rank16[t as usize] as usize, odd) as usize
+    }
+
+    /// A phase-A solution has been found; true if the search should end.
+    fn leaf(&self, a: &[u8], ctx: &mut Ctx) -> bool {
+        if let Some(score) = &ctx.score {
+            score.seen.fetch_add(1, Relaxed);
+            let total = a.len() + self.b_after(score, a);
+            let best = score.best.fetch_min(total, Relaxed).min(total);
+            if total > best + SLACK {
+                return false;
+            }
+        }
+        ctx.out.push(a.to_vec());
+        ctx.out.len() >= ctx.limit
     }
 
     /// Phase A on the positions of the R/L centres alone (x orbit, t orbit),
@@ -258,7 +506,7 @@ impl Stage5 {
     /// For cubes whose centres move like these, such as the outer x centres
     /// and the oblique pairs of a 6x6x6.
     pub fn phase_a(&self, x: u32, t: u32, extra: usize, limit: usize, deadline: Option<Instant>) -> Vec<Vec<u8>> {
-        let h = self.ax[x as usize].max(self.at[t as usize]) as usize;
+        let h = self.a_bound(x, t) as usize;
         let stop = AtomicBool::new(false);
         let mut all = Vec::new();
         let mut optimum = None;
@@ -272,16 +520,19 @@ impl Stage5 {
                 continue;
             }
             let cut = if optimum.is_some() { deadline } else { None };
+            let spent = AtomicU64::new(0);
             let found: Vec<Vec<u8>> = (0..36u8)
                 .into_par_iter()
                 .flat_map_iter(|m| {
                     let mut out = Vec::new();
                     let (a, b) = (self.bx.apply(m, x), self.bt.apply(m, t));
-                    if self.ax[a as usize].max(self.at[b as usize]) as usize <= depth - 1 {
+                    if self.a_bound(a, b) as usize <= depth - 1 {
                         let mut path = [0u8; 32];
                         path[0] = m;
-                        let mut ctx = Ctx { out: &mut out, limit, nodes: 0, stop: &stop, deadline: cut };
+                        let mut ctx =
+                            Ctx { out: &mut out, limit, nodes: 0, deep: 0, stop: &stop, deadline: cut, score: None, part: (0, 65536), salt: 0, spent: &spent, cap: u64::MAX };
                         self.dfs_a(a, b, depth - 1, m, 1, &mut path, &mut ctx);
+                        POSITIONS.fetch_add(ctx.nodes, Relaxed);
                     }
                     out
                 })
@@ -297,7 +548,7 @@ impl Stage5 {
     /// A lower bound on phase A from the positions of the R/L centres of the two orbits.
     #[inline(always)]
     pub fn a_bound(&self, x: u32, t: u32) -> u8 {
-        self.ax[x as usize].max(self.at[t as usize])
+        self.ax[self.rank8.rank(x)].max(self.at[self.rank8.rank(t)])
     }
 
     /// Exact length of phase B from the ranks (`Ranks::rank16`) of the U/D
@@ -328,44 +579,103 @@ impl Stage5 {
         out
     }
 
+    /// All the children of a position are looked at together, one table
+    /// at a time: the entries are far apart in memory, and read this way
+    /// they are fetched side by side.
     fn dfs_a(&self, x: u32, t: u32, rem: usize, last: u8, depth: usize, path: &mut [u8; 32], ctx: &mut Ctx) -> bool {
         if rem == 0 {
             // The last move was checked to reach the goal.
-            ctx.out.push(path[..depth].to_vec());
-            return ctx.out.len() >= ctx.limit;
+            return self.leaf(&path[..depth], ctx);
+        }
+        if depth == SAMPLE_AT && ctx.part != (0, 65536) {
+            let mix = path[..SAMPLE_AT]
+                .iter()
+                .fold(ctx.salt ^ 0xCBF2_9CE4_8422_2325, |h, &m| (h ^ m as u64).wrapping_mul(0x100_0000_01B3));
+            let at = ((mix >> 24) & 0xFFFF) as u32;
+            if at < ctx.part.0 || at >= ctx.part.1 {
+                return false;
+            }
         }
         ctx.nodes += 1;
+        ctx.deep += (depth >= SAMPLE_AT) as u64;
         if ctx.nodes % 4096 == 0 {
-            if ctx.deadline.is_some_and(|d| Instant::now() > d) {
+            if ctx.deadline.is_some_and(|d| Instant::now() > d) || ctx.spent.fetch_add(4096, Relaxed) >= ctx.cap {
                 ctx.stop.store(true, Relaxed);
             }
             if ctx.stop.load(Relaxed) {
                 return true;
             }
         }
+        if rem == 1 {
+            for m in 0..36u8 {
+                // A sequence that ends with a phase-B move is a shorter one plus that move.
+                if skip_move(last, m) || B_MOVES.contains(&m) {
+                    continue;
+                }
+                if self.bx.apply(m, x) == GOAL_RL && self.bt.apply(m, t) == GOAL_RL {
+                    path[depth] = m;
+                    if self.leaf(&path[..depth + 1], ctx) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+        let max = (rem - 1) as u8;
+        let mut kids = [(0u32, 0u32); 36];
+        let mut mv = [0u8; 36];
+        let mut cnt = 0;
         for m in 0..36u8 {
             if skip_move(last, m) {
                 continue;
             }
-            let (a, b) = (self.bx.apply(m, x), self.bt.apply(m, t));
-            if rem == 1 {
-                if a != GOAL_RL || b != GOAL_RL {
-                    continue;
-                }
-            } else if rem - 1 <= NEAR_A {
-                let k = bucket(a, b);
-                if ((self.near[k >> 1] >> ((k & 1) * 4)) & 15) as usize > rem - 1 {
-                    continue;
-                }
-            } else if self.ax[a as usize].max(self.at[b as usize]) as usize > rem - 1 {
-                continue;
+            kids[cnt] = (self.bx.apply(m, x), self.bt.apply(m, t));
+            mv[cnt] = m;
+            cnt += 1;
+        }
+        // Each orbit alone.
+        let mut h = [0u8; 36];
+        for i in 0..cnt {
+            h[i] = self.a_bound(kids[i].0, kids[i].1);
+        }
+        let mut live = 0;
+        for i in 0..cnt {
+            if h[i] <= max {
+                kids[live] = kids[i];
+                mv[live] = mv[i];
+                live += 1;
             }
-            // A sequence that ends with a phase-B move is a shorter one plus that move.
-            if rem == 1 && B_MOVES.contains(&m) {
-                continue;
+        }
+        // Both orbits together, near the goal: the distance itself, or one
+        // move further out whether the goal is within reach at all.
+        if rem - 1 <= NEAR_A + 1 {
+            let exact = rem - 1 <= NEAR_A;
+            let mut at = [0usize; 36];
+            for i in 0..live {
+                let key = canonical(&self.syms, kids[i].0, kids[i].1);
+                at[i] = if exact { bucket(key) } else { shell_bit(key) };
             }
-            path[depth] = m;
-            if self.dfs_a(a, b, rem - 1, m, depth + 1, path, ctx) {
+            let mut ok = [false; 36];
+            for i in 0..live {
+                ok[i] = if exact {
+                    (self.near[at[i] >> 1] >> ((at[i] & 1) * 4)) & 15 <= max
+                } else {
+                    (self.near[BUCKETS / 2 + (at[i] >> 3)] >> (at[i] & 7)) & 1 == 1
+                };
+            }
+            let all = live;
+            live = 0;
+            for i in 0..all {
+                if ok[i] {
+                    kids[live] = kids[i];
+                    mv[live] = mv[i];
+                    live += 1;
+                }
+            }
+        }
+        for i in 0..live {
+            path[depth] = mv[i];
+            if self.dfs_a(kids[i].0, kids[i].1, rem - 1, mv[i], depth + 1, path, ctx) {
                 return true;
             }
         }

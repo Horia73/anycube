@@ -414,7 +414,7 @@ impl Params7 {
             inner: Params5 { c_keep: 500, p_keep: 500, e_keep: 100, time_ms: 0, ..Params5::normal() },
             reductions: 16,
             // No clock: a phase cut short can leave the next one nothing to work with.
-            outer: Params5 { time_ms: 0, ..Params5::normal() },
+            outer: Params5 { p_keep: 2000, e_keep: 600, time_ms: 0, ..Params5::normal() },
         }
     }
 

@@ -27,6 +27,10 @@ pub struct Params5 {
     /// phase they may come from.
     pub staged: usize,
     pub stage_extra: usize,
+    /// Positions the first centre phase may visit at each length past its
+    /// shortest and the next; 0 for no limit. A length that does not fit
+    /// is searched in part.
+    pub stage_budget: u64,
     /// Stage the centres in one step as well, searching this many lengths
     /// past the shortest staging. Exact but takes minutes; off in every mode.
     pub joint_extra: Option<usize>,
@@ -49,15 +53,16 @@ impl Params5 {
     /// Under a second per cube.
     pub fn fast() -> Params5 {
         Params5 {
-            staged: 200,
-            stage_extra: 1,
+            staged: 400,
+            stage_extra: 2,
+            stage_budget: 200_000,
             joint_extra: None,
-            labellings: 4,
-            c_keep: 300,
+            labellings: 8,
+            c_keep: 2000,
             p_keep: 300,
             e_keep: 50,
-            pool: 16,
-            probes: 500,
+            pool: 30,
+            probes: 1500,
             time_ms: 800,
         }
     }
@@ -65,15 +70,16 @@ impl Params5 {
     /// Under five seconds per cube.
     pub fn normal() -> Params5 {
         Params5 {
-            staged: 400,
-            stage_extra: 1,
+            staged: 1200,
+            stage_extra: 3,
+            stage_budget: 1_000_000,
             joint_extra: None,
-            labellings: 8,
-            c_keep: 2000,
-            p_keep: 2000,
-            e_keep: 200,
-            pool: 60,
-            probes: 3000,
+            labellings: 16,
+            c_keep: 6000,
+            p_keep: 700,
+            e_keep: 100,
+            pool: 100,
+            probes: 5000,
             time_ms: 4000,
         }
     }
@@ -81,13 +87,14 @@ impl Params5 {
     /// As long as it takes.
     pub fn full() -> Params5 {
         Params5 {
-            staged: 2000,
-            stage_extra: 1,
+            staged: 4000,
+            stage_extra: 3,
+            stage_budget: 10_000_000,
             joint_extra: None,
             labellings: 16,
-            c_keep: 5000,
-            p_keep: 5000,
-            e_keep: 1000,
+            c_keep: 20000,
+            p_keep: 2000,
+            e_keep: 400,
             pool: 400,
             probes: 20000,
             time_ms: 0,
@@ -239,7 +246,7 @@ impl Solver5 {
         let per_cube = (p.staged / cubes.len()).max(8);
         let mut staged: Vec<(usize, Staged)> = Vec::new();
         for (root, (facelets, _)) in cubes.iter().enumerate() {
-            let found = self.stage.stage(facelets, p.stage_extra, 100_000, per_cube, until(0.15))?;
+            let found = self.stage.stage(facelets, p.stage_extra, 100_000, per_cube, p.stage_budget, until(0.15))?;
             staged.extend(found.into_iter().map(|s| (root, s)));
         }
         lap("centres", staged.len(), staged.iter().map(|s| s.1.moves.len()).min().unwrap_or(0));

@@ -408,6 +408,7 @@ fn params5(args: &[String]) -> cubenxnxn::solver5::Params5 {
     Params5 {
         staged: num("--staged", d.staged),
         stage_extra: num("--extra", d.stage_extra),
+        stage_budget: num("--a-budget", d.stage_budget as usize) as u64,
         joint_extra: match opt(args, "--joint") {
             None => d.joint_extra,
             Some("off") => None,
@@ -805,7 +806,7 @@ fn stage5(args: &[String]) {
         g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
         let deadline = opt(args, "--time").and_then(|s| s.parse::<u64>().ok()).map(|ms| t + std::time::Duration::from_millis(ms));
-        let found = stage.stage(&f, extra, per_job, 1, deadline).unwrap_or_else(|e| fail(&e));
+        let found = stage.stage(&f, extra, per_job, 1, num("--a-budget", 0) as u64, deadline).unwrap_or_else(|e| fail(&e));
         times.push(t.elapsed().as_secs_f64() * 1e3);
         let best = found.first().unwrap_or_else(|| fail("no staging found"));
         g.apply_seq(&mut f, &best.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
@@ -843,6 +844,7 @@ fn bench5(args: &[String]) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
     let p = params5(args);
+    let reduce_only = args.iter().any(|a| a == "--reduce");
     let t0 = Instant::now();
     let solver = Solver5::load();
     eprintln!("tables ready in {:.2} s; {:?}", t0.elapsed().as_secs_f64(), p);
@@ -859,6 +861,20 @@ fn bench5(args: &[String]) {
         let mut f = g.solved();
         g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
+        if reduce_only {
+            // Only as far as a 3x3x3, the way the larger cubes use this solver for their inner layers.
+            let moves = solver.reduce(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+            times.push(t.elapsed().as_secs_f64() * 1e3);
+            g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            let reduced = cubenxnxn::c5::Cube5::from_facelets(&f).is_ok_and(|c| cubenxnxn::edges5::is_reduced(&c));
+            if !reduced {
+                fail(&format!("cube {}: the moves do not reduce the cube", n));
+            }
+            sums[0] += moves.len();
+            *hist.entry(moves.len()).or_insert(0usize) += 1;
+            n += 1;
+            continue;
+        }
         let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
         let ms = t.elapsed().as_secs_f64() * 1e3;
         g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
@@ -879,7 +895,12 @@ fn bench5(args: &[String]) {
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let nf = n as f64;
     let mean = |k: usize| sums[k] as f64 / nf;
-    println!("solved {} cubes, every solution verified on the sticker model", n);
+    if reduce_only {
+        println!("reduced {} cubes to 3x3x3, every result verified", n);
+        println!("mean length of the reduction {:.3}", sums[0] as f64 / nf);
+    } else {
+        println!("solved {} cubes, every solution verified on the sticker model", n);
+    }
     println!(
         "mean length {:.3}  (centres {:.2} + {:.2}, edges {:.2} + {:.2} + {:.2}, 3x3x3 {:.2})",
         sums.iter().sum::<usize>() as f64 / nf,
@@ -897,6 +918,14 @@ fn bench5(args: &[String]) {
         times[times.len() - 1]
     );
     println!("length histogram: {:?}", hist);
+    let work = |k: usize| cubenxnxn::edges5::POSITIONS[k].load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6;
+    println!(
+        "positions per cube, millions: centres {:.2}, phase C {:.2}, P {:.2}, E {:.2}",
+        cubenxnxn::stage5::POSITIONS.load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6,
+        work(0),
+        work(1),
+        work(2)
+    );
 }
 
 /// 5x5x5 centres in one step, on a scramble file: lengths, bounds and times.

@@ -19,7 +19,7 @@ use crate::cube::{skip_move, tables as cube_tables};
 use crate::sym::{axis_move_maps, closure, conjugators, destinations, renamed, MaskMap};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering::Relaxed};
 use std::time::Instant;
 
 /// Face turns and wide half turns: everything that keeps the centres staged.
@@ -297,6 +297,8 @@ pub struct Edges5 {
     /// and the centre table (F/B pattern, R/L pattern).
     outer_index: [u8; 12],
     rank1680: Vec<u16>,
+    /// The four classes whole and in the middle slice, as `ml` and as `mh`.
+    mw_home: usize,
     ml_mv: Vec<[u32; 16]>,
     mh_mv: Vec<[u32; 16]>,
     pq: Bytes,
@@ -319,6 +321,7 @@ pub struct Edges5 {
     /// Phase E centres: exact moves to solve (U/D pattern, side pattern).
     e_centres: Vec<u8>,
 }
+
 
 /// Coordinates of four classes among the eight outer edges, whose middle
 /// edges, low wings and high wings sit at positions `m[i]`, `l[i]`, `h[i]`:
@@ -808,7 +811,7 @@ impl Edges5 {
 
         Edges5 {
             t3, bw, bx, bt, rk, rank8, c, c_cls, c_phi, c_centres, out_low_mv, out_high_mv, e, ud_mv, side_id,
-            side_last, last_mv, e_centres, outer_index, rank1680, ml_mv, mh_mv, pq, fb_mv, rl_mv, p_centres,
+            side_last, last_mv, e_centres, outer_index, rank1680, mw_home, ml_mv, mh_mv, pq, fb_mv, rl_mv, p_centres,
             p_fb, p_rl, rl_id, n_rl, e_ud, e_side,
         }
     }
@@ -847,6 +850,10 @@ impl Edges5 {
     }
 }
 
+/// Positions visited by phases C, P and E since the program started: a
+/// measure of the work done that does not depend on how busy the machine is.
+pub static POSITIONS: [AtomicU64; 3] = [AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0)];
+
 /// A cube part of the way through its solution. Every phase searches from
 /// many of these at once and returns the continuations that are shortest
 /// in total, whichever start they belong to.
@@ -884,6 +891,8 @@ struct Run {
     limits: Limits,
     count: AtomicUsize,
     stop: AtomicBool,
+    /// Positions visited, for the trace.
+    nodes: AtomicU64,
 }
 
 /// One start of a phase search: lower bound on the total, moves so far, payload.
@@ -994,45 +1003,65 @@ impl Edges5 {
 
     /// Searches every node to the same total length, shortest total first,
     /// until enough solutions exist.
+    ///
+    /// A node whose estimate is far below the total is searched with that
+    /// much slack, and every move of slack makes its search about ten times
+    /// as large. So within one total the nodes go in order of slack, the
+    /// ones at their estimate first, and the level ends as soon as there
+    /// are enough solutions: the last level, which costs more than all the
+    /// others together, is then rarely searched to the end.
     fn by_total<N: Sync>(
         &self,
+        phase: usize,
         mut nodes: Vec<Node<N>>,
         limits: &Limits,
         search: impl Fn(&mut Search, &Node<N>, usize) + Sync,
     ) -> Vec<Found> {
         nodes.sort_by_key(|n| (n.est, n.cost));
         let Some(first) = nodes.first().map(|n| n.est) else { return Vec::new() };
-        let run = Run { limits: *limits, count: AtomicUsize::new(0), stop: AtomicBool::new(false) };
+        let run = Run { limits: *limits, count: AtomicUsize::new(0), stop: AtomicBool::new(false), nodes: AtomicU64::new(0) };
+        let trace = std::env::var_os("CUBE5_TRACE").is_some();
         let mut out = Vec::new();
-        for total in first..=first + 12 {
+        'totals: for total in first..=first + 12 {
             let live = nodes.partition_point(|n| n.est <= total);
-            let found: Vec<Found> = nodes[..live]
-                .par_iter()
-                .with_max_len(1)
-                .flat_map_iter(|n| {
-                    let mut s = Search { e5: self, run: &run, path: [0; 40], out: Vec::new(), ticks: 0 };
-                    if !run.stop.load(Relaxed) {
-                        search(&mut s, n, total - n.cost);
-                    }
-                    s.out.into_iter().map(move |moves| Found { start: n.start, moves })
-                })
-                .collect();
-            if std::env::var_os("CUBE5_GAPS").is_some() && !found.is_empty() {
-                let mut gaps = [0usize; 8];
-                for f in &found {
-                    let est = nodes[..live].iter().filter(|n| n.start == f.start).map(|n| n.est).min().unwrap();
-                    gaps[(total - est).min(7)] += 1;
+            let mut high = live;
+            while high > 0 {
+                // The nodes with the least slack not yet searched at this total.
+                let est = nodes[high - 1].est;
+                let low = nodes[..high].partition_point(|n| n.est < est);
+                let found: Vec<Found> = nodes[low..high]
+                    .par_iter()
+                    .with_max_len(1)
+                    .flat_map_iter(|n| {
+                        let mut s = Search { e5: self, run: &run, path: [0; 40], out: Vec::new(), ticks: 0 };
+                        if !run.stop.load(Relaxed) {
+                            search(&mut s, n, total - n.cost);
+                        }
+                        run.nodes.fetch_add(s.ticks as u64, Relaxed);
+                        s.out.into_iter().map(move |moves| Found { start: n.start, moves })
+                    })
+                    .collect();
+                if trace && !found.is_empty() {
+                    eprintln!(
+                        "    total {:2}, slack {}: {:6} starts, {:6} found, {:10} positions so far",
+                        total,
+                        total - est,
+                        high - low,
+                        found.len(),
+                        run.nodes.load(Relaxed)
+                    );
                 }
-                eprintln!("    total {} (first {}): {} live nodes, solutions by gap {:?}", total, first, live, gaps);
-            }
-            out.extend(found);
-            if out.len() >= limits.keep || run.stop.load(Relaxed) {
-                break;
-            }
-            if out.len() >= limits.floor.max(1) && limits.deadline.is_some_and(|d| Instant::now() > d) {
-                break;
+                out.extend(found);
+                high = low;
+                if out.len() >= limits.keep || run.stop.load(Relaxed) {
+                    break 'totals;
+                }
+                if out.len() >= limits.floor.max(1) && limits.deadline.is_some_and(|d| Instant::now() > d) {
+                    break 'totals;
+                }
             }
         }
+        POSITIONS[phase].fetch_add(run.nodes.load(Relaxed), Relaxed);
         out
     }
 
@@ -1109,7 +1138,7 @@ impl Edges5 {
                 })
             })
             .collect();
-        self.by_total(nodes, limits, |s, n, rem| {
+        self.by_total(0, nodes, limits, |s, n, rem| {
             s.dfs_c(&n.data, rem, n.last, 0);
         })
     }
@@ -1182,7 +1211,7 @@ impl Edges5 {
                 out
             })
             .collect();
-        self.by_total(nodes, limits, |s, n, rem| {
+        self.by_total(1, nodes, limits, |s, n, rem| {
             s.dfs_p(&n.data.1, &n.data.0, rem, n.last, 0);
         })
     }
@@ -1243,7 +1272,7 @@ impl Edges5 {
                 Some(Node { est: s.cost + self.e_bound(&node), cost: s.cost, start: i, last: s.last, data: node })
             })
             .collect();
-        self.by_total(nodes, limits, |s, n, rem| {
+        self.by_total(2, nodes, limits, |s, n, rem| {
             s.dfs_e(&n.data, rem, n.last, 0);
         })
     }
@@ -1283,6 +1312,13 @@ impl Edges5 {
 }
 
 impl Search<'_> {
+    // The three searches below look at all the children of a position
+    // together: first where each move leads, then one table at a time for
+    // all of them that are still alive. The table entries are far apart in
+    // memory, and read this way they are fetched side by side instead of
+    // one after the other. The last move is tested on the coordinates
+    // alone, since only the goal will do.
+
     fn dfs_c(&mut self, n: &CNode, rem: usize, last: u8, depth: usize) -> bool {
         if rem == 0 {
             return n.mask == LOW_HALF && n.flip == 0 && self.e5.c_bound(n) == 0 && self.found(depth);
@@ -1291,23 +1327,63 @@ impl Search<'_> {
             return true;
         }
         let e = self.e5;
+        if rem == 1 {
+            for &m in &H_MOVES {
+                if last != 255 && skip_move(last, m) {
+                    continue;
+                }
+                if e.bw.apply(m, n.mask) != LOW_HALF || e.t3.flip_mv[n.flip][m as usize % 18] != 0 {
+                    continue;
+                }
+                let (x, t) = (e.bx.apply(m, n.x), e.bt.apply(m, n.t));
+                if e.c_centres[e.rank8[(x >> 16) as usize] as usize * 70 + e.rank8[(t >> 16) as usize] as usize] != 0 {
+                    continue;
+                }
+                self.path[depth] = m;
+                if self.found(depth + 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        let max = (rem - 1) as u8;
+        let mut kids = [CNode { mask: 0, flip: 0, x: 0, t: 0 }; 24];
+        let mut mv = [0u8; 24];
+        let mut at = [0usize; 24];
+        let mut cnt = 0;
         for &m in &H_MOVES {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
-            let next = CNode {
+            let kid = CNode {
                 mask: e.bw.apply(m, n.mask),
                 flip: e.t3.flip_mv[n.flip][m as usize % 18] as usize,
                 x: e.bx.apply(m, n.x),
                 t: e.bt.apply(m, n.t),
             };
-            let bound = e.c_bound(&next);
-            // A cube that is ready early was a shorter solution already.
-            if bound > rem - 1 || (bound == 0 && rem > 1) {
+            // The centres are a small table; the wings are two large ones.
+            if e.c_centres[e.rank8[(kid.x >> 16) as usize] as usize * 70 + e.rank8[(kid.t >> 16) as usize] as usize] > max {
                 continue;
             }
-            self.path[depth] = m;
-            if self.dfs_c(&next, rem - 1, m, depth + 1) {
+            kids[cnt] = kid;
+            mv[cnt] = m;
+            cnt += 1;
+        }
+        for i in 0..cnt {
+            let cs = e.c_cls[e.rk.rank(kids[i].mask)];
+            at[i] = (cs >> 6) as usize * N_FLIP + e.c_phi[(cs & 63) as usize][kids[i].flip] as usize;
+        }
+        let mut d = [0u8; 24];
+        for i in 0..cnt {
+            d[i] = nibble(&e.c, at[i]);
+        }
+        for i in 0..cnt {
+            // A cube that is ready early was a shorter solution already.
+            if d[i] > max || (d[i] == 0 && e.c_bound(&kids[i]) == 0) {
+                continue;
+            }
+            self.path[depth] = mv[i];
+            if self.dfs_c(&kids[i], rem - 1, mv[i], depth + 1) {
                 return true;
             }
         }
@@ -1325,22 +1401,76 @@ impl Search<'_> {
         if self.tick() {
             return true;
         }
+        let (ml_row, mh_row, fb_row, rl_row) = (&e.ml_mv[n.ml], &e.mh_mv[n.mh], &e.fb_mv[n.fb], &e.rl_mv[n.rl]);
+        if rem == 1 {
+            for (k, &m) in P_MOVES.iter().enumerate() {
+                if last != 255 && skip_move(last, m) {
+                    continue;
+                }
+                if ml_row[k] as usize != e.mw_home || mh_row[k] as usize != e.mw_home {
+                    continue;
+                }
+                let kid = PNode { ml: e.mw_home, mh: e.mw_home, fb: fb_row[k] as usize, rl: rl_row[k] as usize };
+                if e.p_bound(&kid, 0) != 0 {
+                    continue;
+                }
+                self.path[depth] = m;
+                if self.dfs_p(root, &kid, 0, m, depth + 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        let max = (rem - 1) as u8;
+        let mut kids = [PNode { ml: 0, mh: 0, fb: 0, rl: 0 }; 16];
+        let mut mv = [0u8; 16];
+        let mut cnt = 0;
         for (k, &m) in P_MOVES.iter().enumerate() {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
-            let next = PNode {
-                ml: e.ml_mv[n.ml][k] as usize,
-                mh: e.mh_mv[n.mh][k] as usize,
-                fb: e.fb_mv[n.fb][k] as usize,
-                rl: e.rl_mv[n.rl][k] as usize,
+            kids[cnt] =
+                PNode { ml: ml_row[k] as usize, mh: mh_row[k] as usize, fb: fb_row[k] as usize, rl: rl_row[k] as usize };
+            mv[cnt] = m;
+            cnt += 1;
+        }
+        // The edges alone and the centres alone.
+        let mut b = [0u8; 16];
+        for i in 0..cnt {
+            let c = &kids[i];
+            b[i] = e.pq[c.ml * 1680 + c.mh % 1680].max(e.p_centres[c.fb * 4900 + c.rl]);
+        }
+        let mut live = 0;
+        for i in 0..cnt {
+            if b[i] <= max {
+                kids[live] = kids[i];
+                mv[live] = mv[i];
+                b[live] = b[i];
+                live += 1;
+            }
+        }
+        // Half of the edges against half of the centres, four ways.
+        let mut j = [0u8; 16];
+        for i in 0..live {
+            let c = &kids[i];
+            let rl = e.rl_id[c.rl] as usize;
+            j[i] = if rl >= e.n_rl {
+                FAR
+            } else {
+                nibble(&e.p_fb[0], c.ml * 4900 + c.fb)
+                    .max(nibble(&e.p_fb[1], c.mh * 4900 + c.fb))
+                    .max(nibble(&e.p_rl[0], c.ml * e.n_rl + rl))
+                    .max(nibble(&e.p_rl[1], c.mh * e.n_rl + rl))
             };
-            let bound = e.p_bound(&next, rem - 1);
-            if bound > rem - 1 || (bound == 0 && rem > 1) {
+        }
+        for i in 0..live {
+            let bound = b[i].max(j[i]);
+            // A cube that is ready early was a shorter solution already.
+            if bound > max || bound == 0 {
                 continue;
             }
-            self.path[depth] = m;
-            if self.dfs_p(root, &next, rem - 1, m, depth + 1) {
+            self.path[depth] = mv[i];
+            if self.dfs_p(root, &kids[i], rem - 1, mv[i], depth + 1) {
                 return true;
             }
         }
@@ -1355,24 +1485,76 @@ impl Search<'_> {
             return true;
         }
         let e = self.e5;
+        let (lo_row, hi_row, ud_row, side_row) =
+            (&e.out_low_mv[n.lo], &e.out_high_mv[n.hi], &e.ud_mv[n.ud], &e.last_mv[n.side]);
+        if rem == 1 {
+            for (k, &m) in E_MOVES[..14].iter().enumerate() {
+                if last != 255 && skip_move(last, m) {
+                    continue;
+                }
+                if lo_row[k] != 0 || hi_row[k] != 0 {
+                    continue;
+                }
+                if e.e_centres[ud_row[k] as usize * 36 + side_row[k] as usize] != 0 {
+                    continue;
+                }
+                self.path[depth] = m;
+                if self.found(depth + 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        let max = (rem - 1) as u8;
+        let mut kids = [ENode { lo: 0, hi: 0, d: 0, ud: 0, side: 0 }; 14];
+        let mut mv = [0u8; 14];
+        let mut cnt = 0;
         for (k, &m) in E_MOVES[..14].iter().enumerate() {
             if last != 255 && skip_move(last, m) {
                 continue;
             }
-            let (lo, hi) = (e.out_low_mv[n.lo][k] as usize, e.out_high_mv[n.hi][k] as usize);
-            // The neighbour is at distance d-1, d or d+1; the table says which, modulo 3.
-            let v = e.e_mod3(lo, hi);
-            let d = n.d + (v + 3 - (n.d + 2) % 3) % 3 - 1;
-            if d as usize > rem - 1 {
+            let kid = ENode {
+                lo: lo_row[k] as usize,
+                hi: hi_row[k] as usize,
+                d: 0,
+                ud: ud_row[k] as usize,
+                side: side_row[k] as usize,
+            };
+            // The centres are a small table.
+            if e.e_centre(&kid) > max {
                 continue;
             }
-            let next = ENode { lo, hi, d, ud: e.ud_mv[n.ud][k] as usize, side: e.last_mv[n.side][k] as usize };
-            let centre = e.e_centre(&next) as usize;
-            if centre > rem - 1 || (d == 0 && centre == 0 && rem > 1) || e.e_joint(&next) as usize > rem - 1 {
+            kids[cnt] = kid;
+            mv[cnt] = m;
+            cnt += 1;
+        }
+        // The pairing: the neighbour is at distance d-1, d or d+1; the table says which, modulo 3.
+        let mut v = [0u8; 14];
+        for i in 0..cnt {
+            v[i] = e.e_mod3(kids[i].lo, kids[i].hi);
+        }
+        let mut live = 0;
+        for i in 0..cnt {
+            let d = n.d + (v[i] + 3 - (n.d + 2) % 3) % 3 - 1;
+            // A cube that is reduced early was a shorter solution already.
+            if d > max || (d == 0 && e.e_centre(&kids[i]) == 0) {
                 continue;
             }
-            self.path[depth] = m;
-            if self.dfs_e(&next, rem - 1, m, depth + 1) {
+            kids[live] = ENode { d, ..kids[i] };
+            mv[live] = mv[i];
+            live += 1;
+        }
+        // The pairings against the centres.
+        let mut j = [0u8; 14];
+        for i in 0..live {
+            j[i] = e.e_joint(&kids[i]);
+        }
+        for i in 0..live {
+            if j[i] > max {
+                continue;
+            }
+            self.path[depth] = mv[i];
+            if self.dfs_e(&kids[i], rem - 1, mv[i], depth + 1) {
                 return true;
             }
         }
