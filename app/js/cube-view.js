@@ -577,21 +577,22 @@ export class CubeView {
     if (this.cue && !(turn && turn.angle !== 0)) this.#arrows(this.cue, f);
   }
 
-  // The next move as arrows on the cube: along the layers that will turn,
-  // on every side of them that can be seen, pointing the way the stickers
-  // will go, and round the face itself when it is the face that turns.
-  // Each arrow is a flat shape lying on its face, head and all, and is
-  // projected with the face, so it looks painted on however the cube is held.
+  // The next move as arrows on the cube: one along the middle of every row
+  // of stickers that will turn, on every side of the cube that can be seen,
+  // pointing the way the stickers will go, and one round the face itself
+  // when it is the face that turns. Each arrow is a flat shape lying on its
+  // face, head and all, and is projected with the face, so it looks painted
+  // on however the cube is held.
   #arrows({ face, from, to, quarters }, f) {
     const { ctx, n } = this;
     const a = FACES[face].normal;
     const sense = quarters < 0 ? -1 : 1;
-    // The middle of the run of layers, as a distance from the centre along the face's normal.
-    const mid = 1 - (from + to) / n;
     const lift = 1.012;
     // Half the width of a shaft, the length of a head and half its width, in the cube's own units.
     const [hw, head, wing] = [0.036, 0.2, 0.105];
-    const fill = (points) => {
+    // An arrow along a row is no wider than the row: on a large cube it is drawn to the row's measure.
+    const fit = Math.min(1, (2 / n) * 0.4 / wing);
+    const fill = (points, scale = 1) => {
       ctx.beginPath();
       points.forEach((v, i) => {
         const [x, y] = this.#project(apply(this.rot, v), f);
@@ -599,7 +600,7 @@ export class CubeView {
       });
       ctx.closePath();
       ctx.lineJoin = "round";
-      ctx.lineWidth = Math.max(2, f.size / 260);
+      ctx.lineWidth = Math.max(scale < 1 ? 1 : 2, (f.size / 260) * Math.max(scale, 0.4));
       ctx.strokeStyle = "rgba(0,0,0,0.8)";
       ctx.stroke();
       ctx.fillStyle = "#ffffff";
@@ -618,17 +619,22 @@ export class CubeView {
       // Clockwise seen from the face: stickers on this side move along (-a) x s.
       const d = cross([-a[0] * sense, -a[1] * sense, -a[2] * sense], s);
       const reach = Math.abs(quarters) === 2 ? 0.8 : 0.58;
-      // The middle of the arrow; `d` runs along it and `a` across it, both in the face.
-      const o = [s[0] * lift + a[0] * mid, s[1] * lift + a[1] * mid, s[2] * lift + a[2] * mid];
-      fill([
-        at(o, d, a, -reach, -hw),
-        at(o, d, a, reach - head, -hw),
-        at(o, d, a, reach - head, -wing),
-        at(o, d, a, reach, 0),
-        at(o, d, a, reach - head, wing),
-        at(o, d, a, reach - head, hw),
-        at(o, d, a, -reach, hw),
-      ]);
+      const [w, h, g] = [hw * fit, head * Math.max(fit, 0.5), wing * fit];
+      for (let layer = from; layer < to; layer++) {
+        // The middle of this layer's row, as a distance from the centre along the turning face's normal.
+        const mid = 1 - (2 * layer + 1) / n;
+        // The middle of the arrow; `d` runs along it and `a` across it, both in the face.
+        const o = [s[0] * lift + a[0] * mid, s[1] * lift + a[1] * mid, s[2] * lift + a[2] * mid];
+        fill([
+          at(o, d, a, -reach, -w),
+          at(o, d, a, reach - h, -w),
+          at(o, d, a, reach - h, -g),
+          at(o, d, a, reach, 0),
+          at(o, d, a, reach - h, g),
+          at(o, d, a, reach - h, w),
+          at(o, d, a, -reach, w),
+        ], fit);
+      }
     }
     // Round the face itself, when it turns and is in view.
     if (from === 0 && visible(a)) {
