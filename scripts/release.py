@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""The tables of releases in README.md and bench/README.md.
+"""The tables of releases in README.md.
 
   scripts/release.py measure <name> [size ...]   solve the fixed scrambles of each size (all of
                                                  2 to 21 unless sizes are given), one run after
                                                  another, and record moves, seconds and memory
                                                  under <name> in bench/releases.tsv
-  scripts/release.py readme                      write the tables from that file: every release
-                                                 into README.md, the newest in full into
-                                                 bench/README.md
+  scripts/release.py readme                      write the tables into README.md from that file:
+                                                 the newest release in full, then every release
 
 A release is whatever name is given: a tag or a commit. Measuring it again
 replaces its rows. Run it on a quiet machine: the seconds are wall-clock.
@@ -23,7 +22,6 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "target", "release", "cubenxnxn")
 DATA = os.path.join(ROOT, "bench", "releases.tsv")
 README = os.path.join(ROOT, "README.md")
-BENCH = os.path.join(ROOT, "bench", "README.md")
 HEAD = "release\tcommit\tdate\tsize\tcubes\tmoves\tseconds\tlongest\tmemory_mb"
 SIZES = range(2, 22)
 BEGIN, END = "<!-- releases:begin -->", "<!-- releases:end -->"
@@ -143,8 +141,7 @@ def between(path, begin, end, body):
 
 
 def readme():
-    between(README, BEGIN, END, history())
-    between(BENCH, "<!-- release:begin -->", "<!-- release:end -->", newest())
+    between(README, BEGIN, END, newest() + "\n\nEvery release, the newest first: a row of mean moves and a row of mean seconds per cube.\n\n" + history())
 
 
 if __name__ == "__main__":
