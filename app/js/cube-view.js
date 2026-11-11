@@ -462,6 +462,13 @@ export class CubeView {
     const gap = cell * (n > 12 ? 0.05 : 0.07);
     const round = n <= 9 ? cell * 0.17 : 0;
     const line = Math.max(1, size / 900);
+    // The body is not a sharp box: its edges and corners are rounded, by a
+    // measure taken from the stickers so that none of them is cut. A flat
+    // face stops that far short of the edge; a round bar along each edge and
+    // a ball at each corner make up the rest. Where layers are cut apart
+    // for a turn the cut itself stays flat.
+    const bevel = n > 9 ? gap : Math.min(0.07, gap * 2.2);
+    const scaleAt = (v) => (EYE / (EYE - v[2])) * f.scale;
     for (const box of boxes) {
       const range = [
         [-1, 1],
@@ -469,6 +476,42 @@ export class CubeView {
         [-1, 1],
       ];
       range[box.axis] = [box.lo, box.hi];
+      // How far each end of the box is rounded: only where it is an end of the cube.
+      const round3 = range.map(([lo, hi]) => [lo === -1 ? bevel : 0, hi === 1 ? bevel : 0]);
+      ctx.strokeStyle = this.body;
+      ctx.fillStyle = this.body;
+      ctx.lineCap = "butt";
+      for (let e = 0; e < 3; e++) {
+        const [u, v] = [(e + 1) % 3, (e + 2) % 3];
+        for (const su of [0, 1]) {
+          for (const sv of [0, 1]) {
+            if (!round3[u][su] || !round3[v][sv]) continue;
+            const p = [0, 0, 0];
+            p[u] = range[u][su] + (su ? -bevel : bevel);
+            p[v] = range[v][sv] + (sv ? -bevel : bevel);
+            const ends = [0, 1].map((se) => {
+              p[e] = range[e][se] + (se ? -round3[e][1] : round3[e][0]);
+              return apply(box.m, p);
+            });
+            const [x1, y1] = this.#project(ends[0], f);
+            const [x2, y2] = this.#project(ends[1], f);
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineWidth = bevel * (scaleAt(ends[0]) + scaleAt(ends[1]));
+            ctx.stroke();
+            // A ball where three rounded edges meet: once per corner, from the edges along the first axis.
+            if (e !== 0) continue;
+            for (const se of [0, 1]) {
+              if (!round3[e][se]) continue;
+              const [cx, cy] = this.#project(ends[se], f);
+              ctx.beginPath();
+              ctx.arc(cx, cy, bevel * scaleAt(ends[se]), 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      }
       for (let face = 0; face < 6; face++) {
         const { normal, right, down } = FACES[face];
         const k = normal.findIndex((v) => v !== 0);
@@ -488,7 +531,12 @@ export class CubeView {
         };
         const [a0, a1] = span(right);
         const [b0, b1] = span(down);
-        const corners = [at(a0, b0), at(a1, b0), at(a1, b1), at(a0, b1)];
+        const outer = Math.abs(level) === 1;
+        // An outer face is flat up to where the rounding of its edges begins.
+        const inset = (lo, hi) => [lo === -1 && outer ? lo + bevel : lo, hi === 1 && outer ? hi - bevel : hi];
+        const [fa0, fa1] = inset(a0, a1);
+        const [fb0, fb1] = inset(b0, b1);
+        const corners = [at(fa0, fb0), at(fa1, fb0), at(fa1, fb1), at(fa0, fb1)];
         // Faces that look away from the eye are not drawn.
         let area = 0;
         for (let i = 0; i < 4; i++) {
@@ -497,8 +545,32 @@ export class CubeView {
           area += x1 * y2 - x2 * y1;
         }
         if (area <= 0) continue;
-        const outer = Math.abs(level) === 1;
+        // The whole face of the box, its corners rounded where they are corners of the cube.
+        const whole = () => {
+          ctx.beginPath();
+          const q = bevel;
+          const turns = [
+            [a0, b0, 1, 1],
+            [a1, b0, -1, 1],
+            [a1, b1, -1, -1],
+            [a0, b1, 1, -1],
+          ];
+          turns.forEach(([a, b, da, db], i) => {
+            const round = q > 0 && Math.abs(a) === 1 && Math.abs(b) === 1;
+            // Going round the square, each corner is entered along one side and left along the next.
+            const along = i % 2 === 0;
+            const before = round ? (along ? at(a, b + db * q) : at(a + da * q, b)) : at(a, b);
+            const after = round ? (along ? at(a + da * q, b) : at(a, b + db * q)) : null;
+            i ? ctx.lineTo(before[0], before[1]) : ctx.moveTo(before[0], before[1]);
+            if (after) {
+              const corner = at(a, b);
+              ctx.quadraticCurveTo(corner[0], corner[1], after[0], after[1]);
+            }
+          });
+          ctx.closePath();
+        };
         const outline = () => {
+          if (!outer) return whole();
           ctx.beginPath();
           corners.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
           ctx.closePath();
@@ -578,9 +650,21 @@ export class CubeView {
         const facing = apply(m, normal);
         const shade = Math.max(0, Math.min(0.26, 0.13 - facing[1] * 0.12 - facing[0] * 0.05));
         if (shade > 0.01) {
-          outline();
           ctx.fillStyle = `rgba(0,0,0,${shade.toFixed(3)})`;
+          outline();
           ctx.fill();
+          if (bevel > gap) {
+            // The stickers reach past the flat of the face into the rounding of
+            // its edges: that part of them is darkened by itself.
+            const past = new Path2D();
+            past.rect(0, 0, size, size);
+            corners.forEach(([x, y], i) => (i ? past.lineTo(x, y) : past.moveTo(x, y)));
+            past.closePath();
+            ctx.save();
+            ctx.clip(past, "evenodd");
+            for (const path of paths.values()) ctx.fill(path);
+            ctx.restore();
+          }
         }
       }
     }
