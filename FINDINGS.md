@@ -129,7 +129,9 @@ Detail and numbers: the last section of `bench/RESULTS.md`.
   bounded by mixed tables of both orbits (they are weaker than the orbit
   tables); beam searches for the pairing and for the centres; phase B and
   phase C as one search (they share no moves: same length, a thousand
-  times the work).
+  times the work); the reduction ending in a cube that the second phase
+  of the 3x3x3 solves alone (the end 6.5 moves shorter, the way to it
+  10 longer, four cubes).
 - More effort in the present phases buys tenths: full mode is 0.6 shorter
   (12 cubes) for three to seven times the positions searched.
 

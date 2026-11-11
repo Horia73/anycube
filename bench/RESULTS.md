@@ -1703,7 +1703,7 @@ of move sequences that are not one another in a different order.
   and the slice edges seen to before the last edge phase): its 23.7 cost
   12.4 moves at 6.8 continuations, and the 21.5 moved earlier cost 7.5 to
   8.5: about 20 against 17.5. Choosing among many ends by its exact table
-  wins back about that much. Not built.
+  wins back part of it. Measured below (7): 3.5 moves longer.
 - The count is a ceiling and proved too generous where it promised gains:
   see the two searches with 20 moves below.
 
@@ -1800,6 +1800,22 @@ shorter than phases P and E on random cubes.
    was 23 moves to the end of phase C, the same as the two phases one
    after the other.
 
+7. **The reduction ending in a cube that the second phase of the 3x3x3
+   solves alone.** Phase C keeps the wings as they are named (one
+   labelling instead of the best of 2,048, which leaves every edge
+   unflipped), phase P builds the four edges that belong in its slice and
+   brings the corner twist to nothing (a table of the twist under its
+   moves as a further bound), phase E is unchanged and the 3x3x3 solver
+   finds the cube already in the subgroup. First four cubes:
+
+   | | Centres | C | P | E | 3x3x3 | Total |
+   |---|---|---|---|---|---|---|
+   | as it is | 10.75 + 6.75 | 7.00 | 11.50 | 14.25 | 17.25 | 67.50 |
+   | ending in the subgroup | 11.50 + 7.25 | 11.25 | 15.25 | 15.00 | 10.75 | 71.00 |
+
+   The end is 6.5 moves shorter and the way to it 10 longer, as the
+   count said. Phase P took 72 million positions per cube instead of 1.1.
+
 ### Where that leaves 60
 
 - Within the present phases, more effort buys tenths: 0.6 for three to
@@ -1816,7 +1832,7 @@ shorter than phases P and E on random cubes.
   it would be a search with all moves through most of the solve, which no
   table that fits in memory can bound.
 
-The code of the six attempts is not in the repository; the diffs are in
+The code of the seven attempts is not in the repository; the diffs are in
 the notes folder of the sessions (`five-shorter-tried/`).
 
 ## 3x3x3: every first phase of 14 moves, on all cores (2026-11-11, night, branch `three-shorter`)
