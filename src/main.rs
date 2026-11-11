@@ -24,6 +24,7 @@ fn main() {
         Some("scrambles") => scrambles(&args[1..]),
         Some("stage6") => stage6(&args[1..]),
         Some("bench6") => bench6(&args[1..]),
+        Some("benchn") => benchn(&args[1..]),
         Some("stage7") => stage7(&args[1..]),
         Some("bench7") => bench7(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
@@ -50,6 +51,14 @@ fn solve(args: &[String]) {
         (None, Some(294)) => 7,
         _ => 4,
     };
+    // Any other length that is six squares is a larger cube.
+    let size = match (opt(args, "--size"), state.map(|s| s.trim().len())) {
+        (None, Some(len)) if len > 294 => (8..100).find(|n| 6 * n * n == len).unwrap_or(size),
+        _ => size,
+    };
+    if size >= 8 {
+        return solven(size, state, args);
+    }
     if size == 5 {
         return solve5(state, args);
     }
@@ -196,6 +205,98 @@ fn solve6(state: Option<&str>, args: &[String]) {
         }
         Err(e) => fail(&e),
     }
+}
+
+/// Sizes from 8 up: the general solver.
+fn solven(size: usize, state: Option<&str>, args: &[String]) {
+    let t0 = Instant::now();
+    let g = cubenxnxn::cuben::Geometry::new(size);
+    let solver = cubenxnxn::nnn::SolverN::load();
+    let mut facelets = match state {
+        Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
+        None => {
+            let moves = g.parse_moves(&move_text(args)).unwrap_or_else(|e| fail(&e));
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &moves);
+            f
+        }
+    };
+    let t1 = Instant::now();
+    match solver.solve(&g, &facelets) {
+        Ok(sol) => {
+            g.apply_seq(&mut facelets, &sol.moves);
+            if !g.is_solved(&facelets) {
+                fail("the solution found does not solve the cube");
+            }
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m)).collect();
+            println!("{}", names.join(" "));
+            eprintln!(
+                "{} moves (centres {}, edges {}, 3x3x3 {}), tables {:.0} ms, search {:.0} ms",
+                sol.moves.len(),
+                sol.lens[0],
+                sol.lens[1],
+                sol.lens[2],
+                (t1 - t0).as_secs_f64() * 1e3,
+                t1.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+/// The general solver on a scramble file of any size from 6 up.
+fn benchn(args: &[String]) {
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (size, limit) = (num("--size", 8), num("--limit", usize::MAX));
+    let g = cubenxnxn::cuben::Geometry::new(size);
+    let t0 = Instant::now();
+    let solver = cubenxnxn::nnn::SolverN::load();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let (mut sums, mut times, mut n) = ([0usize; 3], Vec::new(), 0usize);
+    let mut out = opt(args, "--out").map(|p| {
+        std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
+    });
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let sol = solver.solve(&g, &f).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        g.apply_seq(&mut f, &sol.moves);
+        if !g.is_solved(&f) {
+            fail(&format!("cube {}: the solution does not solve the cube", n));
+        }
+        eprintln!("cube {:3}: {:?} = {} moves, {:.0} ms", n, sol.lens, sol.moves.len(), ms);
+        for k in 0..3 {
+            sums[k] += sol.lens[k];
+        }
+        times.push(ms);
+        if let Some(o) = out.as_mut() {
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m)).collect();
+            writeln!(o, "{}\t{:?}\t{}\t{:.0}\t{}", n, sol.lens, sol.moves.len(), ms, names.join(" ")).unwrap();
+            o.flush().unwrap();
+        }
+        n += 1;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nf = n as f64;
+    println!("solved {} cubes of size {}, every solution verified on the sticker model", n, size);
+    println!(
+        "mean length {:.2}  (centres {:.2}, edges {:.2}, 3x3x3 {:.2})",
+        sums.iter().sum::<usize>() as f64 / nf,
+        sums[0] as f64 / nf,
+        sums[1] as f64 / nf,
+        sums[2] as f64 / nf
+    );
+    println!(
+        "time per cube: mean {:.0} ms, median {:.0} ms, max {:.0} ms",
+        times.iter().sum::<f64>() / nf,
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
 }
 
 fn solve7(state: Option<&str>, args: &[String]) {

@@ -171,6 +171,16 @@ impl Solver5 {
     /// ways, such as the larger cubes: every step here chooses among all of
     /// them by total length.
     pub fn solve_any(&self, cubes: &[(Vec<u8>, usize)], p: &Params5) -> Result<(usize, Solution5), String> {
+        self.run(cubes, p, true)
+    }
+
+    /// The shortest reduction found: centres solved and edges whole, the
+    /// 3x3x3 left as it comes. For callers that go on from there themselves.
+    pub fn reduce(&self, facelets: &[u8], p: &Params5) -> Result<Vec<u8>, String> {
+        self.run(&[(facelets.to_vec(), 0)], p, false).map(|x| x.1.moves)
+    }
+
+    fn run(&self, cubes: &[(Vec<u8>, usize)], p: &Params5, finish: bool) -> Result<(usize, Solution5), String> {
         let g = &tables5().geometry;
         let t0 = Instant::now();
         let until = |share: f64| (p.time_ms > 0).then(|| t0 + Duration::from_secs_f64(p.time_ms as f64 * share / 1e3));
@@ -295,6 +305,17 @@ impl Solver5 {
         let found = self.edges.phase_e(&starts_of(&after_p), &limits(p.e_keep, 2, 0.9));
         let reduced = extend(&after_p, found);
         lap("phase E", reduced.len(), shortest(&reduced));
+        if !finish {
+            return match reduced.iter().min_by_key(|x| cubes[x.root].1 + x.moves.len()) {
+                Some(x) => {
+                    let e = &x.ends;
+                    let lens = [e[0], e[1] - e[0], e[2] - e[1], e[3] - e[2], e[4] - e[3], 0];
+                    Ok((x.root, Solution5 { moves: x.moves.clone(), lens }))
+                }
+                None if p.time_ms == 0 => Err("no reduction found".to_string()),
+                None => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish),
+            };
+        }
         // The 3x3x3 that is left.
         // A quick solve of every one, then the full effort on the most promising.
         let mut quick: Vec<(usize, &Partial, C3, Vec<u8>)> = reduced
@@ -331,7 +352,7 @@ impl Solver5 {
             // A step cut short by the clock left the next one nothing to work with.
             return match p.time_ms {
                 0 => Err("no reduction found".to_string()),
-                _ => self.solve_any(cubes, &Params5 { time_ms: 0, ..p.clone() }),
+                _ => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish),
             };
         };
         lap("3x3x3", 1, cubes[x.root].1 + x.moves.len() + sol3.len());

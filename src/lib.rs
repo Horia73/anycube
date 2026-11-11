@@ -1,3 +1,4 @@
+pub mod axes;
 pub mod big1;
 pub mod big2;
 pub mod c2;
@@ -10,6 +11,7 @@ pub mod cube;
 pub mod cuben;
 pub mod edges5;
 pub mod joint;
+pub mod nnn;
 pub mod opt3;
 pub mod orbits;
 pub mod search;
