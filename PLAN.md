@@ -285,6 +285,17 @@ De ce nu ajunge schema de acum, după numărătoarea de stări:
 - piedica e aceeași în orice variantă: o căutare care împerechează wings
   interioare și oblicii împreună, cu un prag bun. Fără prag, e lentă.
 
+**Stadiu 2026-11-11, mai târziu:** rapid 111,75 în 3,1 s (−17,9%), normal
+110,05 în 7,4 s (−19,1%), pe 20 de cuburi verificate. Două schimbări:
+pașii 3 și 4 ai așezării într-o singură căutare în fascicul (17,25 → 15,75
+mutări) și reducerea interioară cu oblici făcută cu fasciculul scris pentru
+7x7x7 (17 mutări într-o fracțiune de secundă, unde căutarea exactă lua
+minute). Calea scurtă (potrivirea oblicilor cu x interior) a rămas doar ca
+rezervă. Lărgirile nu mai aduc nimic: ~110 orice aș mări. Mai lipsește o
+mutare până la 108,9 și cere încă o schimbare de structură; candidatul e
+împărțirea wings interioare (5,6 mutări ca pas separat) făcută odată cu
+pasul 3 al așezării, cum face 4x4x4-ul în faza lui comună.
+
 **Ce urmează la 6x6x6, în ordine:**
 
 1. Un prag comun pentru pasul 3 (wings interioare + oblici), ca să fie și

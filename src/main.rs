@@ -149,6 +149,7 @@ fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
         tries: num("--tries", d.tries),
         finals: num("--finals", d.finals),
         budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
+        beam: num("--beam", d.beam),
         outer,
     }
 }
@@ -808,7 +809,7 @@ fn stage6(args: &[String]) {
     let s5 = cubenxnxn::stage5::Stage5::load();
     let s6 = Stage6::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
-    let (mut sums, mut total, mut ms, mut n) = ([0usize; 4], 0usize, 0.0, 0usize);
+    let (mut sums, mut total, mut ms, mut n) = ([0usize; 3], 0usize, 0.0, 0usize);
     for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
         let scramble = s6.g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = s6.g.solved();
@@ -821,7 +822,7 @@ fn stage6(args: &[String]) {
         if !s6.is_staged(&f) {
             fail(&format!("cube {}: the result is not staged", n));
         }
-        for k in 0..4 {
+        for k in 0..3 {
             sums[k] += best.lens[k];
         }
         total += best.moves.len();

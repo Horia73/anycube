@@ -5,16 +5,17 @@
 //! the two mirror orbits of oblique centres. An oblique and its mate (the
 //! oblique next to it across the middle of a row) move as one piece under
 //! 1- and 2-layer turns, like the t centre of a 5x5x5; only 3-layer turns
-//! separate mates. Four steps, each keeping what the ones before achieved:
+//! separate mates. Three steps, each keeping what the ones before achieved:
 //!
 //! 1. R/L inner x centres onto R and L, and R/L obliques into pairs (every
 //!    oblique next to a mate of its own axis), with all 54 moves;
 //! 2. R/L outer x centres and oblique pairs onto R and L with 1- and
 //!    2-layer turns: phase A of the 5x5x5;
-//! 3. U/D inner x centres onto U and D, inner wings even, U/D obliques into
-//!    pairs (an exact table for each of the two halves bounds the search);
-//! 4. U/D outer x centres and oblique pairs onto U and D, outer wings even:
-//!    phase B of the 5x5x5.
+//! 3. everything of U/D in one beam search: inner x centres onto U and D,
+//!    inner wings even, obliques into pairs, and what phase B of the 5x5x5
+//!    does (outer x centres and oblique pairs onto U and D, outer wings
+//!    even). The score adds the exact tables of the parts. As two searches,
+//!    one after the other, this took 17.3 moves; together 15.8.
 
 use crate::cube::Cube;
 use crate::cuben::Geometry;
@@ -28,6 +29,8 @@ const GOAL_RL: u32 = 0xFF_0000;
 const GOAL_UD: u32 = 0x00_00FF;
 const N_UD: usize = 12870;
 const FAR: u8 = 255;
+/// States per level of the beam search of step 3.
+const UD_BEAM: usize = 20_000;
 
 /// Orbit indices, in the order `centre_orbits` lists them for a 6x6x6.
 pub const X_OUT: usize = 0;
@@ -66,13 +69,15 @@ pub struct Stage6 {
     in_ud: Vec<u8>,
     obl_ud_mv: [Vec<Vec<u16>>; 2],
     obl_ud: Bytes,
+    /// The U/D outer x centres among 16 places under the moves of step 3.
+    out_ud_mv: Vec<Vec<u16>>,
 }
 
 /// A staging: the moves and how many each step took.
 #[derive(Clone)]
 pub struct Staged6 {
     pub moves: Vec<u8>,
-    pub lens: [usize; 4],
+    pub lens: [usize; 3],
 }
 
 impl Stage6 {
@@ -169,7 +174,8 @@ impl Stage6 {
             // AtomicU8 has the same layout as u8.
             unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
         });
-        Stage6 { g, orbits, perms, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud }
+        let out_ud_mv = table(X_OUT, &m3);
+        Stage6 { g, orbits, perms, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -193,9 +199,9 @@ impl Stage6 {
     /// The best stagings found, shortest first. `width` candidates are
     /// carried from step to step, each continued in up to `width` ways.
     pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize) -> Vec<Staged6> {
-        let start = Staged6 { moves: Vec::new(), lens: [0; 4] };
+        let start = Staged6 { moves: Vec::new(), lens: [0; 3] };
         let mut cands = vec![(start, facelets.to_vec())];
-        for step in 0..4 {
+        for step in 0..3 {
             let mut next: Vec<(Staged6, Vec<u8>)> = cands
                 .par_iter()
                 .flat_map_iter(|(c, f)| {
@@ -228,44 +234,34 @@ impl Stage6 {
                 sols
             }
             2 => {
-                let rank = |o: usize| self.ranks.rank16[self.mask(o, f, 0) as usize] as usize;
-                self.step3(&Node3 { x: rank(X_IN), odd: self.wings_odd(f, [0, 2, 3, 5]), a: rank(OBL_A), b: rank(OBL_B) }, cap)
+                // Steps 3 and 4 in one search.
+                let rank = |o: usize| self.ranks.rank16[self.mask(o, f, 0) as usize];
+                let root = Node34 {
+                    x: rank(X_IN),
+                    a: rank(OBL_A),
+                    b: rank(OBL_B),
+                    o: rank(X_OUT),
+                    odd: self.wings_odd(f, [0, 2, 3, 5]) as u8 | (self.wings_odd(f, [0, 1, 4, 5]) as u8) << 1,
+                };
+                // In half moves: the inner x centres, the pairing, and phase B
+                // of the 5x5x5 as each of the two oblique orbits would have it.
+                let p = Step34 { s: self, s5 };
+                let score = |n: &Node34| {
+                    let (x, a, b, o) = (n.x as usize, n.a as usize, n.b as usize, n.o as usize);
+                    2 * self.in_ud[x * 2 + (n.odd & 1) as usize] as u32
+                        + 2 * self.obl_ud[a * N_UD + b] as u32
+                        + s5.b_dist(o, a, n.odd & 2 != 0) as u32
+                        + s5.b_dist(o, b, n.odd & 2 != 0) as u32
+                };
+                crate::search::beam_again(&p, &root, score, UD_BEAM, cap, 40, 0)
             }
-            _ => vec![s5.phase_b(self.mask(X_OUT, f, 0), self.mask(OBL_A, f, 0), self.wings_odd(f, [0, 1, 4, 5]))],
+            _ => unreachable!("three steps"),
         }
     }
 
     #[inline(always)]
     fn h1(&self, n: &[u32; 3]) -> usize {
         self.in_rl[n[0] as usize].max(self.unpaired[(n[1] ^ n[2]) as usize]) as usize
-    }
-
-    #[inline(always)]
-    fn h3(&self, n: &Node3) -> usize {
-        self.in_ud[n.x * 2 + n.odd as usize].max(self.obl_ud[n.a * N_UD + n.b]) as usize
-    }
-
-    /// Step 3: the shortest ways (up to `cap`).
-    fn step3(&self, root: &Node3, cap: usize) -> Vec<Vec<u8>> {
-        let h = self.h3(root);
-        if h == 0 {
-            return vec![Vec::new()];
-        }
-        let (count, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
-        for depth in h..=h + 14 {
-            let found: Vec<Vec<u8>> = (0..self.m3.len())
-                .into_par_iter()
-                .flat_map_iter(|k| {
-                    let mut run = Run3 { s: self, cap, count: &count, stop: &stop, out: Vec::new(), path: [0; 32] };
-                    run.dfs(root, k, depth, 0);
-                    run.out
-                })
-                .collect();
-            if !found.is_empty() {
-                return found;
-            }
-        }
-        Vec::new()
     }
 
     /// Step 1: the shortest ways (up to `cap`) to bring the R/L inner x
@@ -353,61 +349,53 @@ fn flips_inner(m: u8) -> bool {
     m >= 36 && m % 3 != 1
 }
 
-/// Step 3 state: inner x centres, inner wing parity, the two oblique orbits.
-#[derive(Clone, Copy)]
-struct Node3 {
-    x: usize,
-    odd: bool,
-    a: usize,
-    b: usize,
+/// 2- and 3-layer quarter turns move the second slice a quarter turn: an odd permutation of the outer wings.
+fn flips_outer(m: u8) -> bool {
+    m >= 18 && m % 3 != 1
 }
 
-struct Run3<'a> {
+/// Steps 3 and 4 together: the U/D patterns of the inner x centres, the two
+/// oblique orbits and the outer x centres, and the parities of the inner
+/// (bit 0) and outer (bit 1) wings.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Node34 {
+    x: u16,
+    a: u16,
+    b: u16,
+    o: u16,
+    odd: u8,
+}
+
+struct Step34<'a> {
     s: &'a Stage6,
-    cap: usize,
-    count: &'a AtomicUsize,
-    stop: &'a AtomicBool,
-    out: Vec<Vec<u8>>,
-    path: [u8; 32],
+    s5: &'a Stage5,
 }
 
-impl Run3<'_> {
-    fn dfs(&mut self, n: &Node3, k: usize, rem: usize, depth: usize) -> bool {
+impl crate::search::Problem for Step34<'_> {
+    type Node = Node34;
+
+    fn moves(&self) -> &[u8] {
+        &self.s.m3
+    }
+
+    fn next(&self, n: &Node34, k: usize) -> Node34 {
+        let (s, m) = (self.s, self.s.m3[k]);
+        Node34 {
+            x: s.in_ud_mv[n.x as usize][k],
+            a: s.obl_ud_mv[0][n.a as usize][k],
+            b: s.obl_ud_mv[1][n.b as usize][k],
+            o: s.out_ud_mv[n.o as usize][k],
+            odd: n.odd ^ flips_inner(m) as u8 ^ (flips_outer(m) as u8) << 1,
+        }
+    }
+
+    fn bound(&self, n: &Node34) -> usize {
         let s = self.s;
-        let m = s.m3[k];
-        let next = Node3 {
-            x: s.in_ud_mv[n.x][k] as usize,
-            odd: n.odd ^ flips_inner(m),
-            a: s.obl_ud_mv[0][n.a][k] as usize,
-            b: s.obl_ud_mv[1][n.b][k] as usize,
-        };
-        let h = s.h3(&next);
-        if h > rem - 1 {
-            return false;
-        }
-        self.path[depth] = m;
-        if rem == 1 {
-            if h == 0 {
-                self.out.push(self.path[..=depth].to_vec());
-                if self.count.fetch_add(1, Relaxed) + 1 >= self.cap {
-                    self.stop.store(true, Relaxed);
-                    return true;
-                }
-            }
-            return false;
-        }
-        if h == 0 {
-            return false;
-        }
-        if self.stop.load(Relaxed) {
-            return true;
-        }
-        for k2 in 0..s.m3.len() {
-            if !skip54(m, s.m3[k2]) && self.dfs(&next, k2, rem - 1, depth + 1) {
-                return true;
-            }
-        }
-        false
+        s.in_ud[n.x as usize * 2 + (n.odd & 1) as usize].max(s.obl_ud[n.a as usize * N_UD + n.b as usize]) as usize
+    }
+
+    fn done(&self, n: &Node34) -> bool {
+        self.s5.b_dist(n.o as usize, n.a as usize, n.odd & 2 != 0) == 0
     }
 }
 

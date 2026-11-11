@@ -19,14 +19,18 @@
 //!    change which obliques are mates, and after this step there are none.
 //! 4. Our 5x5x5 solver finishes.
 //!
-//! Step 3 is the slow one: its lower bound is about 10 moves where the
-//! answer is about 17. It gets a budget, and a cube that exceeds it takes
-//! the quick way instead (`Quads`): the obliques are first matched to the
-//! inner x centres they sit next to. The moves of the inner 4x4x4 carry each
-//! quarter of a face (an inner x centre and the two obliques beside it) as
-//! one piece, so once every quarter is consistent, reducing the inner cube
-//! brings the obliques home with the centres and no search has to watch
-//! them. That costs about five moves more and takes milliseconds.
+//! Step 3 does two jobs that share few moves: its lower bound is about 10
+//! moves where the answer is about 17, and the exact search takes from
+//! seconds to many minutes. A beam search on the sum of the two bounds
+//! (`Inner6::reduce_beam`) finds 17 moves in a fraction of a second.
+//!
+//! The quick way (`Quads`) is what is left when the beam is off or finds
+//! nothing: the obliques are first matched to the inner x centres they sit
+//! next to. The moves of the inner 4x4x4 carry each quarter of a face (an
+//! inner x centre and the two obliques beside it) as one piece, so once
+//! every quarter is consistent, reducing the inner cube brings the obliques
+//! home with the centres and no search has to watch them. That costs about
+//! five moves more.
 
 use crate::cube::{tables as cube_tables, Cube};
 use crate::cuben::Geometry;
@@ -57,7 +61,7 @@ struct Move3 {
 
 /// State of step 3: the inner 4x4x4 as its last phase sees it, and where
 /// the obliques of each orbit show U, R or F.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Node3 {
     sigma: [u8; 12],
     centres: u32,
@@ -263,6 +267,7 @@ pub struct Inner6 {
     rk: MaskRank,
     split: Vec<u8>,
     moves3: Vec<Move3>,
+    ids3: Vec<u8>,
     rank8: [u8; 256],
     /// Per axis: a lower bound, in half moves, on making the two oblique
     /// orbits alike on that axis, by their two patterns. A move's cost is
@@ -468,7 +473,8 @@ impl Inner6 {
             dist
         };
         let ready = [ready_table(0), ready_table(1), ready_table(2)];
-        Inner6 { wings, rk, split, moves3, rank8, joint, moves2, inner2, ready }
+        let ids3 = moves3.iter().map(|mv| mv.m).collect();
+        Inner6 { wings, rk, split, moves3, ids3, rank8, joint, moves2, inner2, ready }
     }
 
     /// `matched`: the obliques already follow the inner x centres, so only
@@ -608,6 +614,38 @@ impl Inner6 {
         self.bound(solver, &n, 0, true)
     }
 
+    /// Step 3 by beam search (see `search::beam`): the states kept are the
+    /// ones for which the inner cube and the obliques together need least,
+    /// their two bounds added, since they share few moves. Up to `cap`
+    /// ways of the first length found; not always the shortest there is, but
+    /// within a move of it at 100,000 states per level, in a fraction of a
+    /// second where the exact search takes minutes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reduce_beam(
+        &self,
+        s6: &Stage6,
+        solver: &Solver,
+        f: &[u8],
+        inner: &Cube,
+        width: usize,
+        cap: usize,
+        salt: u32,
+    ) -> Vec<Vec<u8>> {
+        let root = self.node3(s6, f, inner);
+        let t = &solver.tabs;
+        let score = |n: &Node3| {
+            let mut halves = 0u32;
+            for axis in 0..3 {
+                let pat = |x: u32| self.rank8[((x >> (8 * axis)) & 255) as usize] as usize;
+                halves += self.joint[axis][(pat(n.centres) * 70 + pat(n.a)) * 70 + pat(n.b)] as u32;
+            }
+            let inner = (t.sigma[sigma_rank(&n.sigma)] as u32).max(t.ct3[t.ct3_index(n.centres, n.parity)] as u32);
+            // In half moves, the inner cube weighing half as much again.
+            3 * inner + halves
+        };
+        crate::search::beam_again(&Reduce3 { inner: self, s6, solver }, &root, score, width, cap, 40, salt)
+    }
+
     /// Step 3: the shortest ways found (up to `cap`) from a cube with staged
     /// centres and split inner wings, with the given slack (see `bound`).
     /// `None` if the search visited more than `budget` positions.
@@ -682,6 +720,40 @@ impl Inner6 {
             }
         }
         None
+    }
+}
+
+/// Step 3 for a beam search.
+struct Reduce3<'a> {
+    inner: &'a Inner6,
+    s6: &'a Stage6,
+    solver: &'a Solver,
+}
+
+impl crate::search::Problem for Reduce3<'_> {
+    type Node = Node3;
+
+    fn moves(&self) -> &[u8] {
+        &self.inner.ids3
+    }
+
+    fn next(&self, n: &Node3, k: usize) -> Node3 {
+        let (mv, t) = (&self.inner.moves3[k], &self.solver.tabs);
+        Node3 {
+            sigma: sigma_move(&t.pl[mv.k], &t.phinv[mv.k], &n.sigma),
+            centres: t.bp.apply(P3_MOVES[mv.k], n.centres),
+            parity: n.parity ^ mv.deep as u8,
+            a: self.s6.perms[OBL_A].apply(mv.m, n.a),
+            b: self.s6.perms[OBL_B].apply(mv.m, n.b),
+        }
+    }
+
+    fn bound(&self, n: &Node3) -> usize {
+        self.inner.bound(self.solver, n, 99, true)
+    }
+
+    fn done(&self, n: &Node3) -> bool {
+        n.a == n.b
     }
 }
 
@@ -810,28 +882,29 @@ pub struct Params6 {
     pub tries: usize,
     /// Cubes taken through the 5x5x5 solver.
     pub finals: usize,
-    /// Positions step 3 may visit for one staging before that staging takes
-    /// the quick way; 0 sends every cube the quick way.
+    /// Positions the exact step 3 may visit for one staging; 0 skips it.
     pub budget: u64,
+    /// States per level of the beam search that does step 3 otherwise; 0
+    /// sends every cube the quick way.
+    pub beam: usize,
     pub outer: Params5,
 }
 
 impl Params6 {
-    /// The quick way, narrow: a few seconds per cube.
+    /// A few seconds per cube.
     pub fn fast() -> Params6 {
-        Params6 { width: 4, tries: 3, finals: 24, budget: 0, outer: Params5::fast() }
+        Params6 { width: 4, tries: 3, finals: 24, budget: 0, beam: 50_000, outer: Params5::fast() }
     }
 
-    /// The quick way, wider, with the normal settings of the 5x5x5. The exact
-    /// step 3 is left to `full`: within a budget that keeps a solve under
-    /// half a minute it finished for 2 cubes in 12.
+    /// Wider, with the normal settings of the 5x5x5.
     pub fn normal() -> Params6 {
-        Params6 { width: 8, tries: 6, finals: 64, budget: 0, outer: Params5::normal() }
+        Params6 { width: 8, tries: 6, finals: 64, budget: 0, beam: 100_000, outer: Params5::normal() }
     }
 
-    /// As long as it takes.
+    /// Wider still, and no clock in the 5x5x5. The exact step 3 (`budget`)
+    /// stays off: it takes minutes on some cubes for less than a move.
     pub fn full() -> Params6 {
-        Params6 { width: 32, tries: 4, finals: 64, budget: u64::MAX, outer: Params5::normal() }
+        Params6 { width: 16, tries: 12, finals: 256, budget: 0, beam: 300_000, outer: Params5 { time_ms: 0, ..Params5::normal() } }
     }
 }
 
@@ -874,15 +947,17 @@ impl Solver6 {
         Cube::from_facelets(&g.to_string(&g.sub_facelets(f, &[0, 2, 3, 5]))).expect("four layers form a 4x4x4")
     }
 
+    /// The centres and the parity of the inner cube must suit its last phase.
+    fn suits(&self, f1: &[u8], path: &[u8]) -> bool {
+        let c = self.inner_cube(&self.apply(f1, path));
+        let t = &self.solver4.tabs;
+        t.ct3[t.ct3_index(ct3_mask(&c), ct3_parity(&c))] != crate::tables::UNREACHED
+    }
+
     /// Step 2 from a staged cube, the results that leave step 3 least to do
     /// first: (moves, cube). `matched` is for the quick way.
     fn splits(&self, f1: &[u8], matched: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
-        // The centres and the parity of the inner cube must suit its last phase.
-        let suits = |path: &[u8]| {
-            let c = self.inner_cube(&self.apply(f1, path));
-            let t = &self.solver4.tabs;
-            t.ct3[t.ct3_index(ct3_mask(&c), ct3_parity(&c))] != crate::tables::UNREACHED
-        };
+        let suits = |path: &[u8]| self.suits(f1, path);
         let mut out: Vec<(usize, Vec<u8>, Vec<u8>)> = self
             .inner
             .split(&self.s6, f1, &self.inner_cube(f1).ep, matched, 16, 64, &suits)
@@ -901,14 +976,23 @@ impl Solver6 {
         out.into_iter().map(|x| (x.1, x.2)).collect()
     }
 
-    /// Steps 2 and 3 for one staging: the exact way within the budget,
-    /// otherwise the quick way.
-    fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64) -> Vec<Partial> {
+    /// Steps 2 and 3 for one staging: the exact way within the budget, else
+    /// the same by beam search, else (no beam, or it found nothing) the quick way.
+    fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64, beam: usize) -> Vec<Partial> {
         let mut out = Vec::new();
         if budget > 0 {
             if let Some((sp, f2)) = self.splits(f1, false).into_iter().next() {
                 let reds = self.inner.reduce(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), true, 99, budget, 4);
                 for red in reds.unwrap_or_default() {
+                    let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
+                    out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(&f2, &red)));
+                }
+            }
+        }
+        if out.is_empty() && beam > 0 {
+            // The same step by beam search, from the two most promising splits.
+            for (i, (sp, f2)) in self.splits(f1, false).into_iter().take(2).enumerate() {
+                for red in self.inner.reduce_beam(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), beam, 4, i as u32) {
                     let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
                     out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(&f2, &red)));
                 }
@@ -957,7 +1041,7 @@ impl Solver6 {
         lap("staged");
         let mut cands: Vec<Partial> = staged[..staged.len().min(p.tries)]
             .iter()
-            .flat_map(|st| self.inner_steps(&st.moves, &self.apply(facelets, &st.moves), p.budget))
+            .flat_map(|st| self.inner_steps(&st.moves, &self.apply(facelets, &st.moves), p.budget, p.beam))
             .collect();
         lap("reduced");
         cands.sort_by_key(|c| c.0.len());

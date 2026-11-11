@@ -95,12 +95,33 @@ pub fn beam<P: Problem>(
 where
     P::Node: Ord + Hash,
 {
-    if p.bound(root) == 0 && p.done(root) {
+    beam_from(p, std::slice::from_ref(root), score, width, cap, max_len, salt, &|_| true)
+}
+
+/// `beam` from several states of the same cube at once (the same position
+/// seen with different aims), with `accept` deciding on each solution from
+/// its moves: a state that is done but not accepted is dropped and the
+/// search goes on.
+#[allow(clippy::too_many_arguments)]
+pub fn beam_from<P: Problem>(
+    p: &P,
+    roots: &[P::Node],
+    score: impl Fn(&P::Node) -> u32 + Sync,
+    width: usize,
+    cap: usize,
+    max_len: usize,
+    salt: u32,
+    accept: &(dyn Fn(&[u8]) -> bool + Sync),
+) -> Vec<Vec<u8>>
+where
+    P::Node: Ord + Hash,
+{
+    if roots.iter().any(|root| p.bound(root) == 0 && p.done(root)) && accept(&[]) {
         return vec![Vec::new()];
     }
     // Per level: each kept state's parent in the level before and the move that led to it.
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
-    let mut level: Vec<(P::Node, u8)> = vec![(*root, NONE)];
+    let mut level: Vec<(P::Node, u8)> = roots.iter().map(|root| (*root, NONE)).collect();
     for _ in 0..max_len {
         // The score of every state one move on; 0 marks a solution, the
         // largest value a move that need not be tried.
@@ -153,7 +174,7 @@ where
         next.dedup_by(|x, y| x.2 == y.2);
         let solved = next.iter().take_while(|x| x.0 == 0).count();
         if solved > 0 {
-            return next[..solved.min(cap)]
+            let found: Vec<Vec<u8>> = next[..solved]
                 .iter()
                 .map(|x| {
                     let mut path = vec![x.4];
@@ -165,7 +186,13 @@ where
                     path.reverse();
                     path
                 })
+                .filter(|path| accept(path))
+                .take(cap)
                 .collect();
+            if !found.is_empty() {
+                return found;
+            }
+            next.drain(..solved);
         }
         next.truncate(width);
         trail.push(next.iter().map(|x| (x.3, x.4)).collect());

@@ -396,6 +396,64 @@ More things that did not pay:
 - Choosing among 64 matchings by how easily the inner wings then split:
   117.25 against 116.95 before, on the same 20 cubes; no gain.
 
+## 6x6x6: beam searches (2026-11-11, later)
+
+First 20 cubes of `scrambles666-100.txt`, nothing else running; both files
+checked with `cubenxnxn verify --size 6` (20 of 20 each). dwalton76: 136.10
+moves on the first 10 cubes; the target is 108.9.
+
+| Mode | Staging | Wing split | Inner reduction | Outer 5x5x5 | Total | Mean time | Max time | Against dwalton76 |
+|---|---|---|---|---|---|---|---|---|
+| `--mode fast` | 35.25 | 6.10 | 17.20 | 53.20 | 111.75 | 3.1 s | 7.5 s | -17.9% |
+| default | 35.10 | 5.60 | 16.95 | 52.40 | 110.05 | 7.4 s | 12.3 s | -19.1% |
+
+Files: `fast666-20.tsv`, `normal666-20.tsv` (they replace the ones of the
+section above: 119.00 and 116.95).
+
+What changed, measured in the fast mode on the same 20 cubes:
+
+| Version | Total |
+|---|---|
+| as in the section above (quick way) | 118.80 |
+| steps 3 and 4 of the staging in one beam search (17.25 moves became 15.75) | 117.40 |
+| inner reduction with the obliques by beam search (`search::beam`, written for the 7x7x7), 100,000 states per level, 10 cubes | 112.50 against 117.40 |
+
+- The staging step: the U/D inner x centres, the inner wing parity, the U/D
+  pairing and phase B of the 5x5x5 are one search with the moves of the old
+  step 3. The score adds exact tables: twice the inner x distance, twice the
+  pairing distance, and the phase-B distance taken with each oblique orbit
+  as the t centres. 20,000 states per level; 200,000 gave 15.55.
+- The inner reduction: the score is three times the bound of the inner cube
+  plus the bound of the obliques in half moves. The exact search needed up
+  to many minutes for 17 to 18 moves; the beam finds 17 in a fraction of a
+  second. An earlier beam of mine (states kept in the order of the states
+  themselves) found nothing at 20,000 and 114.2 at 200,000 and 29 s; the
+  difference is that this one keeps a sample of the states with equal
+  scores, by a hash.
+
+Tried on top, no gain (default mode, 20 cubes unless said):
+
+- Matching and wing split of the quick way in one search: exact, it did not
+  finish 8 cubes in ten minutes; by beam, 117.25 against 117.40 (fast mode).
+- Steps 1 and 2 of the staging in one beam search (the whole R/L axis, sum
+  of single-orbit distances): 22.05 moves against 18.85, and nothing found
+  at 20,000 states per level. The same failure as on the 7x7x7.
+- Staging beam of 100,000: 110.10. 16 stagings, 12 carried on: 110.00 at
+  16.7 s. 32 reductions per beam and 256 cubes for the 5x5x5: 109.90; the
+  same with no clock and wider phases in the 5x5x5: 109.75.
+- Other weights in the reduction score (2:1, 3:2, pairing and centres
+  separately): 111.9 to 113.9 against 111.9 to 112.3 for 3:1 and 2:1 (fast
+  mode, 10 cubes, 50,000 states).
+
+So the default sits at about 110 whatever is widened; the last move to the
+target needs another change of structure.
+
+A fault found on the way, in the 5x5x5 solver: phase P needs four edge
+classes with no piece in its slice, and when all the results kept from phase
+C were alike and offered none, the solve failed ("no reduction found", cube
+18 of the 6x6x6 set in the fast mode, 5 runs in 6). Phase C is now asked for
+eight times as many results when that happens.
+
 ## 7x7x7: first complete solver (2026-11-11)
 
 Set: `scrambles777-100.txt`, 250 random moves each. Metric: outer block turns

@@ -262,24 +262,35 @@ impl Solver5 {
                 })
             })
             .collect();
-        let found = self.edges.phase_c(&starts_of(&from), p.labellings, &limits(p.c_keep, 10, 0.4));
-        let after_c = extend(&from, found);
-        lap("phase C", after_c.len(), shortest(&after_c));
-        // Phase P, with either of the two other axes turning freely.
-        let from: Vec<Partial> = after_c
-            .iter()
-            .flat_map(|x| {
-                (0..2).map(move |quarter| Partial {
-                    moves: x.moves.clone(),
-                    frame: x.frame + quarter,
-                    ends: x.ends.clone(),
-                    root: x.root,
+        // Phase P needs four edge classes with no piece in its slice. The
+        // shortest results of phase C can all be alike and offer none; then
+        // phase C is asked for more.
+        let mut c_keep = p.c_keep;
+        let (after_c, after_p) = loop {
+            let found = self.edges.phase_c(&starts_of(&from), p.labellings, &limits(c_keep, 10, 0.4));
+            let after_c = extend(&from, found);
+            lap("phase C", after_c.len(), shortest(&after_c));
+            // Phase P, with either of the two other axes turning freely.
+            let from_p: Vec<Partial> = after_c
+                .iter()
+                .flat_map(|x| {
+                    (0..2).map(move |quarter| Partial {
+                        moves: x.moves.clone(),
+                        frame: x.frame + quarter,
+                        ends: x.ends.clone(),
+                        root: x.root,
+                    })
                 })
-            })
-            .collect();
-        let found = self.edges.phase_p(&starts_of(&from), &limits(p.p_keep, 10, 0.7));
-        let after_p = extend(&from, found);
-        lap("phase P", after_p.len(), shortest(&after_p));
+                .collect();
+            let found = self.edges.phase_p(&starts_of(&from_p), &limits(p.p_keep, 10, 0.7));
+            let after_p = extend(&from_p, found);
+            lap("phase P", after_p.len(), shortest(&after_p));
+            if !after_p.is_empty() || after_c.is_empty() || c_keep >= p.c_keep * 512 {
+                break (after_c, after_p);
+            }
+            c_keep *= 8;
+        };
+        let _ = after_c;
         // Phase E.
         let found = self.edges.phase_e(&starts_of(&after_p), &limits(p.e_keep, 2, 0.9));
         let reduced = extend(&after_p, found);
