@@ -27,6 +27,7 @@ pub const ASSETS: &[Asset] = &[
     Asset { path: "js/colour.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/colour.js")) },
     Asset { path: "js/cube-model.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/cube-model.js")) },
     Asset { path: "js/cube-view.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/cube-view.js")) },
+    Asset { path: "js/detect.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/detect.js")) },
     Asset { path: "js/main.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/main.js")) },
     Asset { path: "js/markup.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/markup.js")) },
     Asset { path: "js/paint.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/paint.js")) },
