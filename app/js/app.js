@@ -490,7 +490,7 @@ export async function mount(root, options = {}) {
 
   const TABS = ["scramble", "paint", "camera", "moves"];
 
-  const PAINT_NOTE = "Pick a colour, then tap or drag over the stickers of the cube.";
+  const PAINT_NOTE = "Pick a colour, then tap or drag over the stickers.";
 
   // Which tab is in view, and nothing else.
   function showTab(tab) {
@@ -741,10 +741,11 @@ export async function mount(root, options = {}) {
       const { facelets, palette, doubt } = classify(samples, state.size);
       state.painted.set(state.size, { facelets, palette, doubt });
       const unsure = doubt.filter((d) => d > 0.55).length;
+      // Short enough for the panel to hold everything without a scroll.
       $("paint-note").textContent =
         unsure > 0
-          ? `Read from the camera. ${count(unsure, "sticker")} with a ring could be another colour: check against your cube, and fix any by picking a colour and tapping.`
-          : "Read from the camera. Compare it with your cube; fix a sticker by picking a colour and tapping it.";
+          ? `Read from the camera. ${count(unsure, "ringed sticker")} may be another colour: pick it and tap.`
+          : "Read from the camera. Check it against your cube; tap a sticker to fix it.";
       // The cube just read goes to where it can be looked over and corrected.
       setTab("paint");
     },

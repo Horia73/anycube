@@ -1314,7 +1314,12 @@ textarea.bad {
     font-size: 0.78rem;
   }
   .tabpanel > .note:first-child {
-    margin-bottom: 6px;
+    margin-bottom: 4px;
+  }
+  /* Paint holds its sentence (two lines at most), the colours with the
+     unfolded cube, and its two buttons, with nothing left to scroll to. */
+  .paint + .row {
+    margin-top: 4px;
   }
   .private {
     margin: 4px 0 6px;
