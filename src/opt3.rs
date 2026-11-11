@@ -324,4 +324,23 @@ mod tests {
             assert!(matches!(o.solve(&root, 0, opt - 1, &budget), Outcome::None));
         }
     }
+
+    /// With a solution in hand only shorter ones are looked for: a longer one is beaten, the
+    /// optimal one is shown to be optimal.
+    #[test]
+    #[ignore = "needs the 1.7 GB slice table"]
+    fn a_known_solution_is_beaten_or_proven() {
+        let t = T3::new();
+        let big = Big2::load(&t);
+        let o = Opt3::new(&t, &big);
+        let far = Instant::now() + std::time::Duration::from_secs(600);
+        for (scr, opt) in [("R U R' U'", 4), ("F R U' B2 L D F' R2 U B D2", 11)] {
+            let cube = Cube::from_moves(&parse_moves(scr).unwrap());
+            let root = o.prepare(&C3::from_cube(&cube).unwrap());
+            let found = o.solve_optimal(&root, far, opt + 2);
+            assert_eq!(found.solution.map(|s| s.len()), Some(opt), "{}", scr);
+            let proven = o.solve_optimal(&root, far, opt);
+            assert!(proven.solution.is_none() && proven.proven_lower_bound == opt, "{}", scr);
+        }
+    }
 }

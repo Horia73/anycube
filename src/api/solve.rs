@@ -61,17 +61,16 @@ pub(crate) fn t3() -> &'static T3 {
 
 /// The 3x3x3 search on all cores, with the table of its first phase.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn two3() -> &'static crate::two3::Two3<'static> {
-    static F: OnceLock<crate::first3::First3> = OnceLock::new();
-    static T: OnceLock<crate::two3::Two3<'static>> = OnceLock::new();
-    T.get_or_init(|| crate::two3::Two3::new(t3(), F.get_or_init(|| crate::first3::First3::load(t3()))))
+pub(crate) fn two3() -> &'static crate::two3::Two3 {
+    static T: OnceLock<crate::two3::Two3> = OnceLock::new();
+    T.get_or_init(|| crate::two3::Two3::load(t3()))
 }
 
 /// A 3x3x3 solved with the effort of a mode.
 #[cfg(not(target_arch = "wasm32"))]
 fn solve3(c3: &C3, mode: Mode) -> Vec<u8> {
     use crate::two3::Effort;
-    two3().solve(c3, if mode == Mode::Fast { Effort::FAST } else { Effort::NORMAL })
+    two3().solve(t3(), c3, if mode == Mode::Fast { Effort::FAST } else { Effort::NORMAL })
 }
 
 /// In the browser there is one core and no file to keep a table in: the search of `c3.rs`.

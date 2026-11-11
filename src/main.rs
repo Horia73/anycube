@@ -451,14 +451,13 @@ fn row(args: &[String]) {
         }
         3 => {
             use anycube::c3::{C3, T3};
-            let t: &'static T3 = Box::leak(Box::new(T3::new()));
-            let first: &'static anycube::first3::First3 = Box::leak(Box::new(anycube::first3::First3::load(t)));
-            let two = anycube::two3::Two3::new(t, first);
+            let t = T3::new();
+            let two = anycube::two3::Two3::load(&t);
             let effort = effort3(args);
             let counted = args.iter().any(|a| a == "--ways");
             Box::new(move |g, scr, _| {
                 let c3 = small(scr)?.with_home_centres().and_then(|c| C3::from_cube(&c));
-                let (sol, ways) = two.solve_counted(&c3.ok_or_else(|| "not a 3x3x3 state".to_string())?, effort);
+                let (sol, ways) = two.solve_counted(&t, &c3.ok_or_else(|| "not a 3x3x3 state".to_string())?, effort);
                 if counted {
                     eprint!("{:>10} ways  ", ways);
                 }
@@ -617,9 +616,8 @@ fn solve3(cube: &Cube, args: &[String]) {
     let effort = effort3(args);
     let t0 = Instant::now();
     let t = T3::new();
-    let first = anycube::first3::First3::load(&t);
-    let two = Two3::new(&t, &first);
-    let mut sol = two.solve(&c3, effort);
+    let two = Two3::load(&t);
+    let mut sol = two.solve(&t, &c3, effort);
     let mut note = "two-phase search".to_string();
     if opt(args, "--mode") == Some("full") {
         // Exact search on all cores; falls back to the two-phase solution at the time limit.
@@ -629,7 +627,9 @@ fn solve3(cube: &Cube, args: &[String]) {
         // solution in hand takes a fraction of the time of finding one: a deeper two-phase
         // search first, if the first one is not there yet.
         if sol.len() > 18 && effort.depth < Effort::DEEP.depth {
-            sol = two.solve(&c3, Effort::DEEP);
+            if let Some(shorter) = two.solve_within(&t, &c3, Effort::DEEP, 18) {
+                sol = shorter;
+            }
         }
         let big = anycube::big2::Big2::load(&t);
         let o = anycube::opt3::Opt3::new(&t, &big);

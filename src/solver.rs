@@ -12,6 +12,7 @@ use crate::c3::{C3, T3};
 use crate::opt3::{domino_distance, Opt3, Outcome, Root};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 use crate::tables::*;
+use crate::two3::{Effort, Two3};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
@@ -122,6 +123,7 @@ pub struct Solver {
     pub t3: T3,
     pub big: Big1,
     pub big2: Big2,
+    pub two: Two3,
     pub ctab: Ctab,
     pub(crate) near: Near,
     /// R-vs-L patterns on the R and L faces that phase 3 can finish.
@@ -158,6 +160,17 @@ pub(crate) struct P2Cand {
     pub value: u8,
 }
 
+/// A trial: `ANYCUBE_TWO3=12,13` solves the reductions with the search of `two3.rs`, to these
+/// lengths of its first phase for all of them and for the best ones.
+fn two3_trial() -> Option<(usize, usize)> {
+    static T: std::sync::OnceLock<Option<(usize, usize)>> = std::sync::OnceLock::new();
+    *T.get_or_init(|| {
+        let v = std::env::var("ANYCUBE_TWO3").ok()?;
+        let (a, b) = v.split_once(',')?;
+        Some((a.parse().ok()?, b.parse().ok()?))
+    })
+}
+
 impl Solver {
     pub fn new() -> Solver {
         let ct = cube_tables();
@@ -176,6 +189,7 @@ impl Solver {
         let t3 = T3::new();
         let big = Big1::load(&t3);
         let big2 = Big2::load(&t3);
+        let two = Two3::load(&t3);
         let tabs = Tabs::load();
         let ctab = Ctab::load(&tabs.bp, &tabs.ranks);
         let mut rl_ok = [false; 256];
@@ -183,7 +197,7 @@ impl Solver {
             *ok = pat.count_ones() == 4 && tabs.p2[tabs.p2_index(0x00FF | (pat as u32) << 16, 0)] == 0;
         }
         let near = Near::new(&tabs.bp);
-        Solver { tabs, t3, big, big2, ctab, near, rl_ok, frames, classes }
+        Solver { tabs, t3, big, big2, two, ctab, near, rl_ok, frames, classes }
     }
 
     /// The 18 variants of a cube: (re-expressed cube, frame rotation).
@@ -442,6 +456,10 @@ impl Solver {
         let mut two: Vec<Vec<u8>> = items
             .par_iter()
             .map(|it| {
+                if let Some((depth, _)) = two3_trial() {
+                    let depth = if std::time::Instant::now() > pass1_end { 0 } else { depth };
+                    return self.two.solve(&self.t3, &it.c3, Effort { depth, variants: 6 });
+                }
                 let probes = if std::time::Instant::now() > pass1_end { 1 } else { p.probes333 };
                 self.t3.solve(&it.c3, probes, Some(&self.big))
             })
@@ -453,7 +471,10 @@ impl Solver {
             order.truncate((items.len() / 16).max(24).min(items.len()));
             let deeper: Vec<(usize, Vec<u8>)> = order
                 .par_iter()
-                .map(|&k| (k, self.t3.solve(&items[k].c3, p.probes333 * p.refine, Some(&self.big))))
+                .map(|&k| match two3_trial() {
+                    Some((_, depth)) => (k, self.two.solve(&self.t3, &items[k].c3, Effort { depth, variants: 6 })),
+                    None => (k, self.t3.solve(&items[k].c3, p.probes333 * p.refine, Some(&self.big))),
+                })
                 .collect();
             for (k, sol) in deeper {
                 if sol.len() < two[k].len() {

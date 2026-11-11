@@ -44,9 +44,8 @@ impl Effort {
     pub const DEEP: Effort = Effort { depth: 15, variants: 6 };
 }
 
-pub struct Two3<'a> {
-    t: &'a T3,
-    first: &'a First3,
+pub struct Two3 {
+    first: First3,
     /// Corner permutation under each of the 18 moves.
     cp_mv: Vec<[u16; 18]>,
     /// Moves of the second phase that the corners alone need.
@@ -109,8 +108,11 @@ struct Start {
     node: Node,
 }
 
-impl<'a> Two3<'a> {
-    pub fn new(t: &'a T3, first: &'a First3) -> Two3<'a> {
+impl Two3 {
+    /// Loads the table of the first phase, building it if it is missing, and the two small
+    /// tables of the corners.
+    pub fn load(t: &T3) -> Two3 {
+        let first = First3::load(t);
         let mut cp_mv = vec![[0u16; 18]; N_PERM];
         cp_mv.par_iter_mut().enumerate().for_each(|(p, row)| {
             let mut c = C3::identity();
@@ -137,20 +139,31 @@ impl<'a> Two3<'a> {
             }
             frontier = next;
         }
-        Two3 { t, first, cp_mv, cdist }
+        Two3 { first, cp_mv, cdist }
     }
 
     /// A short solution in outer moves (0..18); see `Effort` for how hard it looks.
-    pub fn solve(&self, cube: &C3, effort: Effort) -> Vec<u8> {
-        self.solve_counted(cube, effort).0
+    pub fn solve(&self, t: &T3, cube: &C3, effort: Effort) -> Vec<u8> {
+        self.solve_counted(t, cube, effort).0
+    }
+
+    /// A solution of at most `max_len` moves, if this effort finds one. Unlike `solve`, which
+    /// goes on past its effort until it has a solution, this stops there; and a first phase
+    /// that leaves too few moves for the second is not followed, so a low limit is quick.
+    pub fn solve_within(&self, t: &T3, cube: &C3, effort: Effort, max_len: usize) -> Option<Vec<u8>> {
+        self.search(t, cube, effort, Some(max_len)).0
     }
 
     /// The solution and the number of ways into the subgroup that were looked at.
-    pub fn solve_counted(&self, cube: &C3, effort: Effort) -> (Vec<u8>, u64) {
+    pub fn solve_counted(&self, t: &T3, cube: &C3, effort: Effort) -> (Vec<u8>, u64) {
+        let (sol, ways) = self.search(t, cube, effort, None);
+        (sol.expect("a 3x3x3 state has a solution"), ways)
+    }
+
+    fn search(&self, t: &T3, cube: &C3, effort: Effort, max_len: Option<usize>) -> (Option<Vec<u8>>, u64) {
         if *cube == C3::identity() {
-            return (Vec::new(), 0);
+            return (Some(Vec::new()), 0);
         }
-        let t = self.t;
         let ct = cube_tables();
         let mut variants = Vec::new();
         for (r, rinv, rot) in &t.frames {
@@ -168,13 +181,15 @@ impl<'a> Two3<'a> {
             let node = Node { tw: tw as u16, fl: fl as u16, sl: sl as u16, d, cp: perm_rank(&c.cp) as u16, ..Node::default() };
             roots.push(Start { variant: v, moves: [0; 2], len: 0, node });
             for m1 in 0..18u8 {
-                let n1 = self.step(&node, m1);
+                let n1 = self.step(t, &node, m1);
                 for m2 in (0..18u8).filter(|&m2| follow[m1 as usize] >> m2 & 1 == 1) {
-                    starts.push(Start { variant: v, moves: [m1, m2], len: 2, node: self.step(&n1, m2) });
+                    starts.push(Start { variant: v, moves: [m1, m2], len: 2, node: self.step(t, &n1, m2) });
                 }
             }
         }
-        let best = AtomicU64::new(u64::MAX);
+        // With a limit, the search starts as if a solution one move longer were in hand, found by
+        // the first piece of work: nothing of that length is taken.
+        let best = AtomicU64::new(max_len.map_or(u64::MAX, |len| (len as u64 + 1) << 32));
         let out: Mutex<Option<(u64, usize, Vec<u8>)>> = Mutex::new(None);
         let mut probes = 0;
         for d1 in 0..=20usize {
@@ -191,6 +206,7 @@ impl<'a> Two3<'a> {
                 .map(|(i, s)| {
                     let mut job = Job {
                         e: self,
+                        t,
                         follow: &follow,
                         variant: s.variant,
                         start: variants[s.variant].0,
@@ -215,7 +231,7 @@ impl<'a> Two3<'a> {
                 })
                 .sum::<u64>();
         }
-        let (_, v, mut sol) = out.into_inner().unwrap().expect("a 3x3x3 state has a solution");
+        let Some((_, v, mut sol)) = out.into_inner().unwrap() else { return (None, probes) };
         let (_, r, inverse) = variants[v];
         if inverse {
             sol = inv_seq(&sol);
@@ -223,12 +239,11 @@ impl<'a> Two3<'a> {
         for m in sol.iter_mut() {
             *m = ct.relabel[r][*m as usize];
         }
-        (sol, probes)
+        (Some(sol), probes)
     }
 
     /// The position one move on.
-    fn step(&self, n: &Node, m: u8) -> Node {
-        let t = self.t;
+    fn step(&self, t: &T3, n: &Node, m: u8) -> Node {
         let m = m as usize;
         let (tw, fl, sl) = (t.twist_mv[n.tw as usize][m], t.flip_mv[n.fl as usize][m], t.slice_mv[n.sl as usize][m]);
         let v = self.first.get(self.first.key(tw as usize, fl as usize, sl as usize).0);
@@ -243,7 +258,8 @@ fn nearer(d: u8, v: u8) -> u8 {
 }
 
 struct Job<'a> {
-    e: &'a Two3<'a>,
+    e: &'a Two3,
+    t: &'a T3,
     follow: &'a [u32; 19],
     variant: usize,
     start: C3,
@@ -293,7 +309,7 @@ impl Job<'_> {
             // In the subgroup with a move to spare: that move would be one of the second phase's.
             return;
         }
-        let (e, t) = (self.e, self.e.t);
+        let (e, t) = (self.e, self.t);
         let mask = self.follow[if n.mv == NO_MOVE { 18 } else { n.mv as usize }];
         let (tws, fls, sls, cps) =
             (&t.twist_mv[n.tw as usize], &t.flip_mv[n.fl as usize], &t.slice_mv[n.sl as usize], &e.cp_mv[n.cp as usize]);
@@ -347,7 +363,7 @@ impl Job<'_> {
     /// list, then its ways. One position at a time would wait for each in turn; here every
     /// entry is asked for first, then every first way, and the waits overlap.
     fn flush(&mut self) {
-        let first = self.e.first;
+        let first = &self.e.first;
         let n = self.arrivals.len();
         let mut ways = [(0u32, 0u32); LOT];
         let mut touched = 0;
@@ -427,7 +443,7 @@ impl Job<'_> {
         if d1 + self.e.cdist[cp] as usize > wanted {
             return;
         }
-        let t = self.e.t;
+        let t = self.t;
         let c = self.sol[..d1].iter().fold(self.start, |c, &m| c.mul(&t.moves[m as usize]));
         let up = perm_rank(&c.ep[..8]);
         let mut s = [0u8; 4];
@@ -454,7 +470,7 @@ impl Job<'_> {
         if rem == 0 {
             return cp == 0 && up == 0 && sp == 0;
         }
-        let t = self.e.t;
+        let t = self.t;
         for (k, &m) in G1_MOVES.iter().enumerate() {
             if last != NO_MOVE && skip_move(last, m) {
                 continue;
@@ -483,8 +499,7 @@ mod tests {
     #[test]
     fn solves_and_is_never_longer_than_the_search_on_one_core() {
         let t = T3::new();
-        let first = First3::load(&t);
-        let two = Two3::new(&t, &first);
+        let two = Two3::load(&t);
         for scr in [
             "R U R' U' F2 D L' B U2 R D' F L2 B' U",
             "F R U' B2 L D F' R2 U B D2 L' F U2 R' B L U' D F2",
@@ -497,13 +512,32 @@ mod tests {
         ] {
             let cube = Cube::from_moves(&parse_moves(scr).unwrap());
             let c3 = C3::from_cube(&cube).unwrap();
-            let sol = two.solve(&c3, Effort { depth: 12, variants: 6 });
+            let sol = two.solve(&t, &c3, Effort { depth: 12, variants: 6 });
             let mut c = cube;
             c.apply_seq(&sol);
             assert_eq!(c, Cube::solved(), "scramble {}", scr);
             assert!(sol.len() <= t.solve(&c3, 2_000, None).len(), "scramble {}", scr);
             // The same again: the answer does not depend on the cores.
-            assert_eq!(sol, two.solve(&c3, Effort { depth: 12, variants: 6 }), "scramble {}", scr);
+            assert_eq!(sol, two.solve(&t, &c3, Effort { depth: 12, variants: 6 }), "scramble {}", scr);
+        }
+    }
+
+    /// With a limit: the same length as without when the limit allows it, nothing when it does not.
+    #[test]
+    fn a_limit_is_kept() {
+        let t = T3::new();
+        let two = Two3::load(&t);
+        let effort = Effort { depth: 12, variants: 6 };
+        for scr in ["F R U' B2 L D F' R2 U B D2 L' F U2 R' B L U' D F2", "R U R' U' F2 D L' B U2 R D' F L2 B' U", "R U F"] {
+            let cube = Cube::from_moves(&parse_moves(scr).unwrap());
+            let c3 = C3::from_cube(&cube).unwrap();
+            let free = two.solve(&t, &c3, effort);
+            let same = two.solve_within(&t, &c3, effort, free.len()).expect("a solution of the length found without a limit");
+            assert_eq!(same.len(), free.len(), "scramble {}", scr);
+            let mut c = cube;
+            c.apply_seq(&same);
+            assert_eq!(c, Cube::solved(), "scramble {}", scr);
+            assert!(two.solve_within(&t, &c3, effort, free.len() - 1).is_none(), "scramble {}", scr);
         }
     }
 
@@ -513,8 +547,7 @@ mod tests {
     #[test]
     fn random_cubes_are_solved_and_near_ones_in_no_more_moves_than_scrambled() {
         let t = T3::new();
-        let first = First3::load(&t);
-        let two = Two3::new(&t, &first);
+        let two = Two3::load(&t);
         let mut seed = 2026u64;
         let mut rnd = |n: usize| {
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -524,7 +557,7 @@ mod tests {
             let len = if round < 40 { 1 + round % 10 } else { 30 };
             let scramble: Vec<u8> = (0..len).map(|_| rnd(18) as u8).collect();
             let cube = Cube::from_moves(&scramble);
-            let sol = two.solve(&C3::from_cube(&cube).unwrap(), Effort { depth: 13, variants: 6 });
+            let sol = two.solve(&t, &C3::from_cube(&cube).unwrap(), Effort { depth: 13, variants: 6 });
             let mut c = cube;
             c.apply_seq(&sol);
             assert_eq!(c, Cube::solved(), "scramble {:?}", scramble);
