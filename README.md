@@ -32,8 +32,10 @@ anycube solves a Rubik's cube of **any size**, in **seconds**, in **few
 moves**.
 
 - **Shorter than the other solvers** on every size from 4x4x4 to 10x10x10, on
-  the same scrambles, a turn of a face with any number of layers counted as
-  one move: see the [benchmarks](bench/README.md).
+  the same scrambles: see the [benchmarks](bench/README.md).
+- **Moves are counted in [OBTM](https://www.worldcubeassociation.org/regulations/#12a)**, the outer block turn metric of the
+  WCA regulations (a face turned together with any number of layers under it
+  is one move). [How the metrics differ](https://www.speedsolving.com/wiki/index.php/Metric).
 - **Measured up to 21x21x21**, the largest cube that is mass-produced.
 - **2x2x2 and 3x3x3**: optimal solutions (always for 2x2x2, with `--mode full`
   for 3x3x3), or a two-phase solution in a fraction of a second.
@@ -48,8 +50,7 @@ the tables below, so the progress can be followed.
 
 ## Results
 
-Mean moves and mean seconds per cube. A turn of a face with any number of
-layers counts as one move.
+Mean moves (OBTM) and mean seconds per cube.
 
 <!-- releases:begin -->
 Release **v0.1.0** (commit `b2f038a`, 2026-11-11), default mode:

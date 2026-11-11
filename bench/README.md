@@ -1,8 +1,9 @@
 # Benchmarks
 
 Mean moves and mean seconds per cube on the fixed scrambles in this
-directory, on an Apple M1 Pro. A turn of a face with any number of layers
-counts as one move.
+directory, on an Apple M1 Pro. Moves are counted in [OBTM](https://www.worldcubeassociation.org/regulations/#12a), the outer
+block turn metric of the WCA regulations: a face turned together with any
+number of layers under it is one move. [How the metrics differ](https://www.speedsolving.com/wiki/index.php/Metric).
 
 ## Against other solvers
 
@@ -32,11 +33,11 @@ sizes 4 to 10) and not above 10x10x10. Nobody else has reproduced these
 numbers yet; a report of different results is welcome.
 
 gullicube was run on the first 3 cubes of each size, with its own time budget
-of about ten seconds. It counts one move for every layer turned; here its
-solutions are counted like the others, turns on one axis that follow each
-other merged into the fewest turns of a face. Counted its own way it is the
-shorter one from 8x8x8 up: 344 turns of a layer against our 455 on the 8x8x8,
-528 against 930 on the 10x10x10.
+of about ten seconds. It counts in SSTM, the single slice turn metric (every
+layer turned is one move); here its solutions are counted in OBTM like the
+others, turns on one axis that follow each other merged into the fewest
+outer block turns. In SSTM it is the shorter one from 8x8x8 up: 344 against
+our 455 on the 8x8x8, 528 against 930 on the 10x10x10.
 
 anycube on every size from 2 to 21, with the slowest cube and the memory
 of each: the [README](../README.md#results).
