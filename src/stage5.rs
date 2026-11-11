@@ -551,12 +551,34 @@ impl Stage5 {
         self.ax[self.rank8.rank(x)].max(self.at[self.rank8.rank(t)])
     }
 
+    /// A lower bound on phase A that is exact for most states within
+    /// `NEAR_A` moves of the end (the table of `gen_near`), and the bound of
+    /// the two orbits taken singly further out.
+    #[inline(always)]
+    pub fn a_close(&self, x: u32, t: u32) -> u8 {
+        let k = bucket(canonical(&self.syms, x, t));
+        ((self.near[k >> 1] >> ((k & 1) * 4)) & 15).max(self.a_bound(x, t))
+    }
+
+    /// Asks for the entry of the near table `a_close` will read (see
+    /// `search::fetch`); the tables of the single orbits stay in the cache.
+    #[inline(always)]
+    pub fn a_fetch(&self, x: u32, t: u32) {
+        crate::search::fetch(&self.near, bucket(canonical(&self.syms, x, t)) >> 1);
+    }
+
     /// Exact length of phase B from the ranks (`Ranks::rank16`) of the U/D
     /// patterns of the x and t orbits and the parity of the wing permutation.
     /// For searches on larger cubes that do the work of phase B among other things.
     #[inline(always)]
     pub fn b_dist(&self, x: usize, t: usize, odd: bool) -> u8 {
         self.b[(x * N_UD + t) * 2 + odd as usize]
+    }
+
+    /// Asks for the entry `b_dist` will read (see `search::fetch`).
+    #[inline(always)]
+    pub fn b_fetch(&self, x: usize, t: usize, odd: bool) {
+        crate::search::fetch(&self.b, (x * N_UD + t) * 2 + odd as usize);
     }
 
     /// An optimal phase B from the positions of the U/D centres among the

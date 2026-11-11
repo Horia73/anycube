@@ -225,6 +225,21 @@ impl Problem for Beam<'_> {
     fn done(&self, _: &Node) -> bool {
         true
     }
+
+    /// The tables of four orbits are 24 MB each, far more than the cache holds.
+    #[inline(always)]
+    fn prefetch(&self, n: &Node) {
+        let s = self.s;
+        for g in 0..s.groups.len() {
+            for axis in 0..3 {
+                let mut idx = 0;
+                for &k in s.groups[g].iter().rev() {
+                    idx = idx * 70 + s.rank8[(n[k] >> (8 * axis) & 255) as usize] as usize;
+                }
+                crate::search::fetch(&s.dist[g][axis], idx);
+            }
+        }
+    }
 }
 
 /// Distances of one axis for one group of orbits, from all of them home.

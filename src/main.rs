@@ -26,6 +26,7 @@ fn main() {
         Some("bench6") => bench6(&args[1..]),
         Some("benchn") => benchn(&args[1..]),
         Some("rowtest") => rowtest(&args[1..]),
+        Some("stagen") => stagen(&args[1..]),
         Some("stage7") => stage7(&args[1..]),
         Some("bench7") => bench7(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
@@ -297,6 +298,52 @@ fn rowtest(args: &[String]) {
 }
 
 /// The general solver on a scramble file of any size from 6 up.
+fn staging(args: &[String], d: &cubenxnxn::staging::Staging) -> cubenxnxn::staging::Staging {
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    cubenxnxn::staging::Staging {
+        width: num("--width", d.width),
+        fan: num("--fan", d.fan),
+        beam: num("--beam", d.beam),
+        axes: num("--axes", d.axes as usize) == 1,
+    }
+}
+
+/// The staging of the centres alone, for a cube of any size from 6 up, on a
+/// scramble file: lengths and times, every result checked.
+fn stagen(args: &[String]) {
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (size, limit) = (num("--size", 8), num("--limit", usize::MAX));
+    let g = cubenxnxn::cuben::Geometry::new(size);
+    let t0 = Instant::now();
+    let mut solver = cubenxnxn::nnn::SolverN::load();
+    solver.staging = staging(args, &solver.staging);
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let (mut total, mut times, mut n) = (0usize, Vec::new(), 0usize);
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let moves = solver.stage(&g, &f).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        g.apply_seq(&mut f, &moves);
+        if !cubenxnxn::staging::is_staged(&g, &f) {
+            fail(&format!("cube {}: the centres are not staged", n));
+        }
+        eprintln!("cube {:3}: {} moves, {:.0} ms", n, moves.len(), ms);
+        total += moves.len();
+        times.push(ms);
+        n += 1;
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let nf = n as f64;
+    println!("staged the centres of {} cubes of size {}, every result checked", n, size);
+    println!("mean length {:.2}", total as f64 / nf);
+    println!("time per cube: mean {:.0} ms, max {:.0} ms", times.iter().sum::<f64>() / nf, times[times.len() - 1]);
+}
+
 fn benchn(args: &[String]) {
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
@@ -304,7 +351,8 @@ fn benchn(args: &[String]) {
     let (size, limit) = (num("--size", 8), num("--limit", usize::MAX));
     let g = cubenxnxn::cuben::Geometry::new(size);
     let t0 = Instant::now();
-    let solver = cubenxnxn::nnn::SolverN::load();
+    let mut solver = cubenxnxn::nnn::SolverN::load();
+    solver.staging = staging(args, &solver.staging);
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let (mut sums, mut times, mut n, mut long_way) = ([0usize; 3], Vec::new(), 0usize, 0usize);
     let mut out = opt(args, "--out").map(|p| {
@@ -1109,7 +1157,20 @@ fn stage7(args: &[String]) {
         let mut f = s7.g.solved();
         s7.g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
-        let found = s7.stage(&s5, &f, width, num("--fan", width), num("--beam", 20_000), num("--salt", 0) as u32);
+        let wide = cubenxnxn::stage7::Wide {
+            width,
+            fan: num("--fan", width),
+            beam: num("--beam", 20_000),
+            salt: num("--salt", 0) as u32,
+            many: num("--many", 400),
+            more: num("--more", 1),
+            frames: num("--frames", 1) == 1,
+            joint: num("--joint", 1) == 1,
+            merged: num("--merged", 1) == 1,
+            rest: num("--rest", 1) == 1,
+            keep: num("--keep", width),
+        };
+        let found = s7.stage(&s5, &f, &wide);
         let took = t.elapsed().as_secs_f64() * 1e3;
         ms += took;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
@@ -1146,7 +1207,15 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
         width: num("--width", d.width),
         fan: num("--fan", d.fan),
         beam: num("--beam", d.beam),
+        match_beam: num("--match-beam", d.match_beam),
+        match_more: num("--match-more", d.match_more),
         restarts: num("--restarts", d.restarts),
+        many: num("--many", d.many),
+        more: num("--more", d.more),
+        frames: num("--frames", d.frames as usize) == 1,
+        joint: num("--joint", d.joint as usize) == 1,
+        merged: num("--merged", d.merged as usize) == 1,
+        rest: num("--rest", d.rest as usize) == 1,
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
         inner: cubenxnxn::solver5::Params5 {
