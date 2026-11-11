@@ -1,6 +1,9 @@
 // On `wasm32` the library holds the 2x2x2 and 3x3x3 solvers only: the
 // modules marked below index tables too large for a 32-bit address space,
 // or depend on one that does, and are left out of that build.
+pub mod api;
+#[cfg(all(feature = "app", not(target_arch = "wasm32")))]
+pub mod app;
 pub mod axes;
 pub mod big1;
 pub mod big2;
