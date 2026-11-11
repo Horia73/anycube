@@ -444,6 +444,18 @@ export function named(n, sorted, labels, doubt = sorted.doubt, second = sorted.s
   // The page colour nearest each group, each used once.
   const reference = STICKERS.map((hex) => feature(hexToRgb(hex)));
   const look = bestMatch(groupColour.map((c) => reference.map((r) => distance(feature(c), r))));
+  // Red and orange are told apart by each other, not by the page's two: of
+  // the two groups taken for them, the orange is the one nearer yellow in
+  // hue and the stronger. (A camera can show a cube's orange as a bright
+  // red and its red as a dull one, each then nearer the page's other colour.)
+  const [red, orange] = [look.indexOf(1), look.indexOf(4)];
+  const proper = (k) => {
+    const m = split(groupColour[k]);
+    const hue = unit(m.c);
+    return { yellow: hue.reduce((t, v, d) => t + v * STANDARD[3].hue[d], 0), strong: Math.log(m.y + NOISE) };
+  };
+  const [r, o] = [proper(red), proper(orange)];
+  if ((o.yellow - r.yellow) / 0.05 + (o.strong - r.strong) / STRENGTH < 0) [look[red], look[orange]] = [4, 1];
   // Odd: a group is named by the face its middle sticker is on. Even: ask a
   // corner, and if the corners make no sense yet, go by what the colours look like.
   let name;
@@ -557,12 +569,6 @@ export function learn(samples) {
     seen = seen.map((g, k) => (mine[k].length ? { ...describe(mine[k], g), known: true } : STANDARD[k]));
   }
   return seen;
-}
-
-/** How unlike two samples are, in the measure the sorting uses: under 3 or so they could be one colour. */
-export function unalike(a, b) {
-  const [p, q] = [split(a), split(b)];
-  return Math.max(apart(p, describe([q], null)), apart(q, describe([p], null)));
 }
 
 /**

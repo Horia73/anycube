@@ -271,3 +271,17 @@ test("a cell's colour ignores a glint and the gap between stickers", () => {
   const [r, g, b] = cellColour(Uint8ClampedArray.from(px));
   assert.ok(Math.abs(r - 200) < 1 && Math.abs(g - 40) < 1 && Math.abs(b - 30) < 1, `${r} ${g} ${b}`);
 });
+
+test("an orange the camera shows as a bright red, beside a dull red, is still shown as orange", () => {
+  // The six colours of a real glossy cube as a laptop's camera gave them: the red is nearer
+  // the page's orange than the cube's own orange is, and the other way round.
+  const real = [[199, 196, 199], [181, 74, 74], [26, 167, 90], [203, 204, 83], [253, 93, 75], [74, 87, 130]];
+  for (const n of [3, 4]) {
+    const model = new CubeModel(n);
+    const rnd = random(90 + n);
+    const truth = model.applyAll(model.solved(), model.randomScramble(40, rnd));
+    const samples = Array.from(truth, (c) => real[c].map((v) => Math.max(0, Math.min(255, v + (rnd() - 0.5) * 8))));
+    const { facelets, palette } = classify(samples, n);
+    truth.forEach((c, i) => assert.equal(palette[facelets[i]], STICKERS[c], `size ${n}, sticker ${i}`));
+  }
+});
