@@ -1,8 +1,34 @@
 # How the solvers work
 
-The overview is in the [README](../README.md#how-it-works); this is the detail, size by size.
+The README has the short version; this is the detail, size by size.
+
+Every solver here is a reduction solver: it turns the cube into a smaller
+problem in a few phases, and each phase is searched with exact lookup tables
+where they fit in memory. Three things keep the solutions short:
+
+- **Phases are joined** where the tables allow it, so that one search does
+  what two did.
+- **Many candidates are kept, not one.** Each phase starts from every result
+  of the phase before, and the shortest total wins, not the shortest phase.
+- **Every symmetry is used**: the cube may end in any orientation and the
+  phases may run along any axis.
 
 ## Any size (`src/nnn.rs`)
+
+Some layers of a large cube, taken together, behave like a small cube: pick
+a few of them symmetrically and let every layer in between follow the picked
+layer next to it towards the middle. Whatever is solved in such a block of
+layers stays solved when the small cube is solved, so a large cube can be
+done as a sequence of small ones.
+
+```mermaid
+flowchart LR
+    A["Scrambled<br/>NxNxN"] --> B["Stage the centres<br/>one axis at a time, ring by ring,<br/>each step a 6x6x6 or 7x7x7<br/>made of layers"]
+    B --> C["Match the centres<br/>row by row,<br/>from the rim inwards"]
+    C --> D["Pair the edges<br/>orbit by orbit,<br/>each a 5x5x5<br/>made of layers"]
+    D --> E["Last orbit and 3x3x3<br/>the whole cube<br/>as a 5x5x5"]
+    E --> F["Solution,<br/>checked on the<br/>sticker model"]
+```
 
 - Centres: staged one axis at a time, ring by ring from the middle
   outwards. The rows of a ring are first made each of one kind (all of
@@ -74,3 +100,16 @@ What keeps the solutions short:
 How they work, what was tried and the per-step lengths are in
 `bench/RESULTS.md` (sources: `src/stage6.rs`, `src/solver6.rs`,
 `src/stage7.rs`, `src/solver7.rs`, `src/search.rs`).
+
+## Verification
+
+Every solution is applied to the full cube model and checked before it is
+returned. Beyond that:
+
+- The 4x4x4 model gives the same facelets as TPR for every benchmark
+  scramble, and TPR's solutions solve the cube in this model.
+- The any-size sticker model (`src/cuben.rs`), built from geometry alone,
+  agrees with the 4x4x4 model move for move.
+- The 2x2x2 table reproduces the known distance distribution (maximum 11).
+- The 3x3x3 domino table reproduces Kociemba's published distribution.
+- The shared joint search finds the same endpoints as an unshared one.

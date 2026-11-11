@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""The table of releases in README.md.
+"""The tables of releases in README.md and bench/README.md.
 
   scripts/release.py measure <name> [size ...]   solve the fixed scrambles of each size (all of
                                                  2 to 21 unless sizes are given), one run after
                                                  another, and record moves, seconds and memory
                                                  under <name> in bench/releases.tsv
-  scripts/release.py readme                      write the tables into README.md from that file
+  scripts/release.py readme                      write the tables from that file: every release
+                                                 into README.md, the newest in full into
+                                                 bench/README.md
 
 A release is whatever name is given: a tag or a commit. Measuring it again
 replaces its rows. Run it on a quiet machine: the seconds are wall-clock.
 """
 import datetime
+import decimal
 import os
 import re
 import subprocess
@@ -20,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "target", "release", "cubenxnxn")
 DATA = os.path.join(ROOT, "bench", "releases.tsv")
 README = os.path.join(ROOT, "README.md")
+BENCH = os.path.join(ROOT, "bench", "README.md")
 HEAD = "release\tcommit\tdate\tsize\tcubes\tmoves\tseconds\tlongest\tmemory_mb"
 SIZES = range(2, 22)
 BEGIN, END = "<!-- releases:begin -->", "<!-- releases:end -->"
@@ -86,44 +90,61 @@ def memory(text):
     return "%.0f MB" % mb if mb < 1000 else "%.1f GB" % (mb / 1024)
 
 
-def tables():
+def released():
+    """The rows by (release, size) and the names of the releases, the newest first."""
     data = rows()
     names = []
     for r in data:
         if r[0] not in names:
             names.append(r[0])
-    names.reverse()  # the newest release first
-    by = {(r[0], int(r[3])): r for r in data}
-    out = []
-    if names:
-        new = names[0]
-        first = next(r for r in data if r[0] == new)
-        out.append("Release **%s** (commit `%s`, %s), default mode:\n" % (new, first[1], first[2]))
-        out.append("| Cube | Moves | Seconds | Longest | Memory | Cubes |")
-        out.append("|---|---:|---:|---:|---:|---:|")
-        for n in SIZES:
-            r = by.get((new, n))
-            if r:
-                out.append("| %dx%dx%d | %s | %s | %s | %s | %s |"
-                           % (n, n, n, r[5], secs(r[6]), secs(r[7]), memory(r[8]), r[4]))
-        out.append("")
-        out.append("Every release, the newest first: a row of mean moves and a row of mean seconds per cube.\n")
-        sizes = [n for n in SIZES if any((name, n) in by for name in names)]
-        out.append("| Release | | " + " | ".join(str(n) for n in sizes) + " |")
-        out.append("|---|---|" + "---:|" * len(sizes))
-        for name in names:
-            found = [by.get((name, n)) for n in sizes]
-            out.append("| **%s** | moves | " % name + " | ".join("%.1f" % float(r[5]) if r else "" for r in found) + " |")
-            out.append("| | seconds | " + " | ".join(secs(r[6]) if r else "" for r in found) + " |")
+    names.reverse()
+    return {(r[0], int(r[3])): r for r in data}, names
+
+
+def one(text):
+    """One decimal, halves rounded up (108.85 is 108.9), as a reader would round the full table."""
+    return str(decimal.Decimal(text).quantize(decimal.Decimal("0.1"), rounding=decimal.ROUND_HALF_UP))
+
+
+def history():
+    """Every release: a row of mean moves and a row of mean seconds, a column per size."""
+    by, names = released()
+    sizes = [n for n in SIZES if any((name, n) in by for name in names)]
+    out = ["| Release | | " + " | ".join(str(n) for n in sizes) + " |", "|---|---|" + "---:|" * len(sizes)]
+    for name in names:
+        found = [by.get((name, n)) for n in sizes]
+        out.append("| **%s** | moves | " % name + " | ".join(one(r[5]) if r else "" for r in found) + " |")
+        out.append("| | seconds | " + " | ".join(secs(r[6]) if r else "" for r in found) + " |")
     return "\n".join(out)
 
 
-def readme():
-    with open(README) as f:
+def newest():
+    """The newest release in full, a row per size."""
+    by, names = released()
+    if not names:
+        return ""
+    first = next(r for (name, _), r in by.items() if name == names[0])
+    out = ["Release **%s** (commit `%s`, %s), default mode:\n" % (names[0], first[1], first[2]),
+           "| Cube | Moves | Seconds | Slowest cube | Memory | Cubes |", "|---|---:|---:|---:|---:|---:|"]
+    for n in SIZES:
+        r = by.get((names[0], n))
+        if r:
+            out.append("| %dx%dx%d | %s | %s | %s | %s | %s |"
+                       % (n, n, n, r[5], secs(r[6]), secs(r[7]), memory(r[8]), r[4]))
+    return "\n".join(out)
+
+
+def between(path, begin, end, body):
+    with open(path) as f:
         text = f.read()
-    a, b = text.index(BEGIN) + len(BEGIN), text.index(END)
-    with open(README, "w") as f:
-        f.write(text[:a] + "\n" + tables() + "\n" + text[b:])
+    a, b = text.index(begin) + len(begin), text.index(end)
+    with open(path, "w") as f:
+        f.write(text[:a] + "\n" + body + "\n" + text[b:])
+
+
+def readme():
+    between(README, BEGIN, END, history())
+    between(BENCH, "<!-- release:begin -->", "<!-- release:end -->", newest())
 
 
 if __name__ == "__main__":
