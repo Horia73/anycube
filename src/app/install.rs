@@ -101,6 +101,7 @@ fn add_macos(binary: &Path, bundle: &Path) -> io::Result<()> {
   <key>CFBundleIconFile</key><string>anycube</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSArchitecturePriority</key><array><string>arm64</string><string>x86_64</string></array>
   <key>LSApplicationCategoryType</key><string>public.app-category.puzzle-games</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUsageDescription</key><string>anycube reads the colours of a cube you hold up to the camera. The picture stays on this computer.</string>
