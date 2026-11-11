@@ -291,11 +291,24 @@ where
             next.truncate(most);
         }
         next.par_sort_unstable();
-        next.dedup_by(|x, y| x.2 == y.2);
+        // A state that is solved stays once for every way it was reached:
+        // where a state is only part of the cube (a goal that is one state,
+        // say), the ways end in different cubes, and whoever comes next
+        // wants to choose among them.
+        next.dedup_by(|x, y| x.0 != 0 && x.2 == y.2);
         let solved = next.iter().take_while(|x| x.0 == 0).count();
         if solved > 0 {
-            let found: Vec<(usize, Vec<u8>)> = next[..solved]
+            // One way to each solved state first, then a second one, and so on.
+            let mut order: Vec<(usize, usize)> = Vec::with_capacity(solved);
+            let mut nth = 0;
+            for j in 0..solved {
+                nth = if j > 0 && next[j].2 == next[j - 1].2 { nth + 1 } else { 0 };
+                order.push((nth, j));
+            }
+            order.sort_unstable();
+            let found: Vec<(usize, Vec<u8>)> = order
                 .iter()
+                .map(|&(_, j)| &next[j])
                 .map(|x| {
                     let mut path = vec![x.4];
                     let mut at = x.3 as usize;
@@ -417,13 +430,21 @@ mod tests {
             let end = path.iter().fold((1, 1), |n, &m| Grid.next(&n, (m / 3) as usize));
             assert_eq!(end, (3, 3));
         }
-        // Two moves behind, the two are level: the goal is one state, reached from either.
-        let found = beam_roots(&Grid, &[((0, 0), 0), ((1, 1), 2)], score, 100, 10, 20, 0, &|_| true, 0);
-        assert_eq!(found.len(), 1);
-        assert!(matches!((found[0].0, found[0].1.len()), (0, 6) | (1, 4)));
+        // Two moves behind, the two are level, and the second root is a
+        // state the first one passes through: either may be the one kept.
+        let found = beam_roots(&Grid, &[((0, 0), 0), ((1, 1), 2)], score, 100, 100, 20, 0, &|_| true, 0);
+        assert!(!found.is_empty() && found.iter().all(|x| matches!((x.0, x.1.len()), (0, 6) | (1, 4))));
         // Further behind still, only the first root is.
         let found = beam_roots(&Grid, &[((0, 0), 0), ((1, 1), 3)], score, 100, 10, 20, 0, &|_| true, 0);
         assert!(!found.is_empty() && found.iter().all(|x| x.0 == 0 && x.1.len() == 6));
+    }
+
+    #[test]
+    fn every_way_to_a_solved_state_is_kept() {
+        // Right then up, or up then right: two ways to the one goal.
+        let found = beam_roots(&Grid, &[((2, 2), 0)], score, 100, 100, 20, 0, &|_| true, 0);
+        assert_eq!(found.len(), 2);
+        assert_ne!(found[0].1, found[1].1);
     }
 
     #[test]

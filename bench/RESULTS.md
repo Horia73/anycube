@@ -846,3 +846,154 @@ all columns (so that columns disturbed together are not counted many
 times). The searches did not finish one cube in the four and a half minutes
 allowed. Not kept.
 
+
+## 7x7x7 and any size: one search for all candidates (2026-11-11, afternoon)
+
+Branch `faster-777`. Four sessions were benchmarking on the machine at the
+same time (load average 30 to 290 on 10 cores), so wall-clock times below
+mean little; where a time is given it is processor time, taken back to back
+with what it is compared to. Lengths do not depend on the load. The final
+times are to be measured after the branches are joined, one run at a time.
+
+### Speed, same solutions
+
+Profile of the 7x7x7 staging as it was: the beam search of step 4 a third,
+the exact phase A of the 5x5x5 (`Stage5::dfs_a`) 30%, the beam of step 2
+22%. All three wait for memory: their tables (331 MB, 3 x 83 MB, 3 x 16 MB,
+64 MB) are far larger than the cache.
+
+| Change | Staging of 5 cubes, processor time |
+|---|---|
+| as it was | 149 s |
+| beam: the children of a state made first and their table entries asked for (`Problem::prefetch`, `search::fetch`), 16 at a time | 102 s |
+| the same, 48 at a time (all the children of a state) | 93 s |
+| the same in the exact phase A search | 84 s |
+
+The solutions are the same to the move. `axes::Beam` (the way home of the
+general solver, tables of 24 MB) fetches ahead as well.
+
+### One beam search from all the candidates
+
+`search::beam_roots`: several roots in one beam, each with the moves it is
+behind the shortest (it joins at that level), every solution returned with
+the number of its root. Staging of 10 cubes, the five steps as they were:
+
+| Beam searches of a step | Mean length | Processor time per cube |
+|---|---|---|
+| one of 100,000 for each of 8 candidates | 52.30 | 17.6 s |
+| one of 100,000 for all | 53.20 | 4.7 s |
+| one of 300,000 for all | 52.50 | 8.4 s |
+| one of 100,000 for all, 32 candidates carried | 52.90 | 7.3 s |
+
+So about twice the work for the same length, not eight times. Full solves
+of 20 cubes with this and nothing else changed: beams of 300,000 for staging
+and matching 153.95, 100,000 and 100,000 155.30, 300,000 and 100,000
+154.05, 100,000 and 300,000 154.75, 30,000 and 30,000 156.80 (the code as
+it was: 154.80 on the first 10, 154.27 on the first 30, at about twice the
+processor time of the first of these).
+
+### Fewer, larger staging steps
+
+Staging of 10 cubes, beams of 100,000:
+
+| Staging | Mean length | Steps |
+|---|---|---|
+| five steps, as it was | 52.90 | 10.3 + 10.1 + 9.7 + 14.5 + 8.3 |
+| a beam step hands on 400 solutions per length, of two lengths, and the step after it picks | 52.30 | step 4 one longer, step 5 one shorter |
+| the order of the axes chosen, steps as they were | 53.10 | no gain: each step picks by its own length |
+| steps 1 and 2 in one search with every move, fixed order | 52.90 | 20.2 |
+| the same, the three axes as three roots of that search | 51.50 | 18.8 + 10.0 + 14.6 + 8.1 |
+| and steps 4 and 5 in one search, either other axis as a root | 50.70 | 18.6 + 10.1 + 22.0 |
+| steps 1 to 3 in one search instead | 51.60 | 28.2 + 23.4 |
+
+- The beam of steps 1 and 2 does not stall, with a weak bound for the
+  triples (tables for every move: at most 3 and 6 moves) and the phase A
+  table that is exact within six moves of its end (`Stage5::a_close`) for
+  the inner centres, counted twice. Counted once: 57.4; three times: 53.0;
+  with the stronger tables of step 2 for the triples: 53.1.
+- The choice of axis pays only inside a search. Three roots in one beam let
+  the beam find out which axis is short; picking by the length of step 1
+  does not.
+- Steps 4 and 5 in one: the score of step 4 plus what step 5 would take if
+  the triples were formed. That counted twice: 52.8.
+- Steps 1 to 3 in one is no better (300,000: 50.6 against 50.4 at 1.7 times
+  the processor time), and its results are more alike than the eight
+  exact solutions of step 3, which is what the last search wants to start
+  from. Removed.
+- Wider beams change little here: 50.7 at 100,000, 50.4 at 300,000.
+
+### The matching wants different cubes, not many
+
+Full solves, 20 cubes, staging beam 100,000, matching beam 300,000:
+
+| Staging | Staging | Matching | Both | Total |
+|---|---|---|---|---|
+| five steps, one beam per step for all | 53.20 | 15.55 | 68.75 | 154.75 |
+| merged, axes chosen, 8 stagings to the matching | 50.25 | 16.90 | 67.15 | 153.45 |
+| the same, 256 to the matching | 50.45 | 17.10 | 67.55 | 153.05 |
+
+The staging is 2.9 moves shorter and the matching 1.4 longer. The trace
+showed why: the goal of the last search is one state of its coordinates,
+a beam keeps a state once, so it returned one staging per length: 2 cubes
+for the matching to start from, where the five steps gave it 7 or 8
+different ones. The matching of a staged cube is 13 to 20 moves, and it is
+the best of the cubes offered that counts. `beam_roots` now keeps a solved
+state once for every way it was reached (they end in different cubes), one
+way to each solved state first. Measured after that: see below.
+
+Lengths of matchings for cubes that share most of their staging are
+close: what helps is stagings that differ early.
+
+### The general solver (`src/staging.rs`)
+
+The staging passes of `nnn` are now a pipeline over candidates: cubes
+carried from step to step, the row-forming steps of 7x7x7 type one
+`beam_roots` search for all of them (`Stage7::rows`), the cube started
+along each of its three axes and continued with either of the other two.
+`cubenxnxn stagen <scrambles> --size N` runs the staging alone and checks
+it. Staging only, same cubes:
+
+| Size | Cubes | As it was | 1 candidate, 1 order | 8 carried, 4 kept of each, beam 20,000 | 16, 8, beam 100,000 |
+|---|---|---|---|---|---|
+| 8x8x8 | 5 (as it was: 4) | 92.0 | 90.0 | 85.0 | 81.2 |
+| 9x9x9 | 5 | 128.0 | 122.6 | 113.8 | 111.2 |
+| 10x10x10 | 3 | 168.3 | 163.0 | 154.0 | 151.0 |
+
+("As it was" for 10x10x10 is the long way, onto the faces of the centres'
+own colours; the other columns let an even cube's axes end on any faces.)
+Processor time for the staging of a 9x9x9: 2.3 s with one candidate, 4.3 s
+and 8.3 s for the last two columns. An 8x8x8 takes 17 s and 28 s, because
+its 6x6x6-type steps (`stage6`) still run once per candidate.
+
+- **Rows of the first axis with every move** (steps 1 and 2 of the 7x7x7
+  in one): 115.8 against 113.8 on the 9x9x9. Its inner centres are staged
+  already there; nothing to share. Removed.
+- **Wing parity.** Step 4 makes the wings of its third layer even. Leaving
+  that alone in every step (the quarter turns of later steps undo it
+  anyway) shortened the staging by a move or two per step and lengthened
+  the edges by eleven: 132 against 121 on two 10x10x10 cubes, because each
+  edge step then starts by fixing the parity of its orbit from solved
+  centres. Now only the step of the outermost ring fixes it, after which
+  nothing changes it again: 9x9x9 112.6, 10x10x10 155.0 (was 111.2 and
+  151.0 with no step fixing it).
+- **Renaming colours from a cell of the cube** to see it along another
+  axis failed half way through a staging (no cell is sure to show its
+  face's colour then); the names come from the turn itself.
+
+Whole solves with the new staging, the cubes run so far: 9x9x9 cube 0 at
+326 (358 before), cube 1 at 347 the long way (324 before, matched); 8x8x8
+cube 0 at 259 (269). Whether the rows are matched decides more than the
+staging does, and that part is another branch's work. Sizes 8 to 10 have
+to be run again on the joined code.
+
+### Not done
+
+- The edge steps of the general solver still carry one cube. The 7x7x7
+  carries 16 reductions from its inner cube to its outer one; the same
+  needs `Solver5` to hand back several reductions with their cubes.
+- The 6x6x6-type steps of the staging as one search for all candidates.
+- A matching search better than a wide beam. Only half turns of two layers
+  change which outer centre lies beside which inner one; face turns and
+  half turns of three layers move whole blocks. Its length falls steadily
+  with the width (16.9, 16.1, 15.3 moves at 30,000, 100,000 and 300,000),
+  which says the beam is still far from the shortest.
