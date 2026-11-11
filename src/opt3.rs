@@ -85,13 +85,17 @@ impl<'a> Opt3<'a> {
     }
 
     /// The optimal solution, searched on all cores, length by length, until `deadline`.
-    pub fn solve_optimal(&self, root: &Root, deadline: Instant) -> Optimal {
+    ///
+    /// `known` is the length of a solution the caller already has (21 if it has none): only
+    /// shorter ones are looked for. If none is found and `proven_lower_bound` comes back as
+    /// `known`, the caller's solution is optimal.
+    pub fn solve_optimal(&self, root: &Root, deadline: Instant, known: usize) -> Optimal {
         if root.cube == C3::identity() {
             return Optimal { solution: Some(Vec::new()), proven_lower_bound: 0 };
         }
         let budget = AtomicI64::new(i64::MAX);
         let mut lower = root.lower_bound().max(1);
-        for len in lower..=20 {
+        for len in lower..known {
             // Split the search two moves deep; the first piece to find a solution stops the rest.
             let mut jobs = Vec::new();
             for m1 in 0..18u8 {

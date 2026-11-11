@@ -451,11 +451,18 @@ fn row(args: &[String]) {
         }
         3 => {
             use anycube::c3::{C3, T3};
-            let t = T3::new();
-            let probes = if opt(args, "--mode") == Some("fast") { 500 } else { 30_000 };
+            let t: &'static T3 = Box::leak(Box::new(T3::new()));
+            let first: &'static anycube::first3::First3 = Box::leak(Box::new(anycube::first3::First3::load(t)));
+            let two = anycube::two3::Two3::new(t, first);
+            let effort = effort3(args);
+            let counted = args.iter().any(|a| a == "--ways");
             Box::new(move |g, scr, _| {
                 let c3 = small(scr)?.with_home_centres().and_then(|c| C3::from_cube(&c));
-                named(g, &t.solve(&c3.ok_or_else(|| "not a 3x3x3 state".to_string())?, probes, None))
+                let (sol, ways) = two.solve_counted(&c3.ok_or_else(|| "not a 3x3x3 state".to_string())?, effort);
+                if counted {
+                    eprint!("{:>10} ways  ", ways);
+                }
+                named(g, &sol)
             })
         }
         4 => {
@@ -585,33 +592,56 @@ fn solve2(cube: &Cube) {
     eprintln!("{} moves, optimal, {:.0} ms", sol.len(), t0.elapsed().as_secs_f64() * 1e3);
 }
 
+/// The effort of the 3x3x3 search: that of the mode, unless `--depth` (and `--variants`) say otherwise.
+fn effort3(args: &[String]) -> anycube::two3::Effort {
+    use anycube::two3::Effort;
+    let of_mode = match opt(args, "--mode") {
+        None | Some("normal") | Some("full") => Effort::NORMAL,
+        Some("fast") => Effort::FAST,
+        Some(_) => usage(),
+    };
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    match opt(args, "--depth") {
+        Some(_) => Effort { depth: num("--depth", of_mode.depth), variants: num("--variants", 6) },
+        None => of_mode,
+    }
+}
+
 fn solve3(cube: &Cube, args: &[String]) {
     use anycube::c3::{C3, T3};
+    use anycube::two3::{Effort, Two3};
     let c3 = cube
         .with_home_centres()
         .and_then(|c| C3::from_cube(&c))
         .unwrap_or_else(|| fail("not a 3x3x3 state"));
-    let mode = opt(args, "--mode").unwrap_or("normal");
+    let effort = effort3(args);
     let t0 = Instant::now();
     let t = T3::new();
-    let probes = if mode == "fast" { 500 } else { 30_000 };
-    let mut sol = t.solve(&c3, probes, None);
+    let first = anycube::first3::First3::load(&t);
+    let two = Two3::new(&t, &first);
+    let mut sol = two.solve(&c3, effort);
     let mut note = "two-phase search".to_string();
-    if mode == "full" {
+    if opt(args, "--mode") == Some("full") {
         // Exact search on all cores; falls back to the two-phase solution at the time limit.
         let secs = opt(args, "--time").and_then(|s| s.parse::<u64>().ok()).unwrap_or(120_000);
+        let deadline = Instant::now() + std::time::Duration::from_millis(secs);
+        // Few cubes need more than 18 moves, and proving that there is nothing shorter than a
+        // solution in hand takes a fraction of the time of finding one: a deeper two-phase
+        // search first, if the first one is not there yet.
+        if sol.len() > 18 && effort.depth < Effort::DEEP.depth {
+            sol = two.solve(&c3, Effort::DEEP);
+        }
         let big = anycube::big2::Big2::load(&t);
         let o = anycube::opt3::Opt3::new(&t, &big);
-        let res = o.solve_optimal(&o.prepare(&c3), Instant::now() + std::time::Duration::from_millis(secs));
+        let res = o.solve_optimal(&o.prepare(&c3), deadline, sol.len());
         note = match res.solution {
             Some(s) => {
                 sol = s;
                 "optimal".to_string()
             }
+            None if res.proven_lower_bound >= sol.len() => "optimal".to_string(),
             None => format!("not proven optimal: no solution shorter than {} moves", res.proven_lower_bound),
         };
-    } else if mode != "fast" && mode != "normal" {
-        usage();
     }
     println!("{}", format_moves(&sol));
     eprintln!("{} moves, {}, {:.0} ms", sol.len(), note, t0.elapsed().as_secs_f64() * 1e3);

@@ -18,10 +18,10 @@ use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 pub const N_TWIST: usize = 2187;
 pub const N_FLIP: usize = 2048;
 pub const N_SLICE: usize = 495;
-const N_PERM: usize = 40320;
-const N_SPERM: usize = 24;
+pub(crate) const N_PERM: usize = 40320;
+pub(crate) const N_SPERM: usize = 24;
 /// U U2 U' D D2 D' R2 L2 F2 B2
-const G1_MOVES: [u8; 10] = [0, 1, 2, 9, 10, 11, 4, 13, 7, 16];
+pub(crate) const G1_MOVES: [u8; 10] = [0, 1, 2, 9, 10, 11, 4, 13, 7, 16];
 const SLICE_GOAL_MASK: usize = 0xF00;
 const UNREACHED: u8 = 255;
 const CACHE_FILE: &str = "cube333.bin";
@@ -256,14 +256,14 @@ pub struct T3 {
     pub(crate) slice_rank: Vec<u16>,
     pub(crate) slice_unrank: Vec<usize>,
     slice_goal: usize,
-    cperm_mv: Vec<[u16; 10]>,
-    uperm_mv: Vec<[u16; 10]>,
-    sperm_mv: Vec<[u8; 10]>,
+    pub(crate) cperm_mv: Vec<[u16; 10]>,
+    pub(crate) uperm_mv: Vec<[u16; 10]>,
+    pub(crate) sperm_mv: Vec<[u8; 10]>,
     p_ts: Vec<u8>,
     p_fs: Vec<u8>,
     p_tf: Vec<u8>,
-    p_cs: Vec<u8>,
-    p_us: Vec<u8>,
+    pub(crate) p_cs: Vec<u8>,
+    pub(crate) p_us: Vec<u8>,
     /// Phase 2: corners and U/D edges together; see `gen_corners_edges`.
     ce: Bytes,
     /// Frames used to retry the search along the three axes.
@@ -375,7 +375,7 @@ impl T3 {
     /// Moves to put the corners and the U/D edges in place together, exactly
     /// up to `CE_DEPTH`; `CE_FAR` stands for more.
     #[inline(always)]
-    fn corners_and_edges(&self, c: usize, u: usize) -> u8 {
+    pub(crate) fn corners_and_edges(&self, c: usize, u: usize) -> u8 {
         let d = &self.ce[..];
         #[cfg(target_arch = "wasm32")]
         if d.is_empty() {
@@ -546,7 +546,7 @@ impl T3 {
     }
 
     #[inline(always)]
-    fn h2(&self, c: usize, u: usize, s: usize) -> u8 {
+    pub(crate) fn h2(&self, c: usize, u: usize, s: usize) -> u8 {
         self.p_cs[c * N_SPERM + s].max(self.p_us[u * N_SPERM + s]).max(self.corners_and_edges(c, u))
     }
 

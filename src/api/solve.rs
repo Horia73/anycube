@@ -59,6 +59,27 @@ pub(crate) fn t3() -> &'static T3 {
     T.get_or_init(T3::new)
 }
 
+/// The 3x3x3 search on all cores, with the table of its first phase.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn two3() -> &'static crate::two3::Two3<'static> {
+    static F: OnceLock<crate::first3::First3> = OnceLock::new();
+    static T: OnceLock<crate::two3::Two3<'static>> = OnceLock::new();
+    T.get_or_init(|| crate::two3::Two3::new(t3(), F.get_or_init(|| crate::first3::First3::load(t3()))))
+}
+
+/// A 3x3x3 solved with the effort of a mode.
+#[cfg(not(target_arch = "wasm32"))]
+fn solve3(c3: &C3, mode: Mode) -> Vec<u8> {
+    use crate::two3::Effort;
+    two3().solve(c3, if mode == Mode::Fast { Effort::FAST } else { Effort::NORMAL })
+}
+
+/// In the browser there is one core and no file to keep a table in: the search of `c3.rs`.
+#[cfg(target_arch = "wasm32")]
+fn solve3(c3: &C3, mode: Mode) -> Vec<u8> {
+    t3().solve(c3, if mode == Mode::Fast { 500 } else { 30_000 }, None)
+}
+
 /// Loads the tables for a size, building any that are missing. A solve does
 /// this by itself; a server calls it first so that a request does not wait.
 pub fn load(size: usize) {
@@ -68,6 +89,8 @@ pub fn load(size: usize) {
         }
         3 => {
             t3();
+            #[cfg(not(target_arch = "wasm32"))]
+            two3();
         }
         #[cfg(not(target_arch = "wasm32"))]
         n => big::load(n),
@@ -135,9 +158,7 @@ fn run(g: &Geometry, f: &[u8], mode: Mode) -> Result<Answer, ApiError> {
                 .and_then(|c| c.with_home_centres())
                 .and_then(|c| C3::from_cube(&c))
                 .ok_or_else(|| failed("not a 3x3x3 state".into()))?;
-            // The effort of the command line's modes.
-            let probes = if mode == Mode::Fast { 500 } else { 30_000 };
-            let sol = t3().solve(&c3, probes, None);
+            let sol = solve3(&c3, mode);
             Ok((sol.iter().map(|&m| m as usize).collect(), Vec::new(), false))
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -267,8 +288,8 @@ mod tests {
     use super::*;
     use crate::api::check::{check, Input};
 
-    /// These load `cube222.bin` and `cube333.bin` from the tables directory
-    /// (`ANYCUBE_TABLES`), a few megabytes, and build them if they are missing.
+    /// These load the tables of the 2x2x2 and the 3x3x3 from the tables directory
+    /// (`ANYCUBE_TABLES`), 150 MB, and build them if they are missing.
     #[test]
     fn small_cubes_from_moves_and_from_facelets() {
         for (size, scramble) in [(2, "R U2 F' R2 U F R' U'"), (3, "R U R' U' F2 D L' B U2 R D' F L2 B' U")] {
