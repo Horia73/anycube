@@ -1,6 +1,7 @@
 // Plays a sequence of moves on a CubeView: play, pause, step either way,
 // jump to any point, at a chosen speed. With the cue on, the move that
-// comes next is drawn on the cube as arrows, and in play each move waits
+// comes next is drawn on the cube as arrows, which turn with its layers
+// and then give way to those of the move after it; in play each move waits
 // a moment under its arrows before it turns, so that a person with a cube
 // in their hands can do it too.
 
@@ -139,7 +140,9 @@ export class Player {
     const lead = wait && this.cue ? (QUARTER_MS * CUE_SHARE) / this.speed : 0;
     const anim = { direction, move, before, start: performance.now() + lead, ms };
     this.anim = anim;
-    if (lead) this.view.setCue({ face, from: 0, to: layers, quarters });
+    // The arrows of a move stay on its layers while they turn, and give way
+    // to those of the next move when it ends. A move taken back has none.
+    if (this.cue && direction > 0) this.view.setCue({ face, from: 0, to: layers, quarters });
     else this.view.setCue(null);
     const frame = (now) => {
       if (this.anim !== anim) return;

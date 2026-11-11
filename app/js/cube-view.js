@@ -128,6 +128,8 @@ export class CubeView {
     this.turn = null;
     // The move that comes next, shown as arrows: { face, from, to, quarters }.
     this.cue = null;
+    this.cueSince = 0; // when these arrows were put up
+    this.calm = window.matchMedia?.("(prefers-reduced-motion: reduce)") ?? { matches: false };
     this.pending = false;
     // While true nothing is drawn: the page holds the picture back until
     // it has the cube to show, so that no other cube is seen first.
@@ -341,6 +343,10 @@ export class CubeView {
   }
 
   setCue(cue) {
+    const was = this.cue;
+    const same = cue && was && cue.face === was.face && cue.from === was.from && cue.to === was.to && cue.quarters === was.quarters;
+    // Arrows for another move come in over a moment, not all at once.
+    if (cue && !same) this.cueSince = performance.now();
     this.cue = cue;
     this.draw();
   }
@@ -578,7 +584,20 @@ export class CubeView {
         }
       }
     }
-    if (this.cue && !(turn && turn.angle !== 0)) this.#arrows(this.cue, f);
+    // The arrows of the move that is next. While its own layers turn they
+    // turn with them; while other layers turn there are none.
+    const cue = this.cue;
+    if (cue) {
+      const turning = turn && turn.angle !== 0;
+      const own = turning && turn.face === cue.face && turn.from === cue.from && turn.to === cue.to;
+      if (!turning || own) {
+        const shown = this.calm.matches ? 1 : Math.min(1, (performance.now() - this.cueSince) / 220);
+        ctx.globalAlpha = shown;
+        this.#arrows(cue, f, own ? mul(this.rot, about(FACES[turn.face].normal, -turn.angle)) : this.rot);
+        ctx.globalAlpha = 1;
+        if (shown < 1) this.draw();
+      }
+    }
   }
 
   // The next move as arrows on the cube: one along the middle of every row
@@ -587,7 +606,7 @@ export class CubeView {
   // when it is the face that turns. Each arrow is a flat shape lying on its
   // face, head and all, and is projected with the face, so it looks painted
   // on however the cube is held.
-  #arrows({ face, from, to, quarters }, f) {
+  #arrows({ face, from, to, quarters }, f, m) {
     const { ctx, n } = this;
     const a = FACES[face].normal;
     const sense = quarters < 0 ? -1 : 1;
@@ -599,7 +618,7 @@ export class CubeView {
     const fill = (points, scale = 1) => {
       ctx.beginPath();
       points.forEach((v, i) => {
-        const [x, y] = this.#project(apply(this.rot, v), f);
+        const [x, y] = this.#project(apply(m, v), f);
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
       ctx.closePath();
@@ -612,8 +631,7 @@ export class CubeView {
     };
     const visible = (normal) => {
       // A face is seen when the eye is on its outer side.
-      const k = normal.findIndex((v) => v !== 0);
-      return this.rot[6 + k] * EYE * normal[k] > 1;
+      return (m[6] * normal[0] + m[7] * normal[1] + m[8] * normal[2]) * EYE > 1;
     };
     const at = (o, u, v, x, y) => [o[0] + u[0] * x + v[0] * y, o[1] + u[1] * x + v[1] * y, o[2] + u[2] * x + v[2] * y];
     // Along the layers, on each side face in view.
