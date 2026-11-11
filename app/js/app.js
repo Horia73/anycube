@@ -108,6 +108,91 @@ export async function mount(root, options = {}) {
 
   const narrow = window.matchMedia("(max-width: 759px)");
 
+  // ------------------------------------------------- kept over a reload
+
+  // The page as it stands is kept for this tab, so that a reload brings it
+  // back: the size, the tab, the cube, the scramble, the solution and how
+  // far it was played, the way the cube is held. A new tab starts afresh.
+  const KEPT = "anycube.page";
+  let keeping = false; // not before the page has started: a reload then keeps what was kept
+  let keepSoon = 0;
+
+  function keep() {
+    if (!keeping) return;
+    const { size, model, solution } = state;
+    const p = size <= PAINT_MAX ? state.painted.get(size) : null;
+    const page = {
+      v: 1,
+      size,
+      input: state.input,
+      tab: state.tab,
+      mode: state.mode,
+      speed: player.speed,
+      scramble: $("scramble").value,
+      painted: p ? { facelets: Array.from(p.facelets), palette: p.palette, doubt: p.doubt ? Array.from(p.doubt) : null, note: $("paint-note").textContent } : null,
+      carried: state.carried,
+      solution: solution ? { moves: model.names(solution.moves), parts: solution.parts ?? [], label: solution.label ?? "", optimal: !!solution.optimal } : null,
+      position: player.position,
+      rot: Array.from(view.rot),
+    };
+    try {
+      sessionStorage.setItem(KEPT, JSON.stringify(page));
+    } catch {
+      // No storage here: a reload starts afresh.
+    }
+  }
+
+  function keepLater() {
+    clearTimeout(keepSoon);
+    keepSoon = setTimeout(keep, 250);
+  }
+
+  // What was kept, with the cube it shows worked out: null if there is
+  // nothing, or if it does not hold together.
+  function kept() {
+    try {
+      const page = JSON.parse(sessionStorage.getItem(KEPT) ?? "null");
+      if (page?.v !== 1 || !Number.isInteger(page.size) || page.size < 2 || page.size > PLAY_MAX) return null;
+      if (!["scramble", "paint", "camera"].includes(page.input)) return null;
+      const model = new CubeModel(page.size);
+      const scramble = model.normalise(String(page.scramble ?? "")).moves;
+      let palette = STICKERS;
+      let start = model.applyAll(model.solved(), scramble);
+      if (page.painted) {
+        if (page.painted.facelets?.length !== model.count || page.painted.palette?.length !== 6) return null;
+        page.painted.facelets = model.withCentres(Uint8Array.from(page.painted.facelets));
+      }
+      if (page.input !== "scramble" && page.painted && page.size <= PAINT_MAX) {
+        start = page.painted.facelets;
+        palette = page.painted.palette;
+      }
+      let moves = [];
+      if (page.solution) {
+        moves = model.parse(String(page.solution.moves));
+        // A solution is kept only with the cube it solves.
+        if (!model.isSolved(model.applyAll(start, moves))) page.solution = null;
+      }
+      if (!page.solution) moves = [];
+      const position = Math.max(0, Math.min(moves.length, Math.round(Number(page.position) || 0)));
+      const rot = Array.isArray(page.rot) && page.rot.length === 9 && page.rot.every(Number.isFinite) ? page.rot : null;
+      return { ...page, model, start, palette, moves, position, rot, shown: model.applyAll(start, moves.slice(0, position)) };
+    } catch {
+      return null;
+    }
+  }
+
+  // The first thing drawn is the cube as it was: before anything is asked
+  // of a server or a solver, and with nothing else drawn before it.
+  view.waiting = true;
+  let page = kept();
+  if (page) {
+    view.setColours({ palette: page.palette });
+    if (page.rot) view.rot = page.rot;
+    view.setCube(page.size, page.shown);
+    view.waiting = false;
+    view.draw();
+  }
+
   // -------------------------------------------------------------- colours
 
   function themeColours() {
@@ -274,6 +359,7 @@ export async function mount(root, options = {}) {
     renderSolution(null);
     restStatus();
     judge(cube);
+    keepLater();
   }
 
   async function judge(cube) {
@@ -907,6 +993,7 @@ export async function mount(root, options = {}) {
       if (top < list.scrollTop) list.scrollTop = top - 6;
       else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight + 6;
     }
+    keepLater();
   };
 
   $("play").addEventListener("click", () => player.toggle());
@@ -920,6 +1007,7 @@ export async function mount(root, options = {}) {
     b.addEventListener("click", () => {
       for (const other of root.querySelectorAll(".speed button")) other.setAttribute("aria-checked", String(other === b));
       player.setSpeed(Number(b.dataset.speed));
+      keepLater();
     });
   }
 
@@ -927,6 +1015,7 @@ export async function mount(root, options = {}) {
     b.addEventListener("click", () => {
       for (const other of root.querySelectorAll(".modes button")) other.setAttribute("aria-checked", String(other === b));
       state.mode = b.dataset.mode;
+      keepLater();
     });
   }
 
@@ -970,6 +1059,49 @@ export async function mount(root, options = {}) {
     }
   });
 
+  // The page put back as it was kept.
+  function restore(was) {
+    setSize(was.size);
+    $("scramble").value = String(was.scramble ?? "");
+    if (was.painted && was.size <= PAINT_MAX) {
+      const { facelets, palette, doubt, note } = was.painted;
+      state.painted.set(was.size, { facelets, palette, doubt: doubt ? Float32Array.from(doubt) : null });
+      if (note) $("paint-note").textContent = note;
+    }
+    state.carried = typeof was.carried === "string" ? was.carried : null;
+    for (const b of root.querySelectorAll(".modes button")) {
+      if (b.dataset.mode !== was.mode || b.disabled) continue;
+      for (const other of root.querySelectorAll(".modes button")) other.setAttribute("aria-checked", String(other === b));
+      state.mode = was.mode;
+    }
+    for (const b of root.querySelectorAll(".speed button")) {
+      if (Number(b.dataset.speed) !== was.speed) continue;
+      for (const other of root.querySelectorAll(".speed button")) other.setAttribute("aria-checked", String(other === b));
+      player.setSpeed(was.speed);
+    }
+    state.input = was.input;
+    showTab(was.tab === "moves" && narrow.matches ? "moves" : was.input);
+    setTouch();
+    if (was.input !== "scramble" && was.size <= PAINT_MAX) {
+      const p = painted();
+      paint.set(was.size, p.facelets, p.palette, p.doubt);
+    }
+    readScramble();
+    if (was.input !== "scramble") show();
+    if (was.solution && was.moves.length) {
+      const cube = entered();
+      // Once more against the cube the page itself arrived at.
+      if (state.model.isSolved(state.model.applyAll(cube.start, was.moves))) {
+        state.solution = { moves: was.moves, parts: was.solution.parts, label: was.solution.label, optimal: was.solution.optimal };
+        player.load(state.model, cube.start, was.moves);
+        renderSolution(state.solution);
+        player.seek(was.position);
+      }
+    }
+    if (was.rot) view.rot = was.rot;
+    view.draw();
+  }
+
   // ---------------------------------------------------------------- start
 
   narrow.addEventListener("change", arrange);
@@ -981,13 +1113,37 @@ export async function mount(root, options = {}) {
     // No storage: the arrows are on.
   }
   setArrows(arrows, false);
+  // The kept cube is on screen already: with the arrows of the move that was next.
+  if (page && arrows && page.position < page.moves.length) {
+    const { face, layers, quarters } = page.model.info(page.moves[page.position]);
+    view.setCue({ face, from: 0, to: layers, quarters });
+  }
   renderSolution(null);
   await solver.loadConfig();
   // Whether the browser can solve by itself decides what the page says about each size.
   await solver.startBrowser();
   renderSizes();
-  setSize(Math.min(3, solver.config.max_size));
-  randomScramble();
+  if (page) {
+    try {
+      restore(page);
+    } catch {
+      page = null;
+    }
+  }
+  if (!page) {
+    // A first visit: a 3x3x3, scrambled, and seen only once it is.
+    setSize(Math.min(3, solver.config.max_size));
+    await randomScramble();
+    view.waiting = false;
+    view.draw();
+  }
+  keeping = true;
+  keep();
+  // Leaving the page (a reload is that too) keeps it as it stands at that moment.
+  window.addEventListener("pagehide", keep);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") keep();
+  });
 
   // For the host page, the curious, and testing from the console.
   const app = { view, player, solver, state, config: solver.config };

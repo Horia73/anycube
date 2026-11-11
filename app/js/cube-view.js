@@ -129,6 +129,9 @@ export class CubeView {
     // The move that comes next, shown as arrows: { face, from, to, quarters }.
     this.cue = null;
     this.pending = false;
+    // While true nothing is drawn: the page holds the picture back until
+    // it has the cube to show, so that no other cube is seen first.
+    this.waiting = false;
     this.glide = null;
     // What a touch on the cube does: "turn" a layer, "paint" a sticker, or only "look".
     this.mode = "turn";
@@ -402,6 +405,7 @@ export class CubeView {
   // ------------------------------------------------------------- drawing
 
   #paint() {
+    if (this.waiting) return;
     const { canvas, ctx, n } = this;
     const ratio = Math.min(window.devicePixelRatio || 1, 3);
     const size = Math.round(canvas.clientWidth * ratio);
