@@ -21,8 +21,9 @@ anycube app --install       add anycube to this computer's applications, with it
 anycube app --uninstall     take that entry away again
 
 Lookup tables are kept in ANYCUBE_TABLES if it is set, else in ./tables if
-that directory exists, else with the user's application data. The first
-solve of a size builds its tables; the interface shows the progress.
+that directory exists, else with the user's application data (where the
+installed program's command line keeps them too). The first solve of a size
+builds its tables; the interface shows the progress.
 ";
 
 /// The largest cube the interface offers: what its 3D view draws at speed.
@@ -52,6 +53,25 @@ pub fn tables_dir() -> PathBuf {
         return here;
     }
     data_dir().join("tables")
+}
+
+/// For the command line of an installed program: it keeps its tables where
+/// the interface does, with the user's application data, and not in a
+/// `tables` directory wherever it happens to be run. A program run from the
+/// repository it was built in (`target/...`) is left as it was, and so is
+/// one run where a `tables` directory already is, or told where by
+/// `ANYCUBE_TABLES`.
+pub fn settle_tables() {
+    if std::env::var_os("ANYCUBE_TABLES").is_some() || std::env::var_os("CUBE444_TABLES").is_some() {
+        return;
+    }
+    if std::path::Path::new("tables").is_dir() {
+        return;
+    }
+    let built_here = std::env::current_exe().is_ok_and(|exe| exe.components().any(|part| part.as_os_str() == "target"));
+    if !built_here {
+        std::env::set_var("ANYCUBE_TABLES", data_dir().join("tables"));
+    }
 }
 
 /// The process that started this one.

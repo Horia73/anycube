@@ -1,6 +1,10 @@
 # Lookup tables
 
-Generated on first use into `tables/` (set `ANYCUBE_TABLES` to move them).
+Generated on first use into `tables/` (set `ANYCUBE_TABLES` to move them). The installed
+program keeps them with the user's application data instead
+(`~/Library/Application Support/anycube/tables` on macOS,
+`~/.local/share/anycube/tables` on Linux), unless a `tables/` directory is
+where it is run.
 The 4x4x4 set is 4.9 GB; its large files take about four minutes on 8 cores,
 once.
 

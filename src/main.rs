@@ -13,6 +13,8 @@ fn usage() -> ! {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(feature = "app")]
+    anycube::app::settle_tables();
     match args.first().map(String::as_str) {
         Some("solve") => solve(&args[1..]),
         #[cfg(feature = "app")]
