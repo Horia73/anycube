@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  anycube app   open the interface: a cube to scramble, paint, show to a camera, turn and solve (anycube app --help)\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  anycube app   open the interface: a cube to scramble, paint, show to a camera, turn and solve (anycube app --help)\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube known5 --walk K [--moves all|h|g] [--count N] [--seed S] [--base reduced|solved] [search flags]   5x5x5 cubes K moves away from a reduced (or the solved) cube, the walk made of all moves, of those that keep the centres staged (h) or of those that keep the wing halves apart (g)\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -46,6 +46,7 @@ fn main() {
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
+        Some("known5") => known5(&args[1..]),
         Some("selftest5") => anycube::edges5::Edges5::load().self_test(),
         Some("gen-edges5") => {
             let t = Instant::now();
@@ -1763,6 +1764,101 @@ fn bench5(args: &[String]) {
         work(1),
         work(2)
     );
+}
+
+/// 5x5x5 cubes with a known short answer, as `known` makes for the 4x4x4.
+/// A random reduced cube (or the solved cube with `--base solved`) gets
+/// `--walk` random moves, so a reduction (or a solution) of at most that
+/// many moves exists: the walk undone. `--moves` says which moves the walk
+/// is made of: `all` 36, `h` (face turns and wide half turns: the centres
+/// stay staged, so the walk undone is an edge reduction from staged
+/// centres), or `g` (no quarter turns of R, L or of wide faces: the walk
+/// undone is what the last two edge phases have to find).
+fn known5(args: &[String]) {
+    use anycube::c5::tables5;
+    use anycube::cube::skip_move;
+    use anycube::edges5::{G_MOVES, H_MOVES};
+    use anycube::solver5::Solver5;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count) = (num("--walk", 0), num("--count", 20));
+    if walk == 0 {
+        usage();
+    }
+    let from_solved = match opt(args, "--base") {
+        None | Some("reduced") => false,
+        Some("solved") => true,
+        Some(_) => usage(),
+    };
+    let set: Vec<u8> = match opt(args, "--moves") {
+        None | Some("all") => (0..36).collect(),
+        Some("h") => H_MOVES.to_vec(),
+        Some("g") => G_MOVES.to_vec(),
+        Some(_) => usage(),
+    };
+    let mut seed = num("--seed", 5000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let p = params5(args);
+    let solver = Solver5::load();
+    eprintln!("{:?}", p);
+    let g = &tables5().geometry;
+    // Sums of: centres, edges, 3x3x3, total.
+    let mut sums = [0usize; 4];
+    let mut hist = std::collections::BTreeMap::new();
+    for i in 0..count {
+        let mut seq: Vec<u8> = Vec::new();
+        while !from_solved && seq.len() < 40 {
+            let m = rnd(18) as u8;
+            if seq.last().is_none_or(|&l| !skip_move(l, m)) {
+                seq.push(m);
+            }
+        }
+        // The walk: no move that could be merged with the one before it, and
+        // it starts with a wide move, so that undone it does not end with a
+        // face turn that a reduction has no use for.
+        let base = seq.len();
+        while seq.len() < base + walk {
+            let m = set[rnd(set.len())];
+            if (seq.len() == base && m < 18 && !from_solved) || (seq.len() > base && skip_move(seq[seq.len() - 1], m)) {
+                continue;
+            }
+            seq.push(m);
+        }
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &seq.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+        if !g.is_solved(&f) {
+            fail(&format!("cube {}: the solution does not solve the cube", i));
+        }
+        let l = &sol.lens;
+        let parts = [l[0] + l[1], l[2] + l[3] + l[4], l[5], sol.moves.len()];
+        for k in 0..4 {
+            sums[k] += parts[k];
+        }
+        *hist.entry(parts[0] + parts[1]).or_insert(0usize) += 1;
+    }
+    let mean = |k: usize| sums[k] as f64 / count as f64;
+    println!(
+        "{} cubes, {} moves ({}) away from {}",
+        count,
+        walk,
+        opt(args, "--moves").unwrap_or("all"),
+        if from_solved { "the solved cube" } else { "a reduced cube" }
+    );
+    println!(
+        "found: centres {:.2}, edges {:.2}, reduction {:.2}, 3x3x3 {:.2}, total {:.2}",
+        mean(0),
+        mean(1),
+        mean(0) + mean(1),
+        mean(2),
+        mean(3)
+    );
+    println!("reductions found: {:?}", hist);
 }
 
 /// 5x5x5 centres in one step, on a scramble file: lengths, bounds and times.
