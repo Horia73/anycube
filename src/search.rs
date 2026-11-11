@@ -73,7 +73,33 @@ pub trait Problem: Sync {
     fn bound(&self, n: &Self::Node) -> usize;
     /// Asked only where the bound is 0.
     fn done(&self, n: &Self::Node) -> bool;
+    /// Asks for the table entries that `bound` and the score of this state
+    /// will read (see `fetch`). Where the tables are far larger than the
+    /// cache, a state is mostly waiting for memory; asked for a few states
+    /// ahead, the entries are there when they are read.
+    #[inline(always)]
+    fn prefetch(&self, _: &Self::Node) {}
 }
+
+/// Tells the processor that `table[index]` will be read soon.
+#[inline(always)]
+pub fn fetch(table: &[u8], index: usize) {
+    debug_assert!(index < table.len());
+    // A hint only: it reads nothing and cannot fault.
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        std::arch::asm!("prfm pldl1keep, [{p}]", p = in(reg) table.as_ptr().wrapping_add(index), options(nostack, preserves_flags, readonly));
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::x86_64::_mm_prefetch(table.as_ptr().wrapping_add(index) as *const i8, std::arch::x86_64::_MM_HINT_T0);
+    }
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+    let _ = (table, index);
+}
+
+/// States made and asked for (`Problem::prefetch`) before the first of them is scored.
+const AHEAD: usize = 48;
 
 /// Level by level, only the `width` states with the lowest `score` are
 /// continued (states reached twice count once). Returns up to `cap`
@@ -116,42 +142,136 @@ pub fn beam_from<P: Problem>(
 where
     P::Node: Ord + Hash,
 {
-    if roots.iter().any(|root| p.bound(root) == 0 && p.done(root)) && accept(&[]) {
-        return vec![Vec::new()];
+    beam_longer(p, roots, score, width, cap, max_len, salt, accept, 0)
+}
+
+/// `beam_from` that goes on for `more` levels after the first one with a
+/// solution and returns the solutions of all those lengths (up to `cap` of
+/// each), shortest first. For a step whose results are judged together with
+/// the step after it: a solution one move longer may leave less to do.
+#[allow(clippy::too_many_arguments)]
+pub fn beam_longer<P: Problem>(
+    p: &P,
+    roots: &[P::Node],
+    score: impl Fn(&P::Node) -> u32 + Sync,
+    width: usize,
+    cap: usize,
+    max_len: usize,
+    salt: u32,
+    accept: &(dyn Fn(&[u8]) -> bool + Sync),
+    more: usize,
+) -> Vec<Vec<u8>>
+where
+    P::Node: Ord + Hash,
+{
+    let roots: Vec<(P::Node, usize)> = roots.iter().map(|root| (*root, 0)).collect();
+    beam_roots(p, &roots, score, width, cap, max_len, salt, accept, more).into_iter().map(|found| found.1).collect()
+}
+
+/// One beam search for several cubes at once: each root with the number of
+/// moves already spent on it beyond the least of them, so that the states of
+/// a level are the same number of moves from the start whichever root they
+/// come from, and the beam keeps the best of all of them. A root that is
+/// `late` moves behind joins at that level. Returns the solutions as
+/// `beam_longer` does, each with the number of its root.
+///
+/// One search this way does the work of one search per root in a fraction
+/// of the time, and spends its width on the roots that turn out well.
+#[allow(clippy::too_many_arguments)]
+pub fn beam_roots<P: Problem>(
+    p: &P,
+    roots: &[(P::Node, usize)],
+    score: impl Fn(&P::Node) -> u32 + Sync,
+    width: usize,
+    cap: usize,
+    max_len: usize,
+    salt: u32,
+    accept: &(dyn Fn(&[u8]) -> bool + Sync),
+    more: usize,
+) -> Vec<(usize, Vec<u8>)>
+where
+    P::Node: Ord + Hash,
+{
+    let ready: Vec<(usize, Vec<u8>)> =
+        (0..roots.len()).filter(|&i| p.bound(&roots[i].0) == 0 && p.done(&roots[i].0)).map(|i| (i, Vec::new())).collect();
+    if !ready.is_empty() && accept(&[]) {
+        return ready;
     }
-    // Per level: each kept state's parent in the level before and the move that led to it.
+    let last_root = roots.iter().map(|r| r.1).max().unwrap_or(0);
+    let mut all: Vec<(usize, Vec<u8>)> = Vec::new();
+    let mut left = more;
+    // Per level: each state's parent in the level before and the move that
+    // led to it; for a root, its number and no move.
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
-    let mut level: Vec<(P::Node, u8)> = roots.iter().map(|root| (*root, NONE)).collect();
-    for _ in 0..max_len {
+    let mut level: Vec<(P::Node, u8)> = Vec::new();
+    let mut kept: Vec<(u32, u8)> = Vec::new();
+    for depth in 0..max_len + last_root {
+        for (i, root) in roots.iter().enumerate() {
+            if root.1 == depth {
+                level.push((root.0, NONE));
+                kept.push((i as u32, NONE));
+            }
+        }
+        trail.push(std::mem::take(&mut kept));
+        if level.is_empty() && depth >= last_root {
+            break;
+        }
         // The score of every state one move on; 0 marks a solution, the
         // largest value a move that need not be tried.
         let moves = p.moves();
+        let count = moves.len();
         let scores: Vec<u16> = level
-            .par_iter()
-            .flat_map_iter(|(n, last)| {
-                let score = &score;
-                (0..moves.len()).map(move |k| {
-                    if *last != NONE && skip54(*last, moves[k]) {
-                        return u16::MAX;
+            .par_chunks(256)
+            .flat_map_iter(|chunk| {
+                let mut out = vec![u16::MAX; chunk.len() * count];
+                let mut kids: Vec<(usize, P::Node)> = Vec::with_capacity(AHEAD);
+                for (i, (n, last)) in chunk.iter().enumerate() {
+                    let mut k = 0;
+                    while k < count {
+                        kids.clear();
+                        while k < count && kids.len() < AHEAD {
+                            if *last == NONE || !skip54(*last, moves[k]) {
+                                let c = p.next(n, k);
+                                p.prefetch(&c);
+                                kids.push((k, c));
+                            }
+                            k += 1;
+                        }
+                        for (k, c) in &kids {
+                            out[i * count + k] = match p.bound(c) == 0 && p.done(c) {
+                                true => 0,
+                                false => (1 + score(c)).min(u16::MAX as u32 - 1) as u16,
+                            };
+                        }
                     }
-                    let c = p.next(n, k);
-                    match p.bound(&c) == 0 && p.done(&c) {
-                        true => 0,
-                        false => (1 + score(&c)).min(u16::MAX as u32 - 1) as u16,
-                    }
-                })
+                }
+                out
             })
             .collect();
         // The score at which the beam is full, with room for states reached twice.
         let most = width + width / 2;
-        let mut count = vec![0usize; 1 << 16];
-        for &x in &scores {
-            count[x as usize] += 1;
-        }
-        let (mut cut, mut total) = (0usize, count[0]);
+        let tally = scores
+            .par_chunks(1 << 16)
+            .map(|chunk| {
+                let mut tally = vec![0u32; 1 << 16];
+                for &x in chunk {
+                    tally[x as usize] += 1;
+                }
+                tally
+            })
+            .reduce(
+                || vec![0u32; 1 << 16],
+                |mut a, b| {
+                    for (x, y) in a.iter_mut().zip(&b) {
+                        *x += y;
+                    }
+                    a
+                },
+            );
+        let (mut cut, mut total) = (0usize, tally[0] as usize);
         while total < most && cut < u16::MAX as usize - 1 {
             cut += 1;
-            total += count[cut];
+            total += tally[cut] as usize;
         }
         // Only the states up to that score are built: (score, hash, state, parent, move).
         let mut next: Vec<(u32, u32, P::Node, u32, u8)> = (0..scores.len())
@@ -174,31 +294,45 @@ where
         next.dedup_by(|x, y| x.2 == y.2);
         let solved = next.iter().take_while(|x| x.0 == 0).count();
         if solved > 0 {
-            let found: Vec<Vec<u8>> = next[..solved]
+            let found: Vec<(usize, Vec<u8>)> = next[..solved]
                 .iter()
                 .map(|x| {
                     let mut path = vec![x.4];
                     let mut at = x.3 as usize;
+                    let mut root = 0;
                     for step in trail.iter().rev() {
-                        path.push(step[at].1);
-                        at = step[at].0 as usize;
+                        let (parent, m) = step[at];
+                        if m == NONE {
+                            root = parent as usize;
+                            break;
+                        }
+                        path.push(m);
+                        at = parent as usize;
                     }
                     path.reverse();
-                    path
+                    (root, path)
                 })
-                .filter(|path| accept(path))
+                .filter(|found| accept(&found.1))
                 .take(cap)
                 .collect();
-            if !found.is_empty() {
-                return found;
+            let any = !found.is_empty();
+            all.extend(found);
+            if any && left == 0 {
+                return all;
             }
             next.drain(..solved);
         }
+        if !all.is_empty() {
+            if left == 0 {
+                return all;
+            }
+            left -= 1;
+        }
         next.truncate(width);
-        trail.push(next.iter().map(|x| (x.3, x.4)).collect());
+        kept = next.iter().map(|x| (x.3, x.4)).collect();
         level = next.iter().map(|x| (x.2, x.4)).collect();
     }
-    Vec::new()
+    all
 }
 
 /// `beam`, run again with other ties if it comes back empty: on rare
@@ -215,5 +349,26 @@ pub fn beam_again<P: Problem>(
 where
     P::Node: Ord + Hash,
 {
-    (0..4).map(|again| beam(p, root, &score, width, cap, max_len, salt + 1000 * again)).find(|sols| !sols.is_empty()).unwrap_or_default()
+    beam_again_longer(p, root, score, width, cap, max_len, salt, 0)
+}
+
+/// `beam_again` with the solutions of `more` further lengths (see `beam_longer`).
+#[allow(clippy::too_many_arguments)]
+pub fn beam_again_longer<P: Problem>(
+    p: &P,
+    root: &P::Node,
+    score: impl Fn(&P::Node) -> u32 + Sync,
+    width: usize,
+    cap: usize,
+    max_len: usize,
+    salt: u32,
+    more: usize,
+) -> Vec<Vec<u8>>
+where
+    P::Node: Ord + Hash,
+{
+    (0..4)
+        .map(|again| beam_longer(p, std::slice::from_ref(root), &score, width, cap, max_len, salt + 1000 * again, &|_| true, more))
+        .find(|sols| !sols.is_empty())
+        .unwrap_or_default()
 }

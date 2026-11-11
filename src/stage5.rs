@@ -300,12 +300,35 @@ impl Stage5 {
         self.ax[x as usize].max(self.at[t as usize])
     }
 
+    /// A lower bound on phase A that is exact for most states within six
+    /// moves of the end (the table of `gen_near`), and the bound of the two
+    /// orbits taken singly further out.
+    #[inline(always)]
+    pub fn a_close(&self, x: u32, t: u32) -> u8 {
+        let k = bucket(x, t);
+        ((self.near[k >> 1] >> ((k & 1) * 4)) & 15).max(self.a_bound(x, t))
+    }
+
+    /// Asks for the entries `a_close` will read (see `search::fetch`).
+    #[inline(always)]
+    pub fn a_fetch(&self, x: u32, t: u32) {
+        crate::search::fetch(&self.near, bucket(x, t) >> 1);
+        crate::search::fetch(&self.ax, x as usize);
+        crate::search::fetch(&self.at, t as usize);
+    }
+
     /// Exact length of phase B from the ranks (`Ranks::rank16`) of the U/D
     /// patterns of the x and t orbits and the parity of the wing permutation.
     /// For searches on larger cubes that do the work of phase B among other things.
     #[inline(always)]
     pub fn b_dist(&self, x: usize, t: usize, odd: bool) -> u8 {
         self.b[(x * N_UD + t) * 2 + odd as usize]
+    }
+
+    /// Asks for the entry `b_dist` will read (see `search::fetch`).
+    #[inline(always)]
+    pub fn b_fetch(&self, x: usize, t: usize, odd: bool) {
+        crate::search::fetch(&self.b, (x * N_UD + t) * 2 + odd as usize);
     }
 
     /// An optimal phase B from the positions of the U/D centres among the
@@ -343,11 +366,26 @@ impl Stage5 {
                 return true;
             }
         }
+        // The states one move on, and their table entries asked for before
+        // any is read: the tables are far larger than the cache, and a
+        // search that waits for each entry in turn is several times slower.
+        let mut kids = [(0u8, 0u32, 0u32); 36];
+        let mut count = 0;
         for m in 0..36u8 {
             if skip_move(last, m) {
                 continue;
             }
             let (a, b) = (self.bx.apply(m, x), self.bt.apply(m, t));
+            if rem > 1 && rem - 1 <= NEAR_A {
+                crate::search::fetch(&self.near, bucket(a, b) >> 1);
+            } else if rem > 1 {
+                crate::search::fetch(&self.ax, a as usize);
+                crate::search::fetch(&self.at, b as usize);
+            }
+            kids[count] = (m, a, b);
+            count += 1;
+        }
+        for &(m, a, b) in &kids[..count] {
             if rem == 1 {
                 if a != GOAL_RL || b != GOAL_RL {
                     continue;

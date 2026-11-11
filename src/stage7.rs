@@ -31,7 +31,7 @@ use crate::cube::Cube;
 use crate::cuben::Geometry;
 use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
-use crate::search::{beam_again, Problem};
+use crate::search::{beam_again_longer, beam_roots, fetch, Problem};
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes, Ranks};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
@@ -122,12 +122,85 @@ pub struct Stage7 {
     /// they differ.
     m2: Vec<u8>,
     diff2: [Bytes; 3],
+    /// Steps 1 and 2 as one search (`MERGED`): every move, and the bounds of
+    /// step 2 with every move allowed.
+    m1: Vec<u8>,
+    diff1: [Bytes; 3],
     /// Step 4: its moves; where they take the U/D pattern (one of 12,870) of
-    /// the inner x, inner t, first oblique, outer t and second oblique
-    /// orbits; and the exact moves to make each two orbits of a triple agree.
+    /// the inner x, inner t, first oblique, outer t, second oblique and
+    /// outer x orbits; and the exact moves to make each two orbits of a
+    /// triple agree.
     m4: Vec<u8>,
-    mv4: [Vec<u16>; 5],
+    mv4: [Vec<u16>; 6],
     pair4: [Bytes; 3],
+    /// The six orders in which the axes can be staged, as frames: frame
+    /// `2 * k` has the cube turned so that axis `k` is its R/L axis, frame
+    /// `2 * k + 1` is that frame turned a quarter about R (its other two
+    /// axes swapped). With each, our move for each move of the frame.
+    frames: Vec<(Vec<usize>, Vec<u8>)>,
+}
+
+/// How wide the staging goes.
+#[derive(Clone, Debug)]
+pub struct Wide {
+    /// Stagings carried from step to step, and how many continuations of
+    /// each are kept by a step.
+    pub width: usize,
+    pub fan: usize,
+    /// States per level in the beam searches, and what decides their ties.
+    pub beam: usize,
+    pub salt: u32,
+    /// Solutions a beam search hands over to be judged with an estimate of
+    /// the step after it (the `fan` best stay), and how many lengths past
+    /// its shortest it goes on for.
+    pub many: usize,
+    pub more: usize,
+    /// Whether the order of the axes is chosen (whole 7x7x7 cubes only).
+    pub frames: bool,
+    /// Whether a beam search step is one search from all the stagings
+    /// carried (`search::beam_roots`) or one search for each.
+    pub joint: bool,
+    /// Whether steps 1 and 2 are one search (`MERGED`).
+    pub merged: bool,
+    /// What the inner centres count for in the score of that search, and
+    /// whether the triples are scored with the bounds of step 2 (which
+    /// suppose the inner centres stay put) instead of its own weaker ones.
+    pub inner_weight: u32,
+    pub strict: bool,
+    /// Whether steps 4 and 5 are one search (`REST`), and what the outer
+    /// centres count for in its score.
+    pub rest: bool,
+    pub outer_weight: u32,
+    /// Whether steps 1 to 3 are one search (`FIRST`; `outer_weight` is
+    /// what the outer centres count for in its score too).
+    pub first: bool,
+}
+
+/// Steps 1 and 2 in one: R/L inner centres onto R and L and R/L triples
+/// formed, with every move. Step 2 by itself may only use the turns that
+/// keep the inner centres where step 1 put them, and takes as long as step 1.
+const MERGED: usize = 5;
+/// Steps 4 and 5 in one: everything U/D onto U and D, with the moves of step 4.
+const REST: usize = 6;
+
+/// Steps 1 to 3 in one: everything R/L onto R and L, with every move.
+const FIRST: usize = 7;
+
+/// Where the length of a step is kept in `Staged7::lens`.
+fn slot(step: usize) -> usize {
+    match step {
+        MERGED | FIRST => 0,
+        REST => 3,
+        step => step,
+    }
+}
+
+/// A cube part of the way through its staging: the moves so far (in the
+/// moves of the cube as given), the cube as its frame sees it, the frame.
+struct Cand {
+    st: Staged7,
+    f: Vec<u8>,
+    frame: usize,
 }
 
 /// A staging: the moves and how many each step took.
@@ -251,6 +324,16 @@ impl Stage7 {
             diff("stage777-2-tb.bin", T_OUT, OBL_B),
         ];
 
+        let m1: Vec<u8> = (0..54).collect();
+        let diff = |name: &str, p: usize, q: usize| {
+            load_or_gen(&dir.join(name), 1 << 24, || gen_diff(&orbits[p], &orbits[q], &perms[p], &m1))
+        };
+        let diff1 = [
+            diff("stage777-1-ab.bin", OBL_A, OBL_B),
+            diff("stage777-1-at.bin", OBL_A, T_OUT),
+            diff("stage777-1-tb.bin", T_OUT, OBL_B),
+        ];
+
         // Step 4: U F D B face turns, turns of R and L of two or three layers,
         // half turns of two or three layers of the rest.
         let m4 = moves_where(|f, layers, power| match layers {
@@ -268,12 +351,19 @@ impl Stage7 {
             }
             out
         };
-        let mv4 = [table(X_IN), table(T_IN), table(OBL_A), table(T_OUT), table(OBL_B)];
+        let mv4 = [table(X_IN), table(T_IN), table(OBL_A), table(T_OUT), table(OBL_B), table(X_OUT)];
         let pair = |name: &str, p: usize, q: usize| {
             load_or_gen(&dir.join(name), N_UD * N_UD / 2, || gen_pair(&mv4[p], &mv4[q], m4.len()))
         };
         let pair4 = [pair("stage777-4-ab.bin", 2, 4), pair("stage777-4-at.bin", 2, 3), pair("stage777-4-tb.bin", 3, 4)];
-        Stage7 { g, orbits, perms, ranks, m2, diff2, m4, mv4, pair4 }
+        let frames = [vec![], vec![0], vec![1], vec![1, 0], vec![2], vec![2, 0]]
+            .into_iter()
+            .map(|turns: Vec<usize>| {
+                let map = g.frame_moves(&turns).into_iter().map(|m| m as u8).collect();
+                (turns, map)
+            })
+            .collect();
+        Stage7 { g, orbits, perms, ranks, m2, diff2, m1, diff1, m4, mv4, pair4, frames }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -305,8 +395,20 @@ impl Stage7 {
     /// the continuations kept are the ones shortest with an estimate of the
     /// step that follows. `beam` is the width of the beam searches and
     /// `salt` decides their ties (see `search::beam`).
-    pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize, fan: usize, beam: usize, salt: u32) -> Vec<Staged7> {
-        self.stage_steps(s5, facelets, width, fan, beam, salt, 0..5)
+    ///
+    /// The axes are staged in whichever order comes out shortest: the first
+    /// step starts along each of the three, and the second axis is chosen
+    /// when the first is done, both by the same rule as everything else.
+    pub fn stage(&self, s5: &Stage5, facelets: &[u8], w: &Wide) -> Vec<Staged7> {
+        let start = |frame: usize| Cand { st: Staged7 { moves: Vec::new(), lens: [0; 5] }, f: self.g.reframe(facelets, &self.frames[frame].0), frame };
+        let cands = if w.frames { vec![start(0), start(2), start(4)] } else { vec![start(0)] };
+        let mut steps: Vec<usize> = match (w.first, w.merged) {
+            (true, _) => vec![FIRST],
+            (_, true) => vec![MERGED, 2],
+            _ => vec![0, 1, 2],
+        };
+        steps.extend(if w.rest { vec![REST] } else { vec![3, 4] });
+        self.run(s5, cands, w, &steps, true)
     }
 
     /// Some of the steps only (0 to 2 do the R/L centres, 3 and 4 the
@@ -323,35 +425,165 @@ impl Stage7 {
         salt: u32,
         steps: std::ops::Range<usize>,
     ) -> Vec<Staged7> {
-        let last = steps.end;
-        let start = Staged7 { moves: Vec::new(), lens: [0; 5] };
-        let mut cands = vec![(start, facelets.to_vec())];
-        for step in steps {
-            // (staging so far, the cube, estimate of the whole length after the next step).
-            let mut next: Vec<(Staged7, Vec<u8>, usize)> = cands
+        let w = Wide { width, fan, beam, salt, many: fan, more: 0, frames: false, joint: false, merged: false, inner_weight: 2, strict: false, rest: false, outer_weight: 1, first: false };
+        let start = Cand { st: Staged7 { moves: Vec::new(), lens: [0; 5] }, f: facelets.to_vec(), frame: 0 };
+        let whole = steps.end == 5;
+        self.run(s5, vec![start], &w, &steps.collect::<Vec<_>>(), whole)
+    }
+
+    /// `whole`: the steps given end with the last one.
+    fn run(&self, s5: &Stage5, mut cands: Vec<Cand>, w: &Wide, steps: &[usize], whole: bool) -> Vec<Staged7> {
+        let clock = std::time::Instant::now();
+        let trace = std::env::var_os("CUBE7_TRACE").is_some();
+        for (at, &step) in steps.iter().enumerate() {
+            let after = steps.get(at + 1).copied();
+            // Solutions of the step, each with the number of the staging it continues.
+            let sols: Vec<(usize, Vec<u8>)> = if w.joint && (step == 1 || step == 3 || step >= MERGED) {
+                self.beam_step(s5, step, &cands, w)
+            } else {
+                cands.par_iter().enumerate().flat_map_iter(|(i, c)| self.step(s5, step, &c.f, w).into_iter().map(move |sol| (i, sol))).collect()
+            };
+            // (staging so far, the cube, its frame, estimate of the step after this one, the staging continued).
+            let mut next: Vec<(Staged7, Vec<u8>, usize, usize, usize)> = sols
                 .par_iter()
-                .flat_map_iter(|(c, f)| self.step(s5, step, f, fan, beam, salt).into_iter().map(move |sol| (c, f, sol)))
-                .map(|(c, f, sol)| {
-                    let mut f2 = f.clone();
+                .flat_map_iter(|(i, sol)| {
+                    let c = &cands[*i];
+                    let to_ours = &self.frames[c.frame].1;
+                    let mut f2 = c.f.clone();
                     self.g.apply_seq(&mut f2, &sol.iter().map(|&m| m as usize).collect::<Vec<_>>());
-                    let mut c2 = c.clone();
-                    c2.lens[step] = sol.len();
-                    c2.moves.extend(sol);
-                    let ahead = if step + 1 < last { self.ahead(s5, step + 1, &f2) } else { 0 };
-                    (c2, f2, ahead)
+                    let mut st = c.st.clone();
+                    st.lens[slot(step)] = sol.len();
+                    st.moves.extend(sol.iter().map(|&m| to_ours[m as usize]));
+                    let ahead = |f: &[u8]| after.map_or(0, |next| self.ahead(s5, next, f));
+                    let mut out = Vec::with_capacity(2);
+                    // With the first axis done, either of the other two may come next.
+                    if w.frames && (step == 2 || step == FIRST) {
+                        let turned = self.g.reframe(&f2, &[0]);
+                        let est = ahead(&turned);
+                        out.push((st.clone(), turned, c.frame + 1, est, *i));
+                    }
+                    let est = ahead(&f2);
+                    out.push((st, f2, c.frame, est, *i));
+                    out
                 })
                 .collect();
-            next.sort_by(|x, y| (x.0.moves.len() + x.2, &x.1).cmp(&(y.0.moves.len() + y.2, &y.1)));
-            next.dedup_by(|x, y| x.1 == y.1);
-            next.truncate(width);
-            if std::env::var_os("CUBE7_TRACE").is_some() {
-                let lens: Vec<String> = next.iter().map(|x| format!("{}+{}", x.0.moves.len(), x.2)).collect();
-                eprintln!("    staging step {}: {}", step + 1, lens.join(" "));
+            // Of the continuations of one staging the `fan` best stay, then the `width` best of all.
+            next.sort_by(|x, y| (x.4, x.0.moves.len() + x.3, &x.1, x.2).cmp(&(y.4, y.0.moves.len() + y.3, &y.1, y.2)));
+            let mut run = (usize::MAX, 0);
+            next.retain(|x| {
+                if x.4 != run.0 {
+                    run = (x.4, 0);
+                }
+                run.1 += 1;
+                run.1 <= w.fan
+            });
+            next.sort_by(|x, y| (x.0.moves.len() + x.3, &x.1, x.2).cmp(&(y.0.moves.len() + y.3, &y.1, y.2)));
+            next.dedup_by(|x, y| x.1 == y.1 && x.2 == y.2);
+            // Where the second axis is chosen, each staging is there twice.
+            next.truncate(if w.frames && (step == 2 || step == FIRST) { 2 * w.width } else { w.width });
+            if trace {
+                let lens: Vec<String> = next.iter().map(|x| format!("{}+{}/{}", x.0.moves.len(), x.3, x.2)).collect();
+                eprintln!("    staging step {} at {:.0} ms: {}", step + 1, clock.elapsed().as_secs_f64() * 1e3, lens.join(" "));
             }
-            cands = next.into_iter().map(|x| (x.0, x.1)).collect();
+            cands = next.into_iter().map(|x| Cand { st: x.0, f: x.1, frame: x.2 }).collect();
         }
-        debug_assert!(last < 5 || cands.iter().all(|c| self.is_staged(&c.1)));
-        cands.into_iter().map(|c| c.0).collect()
+        debug_assert!(!whole || cands.iter().all(|c| self.is_staged(&c.f)));
+        cands.into_iter().map(|c| c.st).collect()
+    }
+
+    /// A beam search step (the second or the fourth) as one search from all
+    /// the stagings carried, each as many moves behind as it is longer than
+    /// the shortest: solutions with the number of the staging they continue.
+    fn beam_step(&self, s5: &Stage5, step: usize, cands: &[Cand], w: &Wide) -> Vec<(usize, Vec<u8>)> {
+        let least = cands.iter().map(|c| c.st.moves.len()).min().unwrap_or(0);
+        let late = |c: &Cand| c.st.moves.len() - least;
+        for again in 0..4 {
+            let salt = w.salt + 1000 * again;
+            let found = if step == MERGED {
+                let roots: Vec<([u32; 5], usize)> = cands.iter().map(|c| (self.node12(&c.f), late(c))).collect();
+                beam_roots(&Step12 { s: self, s5 }, &roots, |n| self.score12(s5, n, w), w.beam, w.many, 60, salt, &|_| true, w.more)
+            } else if step == FIRST {
+                let roots: Vec<([u32; 6], usize)> = cands.iter().map(|c| (self.node123(&c.f), late(c))).collect();
+                beam_roots(&Step123 { s: self, s5 }, &roots, |n| self.score123(s5, n, w), w.beam, w.many, 70, salt, &|_| true, w.more)
+            } else if step == REST {
+                let roots: Vec<(Node45, usize)> = cands.iter().map(|c| (self.node45(&c.f), late(c))).collect();
+                beam_roots(&Step45 { s: self, s5 }, &roots, |n| self.score45(s5, n, w.outer_weight), w.beam, w.many, 60, salt, &|_| true, 0)
+            } else if step == 1 {
+                let roots: Vec<([u32; 3], usize)> =
+                    cands.iter().map(|c| ([self.mask(OBL_A, &c.f, 1), self.mask(T_OUT, &c.f, 1), self.mask(OBL_B, &c.f, 1)], late(c))).collect();
+                beam_roots(&Step2 { s: self }, &roots, |n| self.score2(n), w.beam, w.many, 40, salt, &|_| true, w.more)
+            } else {
+                let roots: Vec<(Node4, usize)> = cands.iter().map(|c| (self.node4(&c.f), late(c))).collect();
+                beam_roots(&Step4 { s: self, s5 }, &roots, |n| self.score4(s5, n), w.beam, w.many, 40, salt, &|_| true, w.more)
+            };
+            if !found.is_empty() {
+                return found;
+            }
+        }
+        Vec::new()
+    }
+
+    fn node45(&self, f: &[u8]) -> Node45 {
+        Node45 { n: self.node4(f), xo: self.ranks.rank16[self.mask(X_OUT, f, 0) as usize], odd: self.wings_odd(f, OUTER_WINGS) }
+    }
+
+    /// How the search for steps 4 and 5 in one ranks states: as step 4
+    /// does, plus what step 5 would take if the triples were formed,
+    /// `weight` times. Once step 4's part is done that is exactly what is left.
+    #[inline(always)]
+    fn score45(&self, s5: &Stage5, n: &Node45, weight: u32) -> u32 {
+        self.score4(s5, &n.n) + weight * s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as u32
+    }
+
+    fn node123(&self, f: &[u8]) -> [u32; 6] {
+        [X_IN, T_IN, OBL_A, T_OUT, OBL_B, X_OUT].map(|o| self.mask(o, f, 1))
+    }
+
+    /// How the search for steps 1 to 3 in one ranks states: as the one for
+    /// steps 1 and 2, plus what step 3 would take if the triples were formed.
+    #[inline(always)]
+    fn score123(&self, s5: &Stage5, n: &[u32; 6], w: &Wide) -> u32 {
+        let d = &self.diff1;
+        let (x, y) = (n[2] ^ n[3], n[3] ^ n[4]);
+        let rows = d[1][x as usize] as u32 + d[2][y as usize] as u32;
+        let (inner, outer) = (s5.a_close(n[0], n[1]) as u32, s5.a_close(n[5], n[3]) as u32);
+        (w.inner_weight * inner + rows + w.outer_weight * outer) * 64 + x.count_ones() + y.count_ones()
+    }
+
+    fn node12(&self, f: &[u8]) -> [u32; 5] {
+        [X_IN, T_IN, OBL_A, T_OUT, OBL_B].map(|o| self.mask(o, f, 1))
+    }
+
+    /// How the search for steps 1 and 2 in one ranks states: as step 2
+    /// does, with what the inner centres still need added `weight` times.
+    #[inline(always)]
+    fn score12(&self, s5: &Stage5, n: &[u32; 5], w: &Wide) -> u32 {
+        let d = if w.strict { &self.diff2 } else { &self.diff1 };
+        let (x, y) = (n[2] ^ n[3], n[3] ^ n[4]);
+        (w.inner_weight * s5.a_close(n[0], n[1]) as u32 + d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
+    }
+
+    /// How the beam search of step 2 ranks states: by the two bounds for the
+    /// outer t centres against each oblique orbit, then by how many obliques
+    /// do not agree with the outer t centre beside them.
+    #[inline(always)]
+    fn score2(&self, n: &[u32; 3]) -> u32 {
+        let d = &self.diff2;
+        let (x, y) = (n[0] ^ n[1], n[1] ^ n[2]);
+        (d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
+    }
+
+    /// How the beam search of step 4 ranks states. The two halves of the job
+    /// share few moves, so the bound is weak: what the inner centres need
+    /// (counted twice) and what the triples need.
+    #[inline(always)]
+    fn score4(&self, s5: &Stage5, n: &Node4) -> u32 {
+        let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
+        let t = &self.pair4;
+        2 * s5.b_dist(n.x as usize, n.t as usize, n.odd) as u32
+            + nibble(&t[0], a * N_UD + b) as u32
+            + nibble(&t[1], a * N_UD + o) as u32
+            + nibble(&t[2], o * N_UD + b) as u32
     }
 
     /// An estimate of the length of a step from a cube on which the steps
@@ -362,6 +594,7 @@ impl Stage7 {
         match step {
             2 => s5.a_bound(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1)) as usize,
             3 => Step4 { s: self, s5 }.bound(&self.node4(f)),
+            REST => Step45 { s: self, s5 }.bound(&self.node45(f)),
             4 => {
                 let rank = |o: usize| self.ranks.rank16[self.mask(o, f, 0) as usize] as usize;
                 s5.b_dist(rank(X_OUT), rank(T_OUT), self.wings_odd(f, OUTER_WINGS)) as usize
@@ -375,54 +608,53 @@ impl Stage7 {
         Node4 { x: rank(X_IN), t: rank(T_IN), odd: self.wings_odd(f, INNER_WINGS), a: rank(OBL_A), o: rank(T_OUT), b: rank(OBL_B) }
     }
 
-    /// Step 2 by beam search. States are ranked by the two bounds for the
-    /// outer t centres against each oblique orbit, then by how many obliques
-    /// do not agree with the outer t centre beside them.
-    fn step2(&self, root: &[u32; 3], width: usize, cap: usize, salt: u32) -> Vec<Vec<u8>> {
-        let d = &self.diff2;
-        let score = |n: &[u32; 3]| {
-            let (x, y) = (n[0] ^ n[1], n[1] ^ n[2]);
-            (d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
-        };
-        beam_again(&Step2 { s: self }, root, score, width, cap, 40, salt)
+    /// Step 2 by beam search.
+    fn step2(&self, root: &[u32; 3], width: usize, cap: usize, salt: u32, more: usize) -> Vec<Vec<u8>> {
+        beam_again_longer(&Step2 { s: self }, root, |n| self.score2(n), width, cap, 40, salt, more)
     }
 
-    /// Up to `cap` solutions of one step from a cube on which the earlier
-    /// steps are done. Where a step has many, they are taken evenly from all
-    /// of them, so that they differ from the first move on.
-    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize, wide: usize, salt: u32) -> Vec<Vec<u8>> {
+    /// Solutions of one step from a cube on which the earlier steps are
+    /// done: up to `fan` of an exact search, taken evenly from all it found
+    /// so that they differ from the first move on, and up to `many` per
+    /// length of a beam search.
+    fn step(&self, s5: &Stage5, step: usize, f: &[u8], w: &Wide) -> Vec<Vec<u8>> {
+        let cap = w.fan;
         // The searches of phase A also give the solutions one move longer when more than a few are wanted.
         let extra = (cap > 8) as usize;
-        let mut sols: Vec<Vec<u8>> = match step {
-            0 => s5
-                .phase_a(self.mask(X_IN, f, 1), self.mask(T_IN, f, 1), extra, cap, None)
-                .into_iter()
-                .map(|sol| sol.into_iter().map(from_inner).collect())
-                .collect(),
-            1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], wide, cap, salt),
-            2 => s5.phase_a(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1), extra, cap, None),
+        let thin = |mut sols: Vec<Vec<u8>>| {
+            if sols.len() > cap {
+                let n = sols.len();
+                sols = (0..cap).map(|i| std::mem::take(&mut sols[i * n / cap])).collect();
+            }
+            sols
+        };
+        match step {
+            FIRST => {
+                let p = Step123 { s: self, s5 };
+                beam_again_longer(&p, &self.node123(f), |n| self.score123(s5, n, w), w.beam, w.many, 70, w.salt, w.more)
+            }
+            REST => {
+                let p = Step45 { s: self, s5 };
+                beam_again_longer(&p, &self.node45(f), |n| self.score45(s5, n, w.outer_weight), w.beam, w.many, 60, w.salt, 0)
+            }
+            MERGED => {
+                let p = Step12 { s: self, s5 };
+                beam_again_longer(&p, &self.node12(f), |n| self.score12(s5, n, w), w.beam, w.many, 60, w.salt, w.more)
+            }
+            0 => thin(
+                s5.phase_a(self.mask(X_IN, f, 1), self.mask(T_IN, f, 1), extra, cap, None)
+                    .into_iter()
+                    .map(|sol| sol.into_iter().map(from_inner).collect())
+                    .collect(),
+            ),
+            1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], w.beam, w.many, w.salt, w.more),
+            2 => thin(s5.phase_a(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1), extra, cap, None)),
             3 => {
-                // The two halves of the job share few moves, so the bound is
-                // weak: beam search, states ranked by what the inner centres
-                // need (counted twice) and what the triples need.
                 let p = Step4 { s: self, s5 };
-                let score = |n: &Node4| {
-                    let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
-                    let t = &self.pair4;
-                    2 * s5.b_dist(n.x as usize, n.t as usize, n.odd) as u32
-                        + nibble(&t[0], a * N_UD + b) as u32
-                        + nibble(&t[1], a * N_UD + o) as u32
-                        + nibble(&t[2], o * N_UD + b) as u32
-                };
-                beam_again(&p, &self.node4(f), score, wide, cap, 40, salt)
+                beam_again_longer(&p, &self.node4(f), |n| self.score4(s5, n), w.beam, w.many, 40, w.salt, w.more)
             }
             _ => vec![s5.phase_b(self.mask(X_OUT, f, 0), self.mask(T_OUT, f, 0), self.wings_odd(f, OUTER_WINGS))],
-        };
-        if sols.len() > cap {
-            let n = sols.len();
-            sols = (0..cap).map(|i| std::mem::take(&mut sols[i * n / cap])).collect();
         }
-        sols
     }
 }
 
@@ -454,6 +686,158 @@ impl Problem for Step2<'_> {
         n[0] == n[1] && n[1] == n[2]
     }
 
+    #[inline(always)]
+    fn prefetch(&self, n: &[u32; 3]) {
+        let d = &self.s.diff2;
+        fetch(&d[0], (n[0] ^ n[2]) as usize);
+        fetch(&d[1], (n[0] ^ n[1]) as usize);
+        fetch(&d[2], (n[1] ^ n[2]) as usize);
+    }
+
+}
+
+/// Steps 4 and 5 in one: the state of step 4, the U/D pattern of the outer x
+/// centres and the parity of the outer wings.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Node45 {
+    n: Node4,
+    xo: u16,
+    odd: bool,
+}
+
+struct Step45<'a> {
+    s: &'a Stage7,
+    s5: &'a Stage5,
+}
+
+/// Quarter turns of two or three layers move an outer slice a quarter turn: an odd permutation of the outer wings.
+#[inline(always)]
+fn flips_outer(m: u8) -> bool {
+    m >= 18 && m % 3 != 1
+}
+
+impl Problem for Step45<'_> {
+    type Node = Node45;
+
+    fn moves(&self) -> &[u8] {
+        &self.s.m4
+    }
+
+    #[inline(always)]
+    fn next(&self, n: &Node45, k: usize) -> Node45 {
+        let w = self.s.m4.len();
+        Node45 {
+            n: Step4 { s: self.s, s5: self.s5 }.next(&n.n, k),
+            xo: self.s.mv4[5][n.xo as usize * w + k],
+            odd: n.odd ^ flips_outer(self.s.m4[k]),
+        }
+    }
+
+    #[inline(always)]
+    fn bound(&self, n: &Node45) -> usize {
+        let inner = Step4 { s: self.s, s5: self.s5 }.bound(&n.n);
+        inner.max(self.s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as usize)
+    }
+
+    /// The tables are exact, so a bound of 0 is the goal.
+    fn done(&self, _: &Node45) -> bool {
+        true
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &Node45) {
+        Step4 { s: self.s, s5: self.s5 }.prefetch(&n.n);
+        self.s5.b_fetch(n.xo as usize, n.n.o as usize, n.odd);
+    }
+}
+
+/// Steps 1 to 3 in one: the R/L masks of the inner x and inner t centres,
+/// of the three orbits of the triples and of the outer x centres.
+struct Step123<'a> {
+    s: &'a Stage7,
+    s5: &'a Stage5,
+}
+
+impl Problem for Step123<'_> {
+    type Node = [u32; 6];
+
+    fn moves(&self) -> &[u8] {
+        &self.s.m1
+    }
+
+    #[inline(always)]
+    fn next(&self, n: &[u32; 6], k: usize) -> [u32; 6] {
+        let (m, p) = (k as u8, &self.s.perms);
+        [
+            p[X_IN].apply(m, n[0]),
+            p[T_IN].apply(m, n[1]),
+            p[OBL_A].apply(m, n[2]),
+            p[T_OUT].apply(m, n[3]),
+            p[OBL_B].apply(m, n[4]),
+            p[X_OUT].apply(m, n[5]),
+        ]
+    }
+
+    #[inline(always)]
+    fn bound(&self, n: &[u32; 6]) -> usize {
+        let d = &self.s.diff1;
+        let triples = d[0][(n[2] ^ n[4]) as usize].max(d[1][(n[2] ^ n[3]) as usize]).max(d[2][(n[3] ^ n[4]) as usize]);
+        triples.max(self.s5.a_close(n[0], n[1])).max(self.s5.a_close(n[5], n[3])) as usize
+    }
+
+    fn done(&self, n: &[u32; 6]) -> bool {
+        n[0] == GOAL_RL && n[1] == GOAL_RL && n[2] == GOAL_RL && n[3] == GOAL_RL && n[4] == GOAL_RL && n[5] == GOAL_RL
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &[u32; 6]) {
+        let d = &self.s.diff1;
+        self.s5.a_fetch(n[0], n[1]);
+        self.s5.a_fetch(n[5], n[3]);
+        fetch(&d[1], (n[2] ^ n[3]) as usize);
+        fetch(&d[2], (n[3] ^ n[4]) as usize);
+    }
+}
+
+/// Steps 1 and 2 in one: the R/L masks of the inner x and inner t centres
+/// and of the three orbits of the triples.
+struct Step12<'a> {
+    s: &'a Stage7,
+    s5: &'a Stage5,
+}
+
+impl Problem for Step12<'_> {
+    type Node = [u32; 5];
+
+    fn moves(&self) -> &[u8] {
+        &self.s.m1
+    }
+
+    #[inline(always)]
+    fn next(&self, n: &[u32; 5], k: usize) -> [u32; 5] {
+        let (m, p) = (k as u8, &self.s.perms);
+        [p[X_IN].apply(m, n[0]), p[T_IN].apply(m, n[1]), p[OBL_A].apply(m, n[2]), p[T_OUT].apply(m, n[3]), p[OBL_B].apply(m, n[4])]
+    }
+
+    #[inline(always)]
+    fn bound(&self, n: &[u32; 5]) -> usize {
+        let d = &self.s.diff1;
+        let triples = d[0][(n[2] ^ n[4]) as usize].max(d[1][(n[2] ^ n[3]) as usize]).max(d[2][(n[3] ^ n[4]) as usize]);
+        triples.max(self.s5.a_close(n[0], n[1])) as usize
+    }
+
+    fn done(&self, n: &[u32; 5]) -> bool {
+        n[0] == GOAL_RL && n[1] == GOAL_RL && n[2] == n[3] && n[3] == n[4]
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &[u32; 5]) {
+        let d = &self.s.diff1;
+        self.s5.a_fetch(n[0], n[1]);
+        fetch(&d[0], (n[2] ^ n[4]) as usize);
+        fetch(&d[1], (n[2] ^ n[3]) as usize);
+        fetch(&d[2], (n[3] ^ n[4]) as usize);
+    }
 }
 
 /// Step 4: the U/D patterns of the inner x and inner t centres, the parity
@@ -507,6 +891,16 @@ impl Problem for Step4<'_> {
     /// The tables are exact, so a bound of 0 is the goal.
     fn done(&self, _: &Node4) -> bool {
         true
+    }
+
+    #[inline(always)]
+    fn prefetch(&self, n: &Node4) {
+        let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
+        let p = &self.s.pair4;
+        self.s5.b_fetch(n.x as usize, n.t as usize, n.odd);
+        fetch(&p[0], (a * N_UD + b) >> 1);
+        fetch(&p[1], (a * N_UD + o) >> 1);
+        fetch(&p[2], (o * N_UD + b) >> 1);
     }
 
 }

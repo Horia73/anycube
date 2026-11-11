@@ -1028,7 +1028,23 @@ fn stage7(args: &[String]) {
         let mut f = s7.g.solved();
         s7.g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
-        let found = s7.stage(&s5, &f, width, num("--fan", width), num("--beam", 20_000), num("--salt", 0) as u32);
+        let wide = cubenxnxn::stage7::Wide {
+            width,
+            fan: num("--fan", width),
+            beam: num("--beam", 20_000),
+            salt: num("--salt", 0) as u32,
+            many: num("--many", 400),
+            more: num("--more", 1),
+            frames: num("--frames", 0) == 1,
+            joint: num("--joint", 1) == 1,
+            merged: num("--merged", 0) == 1,
+            inner_weight: num("--inner-weight", 2) as u32,
+            strict: num("--strict", 0) == 1,
+            rest: num("--rest", 0) == 1,
+            outer_weight: num("--outer-weight", 1) as u32,
+            first: num("--first", 0) == 1,
+        };
+        let found = s7.stage(&s5, &f, &wide);
         let took = t.elapsed().as_secs_f64() * 1e3;
         ms += took;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
@@ -1065,7 +1081,19 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
         width: num("--width", d.width),
         fan: num("--fan", d.fan),
         beam: num("--beam", d.beam),
+        match_beam: num("--match-beam", d.match_beam),
+        match_more: num("--match-more", d.match_more),
         restarts: num("--restarts", d.restarts),
+        many: num("--many", d.many),
+        more: num("--more", d.more),
+        frames: num("--frames", d.frames as usize) == 1,
+        joint: num("--joint", d.joint as usize) == 1,
+        merged: num("--merged", d.merged as usize) == 1,
+        inner_weight: num("--inner-weight", d.inner_weight as usize) as u32,
+        strict: num("--strict", d.strict as usize) == 1,
+        rest: num("--rest", d.rest as usize) == 1,
+        outer_weight: num("--outer-weight", d.outer_weight as usize) as u32,
+        first: num("--first", d.first as usize) == 1,
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
         inner: cubenxnxn::solver5::Params5 {
