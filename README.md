@@ -196,10 +196,9 @@ other people's. Thank you to:
   and 5x5x5 solvers here follow the way his are built.
 - **[dwalton76](https://github.com/dwalton76)**, for the
   [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver) he
-  wrote for his LEGO robots that solve cubes. It is the inspiration for this
-  project, and the general solver here began from how his works. We have a
-  LEGO cube robot of our own, and driving it is the first thing this solver
-  is for.
+  built so that his LEGO Mindstorms robots could take on cubes of any size.
+  It is the inspiration for this project, and the general solver here began
+  from how his works. I have a LEGO cube robot of my own.
 
 ## Licence
 
