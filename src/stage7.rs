@@ -514,7 +514,7 @@ impl Stage7 {
                 beam_roots(&Step2 { s: self }, &roots, |n| self.score2(n), w.beam, w.many, 40, salt, &|_| true, w.more)
             } else {
                 let roots: Vec<(Node4, usize)> = cands.iter().map(|c| (self.node4(&c.f), late(c))).collect();
-                beam_roots(&Step4 { s: self, s5 }, &roots, |n| self.score4(s5, n), w.beam, w.many, 40, salt, &|_| true, w.more)
+                beam_roots(&Step4 { s: self, s5, free: false }, &roots, |n| self.score4(s5, n, false), w.beam, w.many, 40, salt, &|_| true, w.more)
             };
             if !found.is_empty() {
                 return found;
@@ -532,7 +532,7 @@ impl Stage7 {
     /// `weight` times. Once step 4's part is done that is exactly what is left.
     #[inline(always)]
     fn score45(&self, s5: &Stage5, n: &Node45, weight: u32) -> u32 {
-        self.score4(s5, &n.n) + weight * s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as u32
+        self.score4(s5, &n.n, false) + weight * s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as u32
     }
 
     fn node123(&self, f: &[u8]) -> [u32; 6] {
@@ -573,14 +573,57 @@ impl Stage7 {
         (d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
     }
 
+    /// What the inner centres need in step 4: exactly, with the parity of
+    /// the inner wings to be made even or (`free`) left as it comes.
+    #[inline(always)]
+    fn inner4(&self, s5: &Stage5, n: &Node4, free: bool) -> u8 {
+        let d = s5.b_dist(n.x as usize, n.t as usize, n.odd);
+        match free {
+            true => d.min(s5.b_dist(n.x as usize, n.t as usize, !n.odd)),
+            false => d,
+        }
+    }
+
+    /// For the larger cubes, whose steps are 7x7x7 cubes made of layers:
+    /// the rows of several such cubes formed in one search
+    /// (`search::beam_roots`). Each cube comes with the moves it is behind
+    /// the shortest; the result is up to `cap` solutions that are shortest
+    /// in total, each with the number of its cube.
+    ///
+    /// `pass` 0: the R/L triples formed, from cubes whose inner R/L centres
+    /// are on R and L (step 2, or with `merged` the search of steps 1 and 2
+    /// in one, which may move the inner centres away and bring them back).
+    /// `pass` 1: the U/D inner centres on U and D and the U/D triples formed
+    /// (step 4), the parity of the inner wings left as it comes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rows(&self, s5: &Stage5, pass: usize, cubes: &[(Vec<u8>, usize)], beam: usize, cap: usize, salt: u32, merged: bool) -> Vec<(usize, Vec<u8>)> {
+        let all = &|_: &[u8]| true;
+        match (pass, merged) {
+            (0, true) => {
+                let w = Wide { width: 1, fan: cap, beam, salt, many: cap, more: 0, frames: false, joint: true, merged, inner_weight: 2, strict: false, rest: false, outer_weight: 1, first: false };
+                let roots: Vec<([u32; 5], usize)> = cubes.iter().map(|(f, late)| (self.node12(f), *late)).collect();
+                beam_roots(&Step12 { s: self, s5 }, &roots, |n| self.score12(s5, n, &w), beam, cap, 60, salt, all, 0)
+            }
+            (0, false) => {
+                let roots: Vec<([u32; 3], usize)> =
+                    cubes.iter().map(|(f, late)| ([self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], *late)).collect();
+                beam_roots(&Step2 { s: self }, &roots, |n| self.score2(n), beam, cap, 40, salt, all, 0)
+            }
+            _ => {
+                let roots: Vec<(Node4, usize)> = cubes.iter().map(|(f, late)| (self.node4(f), *late)).collect();
+                beam_roots(&Step4 { s: self, s5, free: true }, &roots, |n| self.score4(s5, n, true), beam, cap, 40, salt, all, 0)
+            }
+        }
+    }
+
     /// How the beam search of step 4 ranks states. The two halves of the job
     /// share few moves, so the bound is weak: what the inner centres need
     /// (counted twice) and what the triples need.
     #[inline(always)]
-    fn score4(&self, s5: &Stage5, n: &Node4) -> u32 {
+    fn score4(&self, s5: &Stage5, n: &Node4, free: bool) -> u32 {
         let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
         let t = &self.pair4;
-        2 * s5.b_dist(n.x as usize, n.t as usize, n.odd) as u32
+        2 * self.inner4(s5, n, free) as u32
             + nibble(&t[0], a * N_UD + b) as u32
             + nibble(&t[1], a * N_UD + o) as u32
             + nibble(&t[2], o * N_UD + b) as u32
@@ -593,7 +636,7 @@ impl Stage7 {
     fn ahead(&self, s5: &Stage5, step: usize, f: &[u8]) -> usize {
         match step {
             2 => s5.a_bound(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1)) as usize,
-            3 => Step4 { s: self, s5 }.bound(&self.node4(f)),
+            3 => Step4 { s: self, s5, free: false }.bound(&self.node4(f)),
             REST => Step45 { s: self, s5 }.bound(&self.node45(f)),
             4 => {
                 let rank = |o: usize| self.ranks.rank16[self.mask(o, f, 0) as usize] as usize;
@@ -650,8 +693,8 @@ impl Stage7 {
             1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], w.beam, w.many, w.salt, w.more),
             2 => thin(s5.phase_a(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1), extra, cap, None)),
             3 => {
-                let p = Step4 { s: self, s5 };
-                beam_again_longer(&p, &self.node4(f), |n| self.score4(s5, n), w.beam, w.many, 40, w.salt, w.more)
+                let p = Step4 { s: self, s5, free: false };
+                beam_again_longer(&p, &self.node4(f), |n| self.score4(s5, n, false), w.beam, w.many, 40, w.salt, w.more)
             }
             _ => vec![s5.phase_b(self.mask(X_OUT, f, 0), self.mask(T_OUT, f, 0), self.wings_odd(f, OUTER_WINGS))],
         }
@@ -727,7 +770,7 @@ impl Problem for Step45<'_> {
     fn next(&self, n: &Node45, k: usize) -> Node45 {
         let w = self.s.m4.len();
         Node45 {
-            n: Step4 { s: self.s, s5: self.s5 }.next(&n.n, k),
+            n: Step4 { s: self.s, s5: self.s5, free: false }.next(&n.n, k),
             xo: self.s.mv4[5][n.xo as usize * w + k],
             odd: n.odd ^ flips_outer(self.s.m4[k]),
         }
@@ -735,7 +778,7 @@ impl Problem for Step45<'_> {
 
     #[inline(always)]
     fn bound(&self, n: &Node45) -> usize {
-        let inner = Step4 { s: self.s, s5: self.s5 }.bound(&n.n);
+        let inner = Step4 { s: self.s, s5: self.s5, free: false }.bound(&n.n);
         inner.max(self.s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as usize)
     }
 
@@ -746,7 +789,7 @@ impl Problem for Step45<'_> {
 
     #[inline(always)]
     fn prefetch(&self, n: &Node45) {
-        Step4 { s: self.s, s5: self.s5 }.prefetch(&n.n);
+        Step4 { s: self.s, s5: self.s5, free: false }.prefetch(&n.n);
         self.s5.b_fetch(n.xo as usize, n.n.o as usize, n.odd);
     }
 }
@@ -855,6 +898,9 @@ struct Node4 {
 struct Step4<'a> {
     s: &'a Stage7,
     s5: &'a Stage5,
+    /// The parity of the inner wings is left as it comes (larger cubes:
+    /// the turns of their later steps change it again anyway).
+    free: bool,
 }
 
 impl Problem for Step4<'_> {
@@ -881,8 +927,8 @@ impl Problem for Step4<'_> {
     fn bound(&self, n: &Node4) -> usize {
         let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
         let p = &self.s.pair4;
-        self.s5
-            .b_dist(n.x as usize, n.t as usize, n.odd)
+        self.s
+            .inner4(self.s5, n, self.free)
             .max(nibble(&p[0], a * N_UD + b))
             .max(nibble(&p[1], a * N_UD + o))
             .max(nibble(&p[2], o * N_UD + b)) as usize

@@ -23,5 +23,6 @@ pub mod solver7;
 pub mod stage5;
 pub mod stage6;
 pub mod stage7;
+pub mod staging;
 pub mod sym;
 pub mod tables;

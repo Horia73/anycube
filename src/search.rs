@@ -372,3 +372,65 @@ where
         .find(|sols| !sols.is_empty())
         .unwrap_or_default()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A point on a grid: U steps right, R steps up, and the goal is (3, 3).
+    struct Grid;
+
+    impl Problem for Grid {
+        type Node = (i32, i32);
+
+        fn moves(&self) -> &[u8] {
+            &[0, 3]
+        }
+
+        fn next(&self, n: &(i32, i32), k: usize) -> (i32, i32) {
+            match k {
+                0 => (n.0 + 1, n.1),
+                _ => (n.0, n.1 + 1),
+            }
+        }
+
+        fn bound(&self, n: &(i32, i32)) -> usize {
+            ((3 - n.0).abs() + (3 - n.1).abs()) as usize
+        }
+
+        fn done(&self, _: &(i32, i32)) -> bool {
+            true
+        }
+    }
+
+    fn score(n: &(i32, i32)) -> u32 {
+        ((3 - n.0).abs() + (3 - n.1).abs()) as u32
+    }
+
+    #[test]
+    fn a_late_root_wins_when_it_is_shorter_in_total() {
+        // Six moves from the first root; four from the second, which is one move behind.
+        let found = beam_roots(&Grid, &[((0, 0), 0), ((1, 1), 1)], score, 100, 10, 20, 0, &|_| true, 0);
+        assert!(!found.is_empty());
+        for (root, path) in &found {
+            assert_eq!((*root, path.len()), (1, 4));
+            let end = path.iter().fold((1, 1), |n, &m| Grid.next(&n, (m / 3) as usize));
+            assert_eq!(end, (3, 3));
+        }
+        // Two moves behind, the two are level: the goal is one state, reached from either.
+        let found = beam_roots(&Grid, &[((0, 0), 0), ((1, 1), 2)], score, 100, 10, 20, 0, &|_| true, 0);
+        assert_eq!(found.len(), 1);
+        assert!(matches!((found[0].0, found[0].1.len()), (0, 6) | (1, 4)));
+        // Further behind still, only the first root is.
+        let found = beam_roots(&Grid, &[((0, 0), 0), ((1, 1), 3)], score, 100, 10, 20, 0, &|_| true, 0);
+        assert!(!found.is_empty() && found.iter().all(|x| x.0 == 0 && x.1.len() == 6));
+    }
+
+    #[test]
+    fn one_more_length_on_request() {
+        // The same point by two routes that differ in length cannot exist on
+        // this grid, so the next length holds nothing and the first is all.
+        let found = beam_longer(&Grid, &[(0, 0)], score, 100, 100, 20, 0, &|_| true, 1);
+        assert!(!found.is_empty() && found.iter().all(|path| path.len() == 6));
+    }
+}

@@ -46,10 +46,12 @@ const HOME_BUDGET: u64 = 1_000_000;
 
 pub struct SolverN {
     solver4: Solver,
-    s5: Solver5,
-    s6: Stage6,
-    s7: Stage7,
-    orbits5: Vec<crate::orbits::CentreOrbit>,
+    pub(crate) s5: Solver5,
+    pub(crate) s6: Stage6,
+    pub(crate) s7: Stage7,
+    pub(crate) orbits5: Vec<crate::orbits::CentreOrbit>,
+    /// How wide the staging of the centres goes.
+    pub staging: crate::staging::Staging,
     home5: AxisSolver,
     home6: AxisSolver,
     home7: AxisSolver,
@@ -136,7 +138,7 @@ impl SolverN {
         let home6 = AxisSolver::new("666", &all(&s6.orbits), 54, &[&[0, 1, 2, 3]]);
         // Outer x, oblique, outer t, oblique, inner x, inner t: the obliques with the inner and with the outer ones.
         let home7 = AxisSolver::new("777", &all(&s7.orbits), 54, &[&[1, 3, 4, 5], &[1, 3, 0, 2]]);
-        SolverN { solver4: Solver::new(), s5: Solver5::load(), s6, s7, orbits5, home5, home6, home7 }
+        SolverN { solver4: Solver::new(), s5: Solver5::load(), s6, s7, orbits5, staging: crate::staging::Staging::normal(), home5, home6, home7 }
     }
 
     /// The four layers as a 4x4x4, reduced: its moves.
@@ -211,71 +213,22 @@ impl SolverN {
                 }
             }
         }
-        let mask = |o: &crate::orbits::CentreOrbit, f: &[u8], axis: u8| {
-            let col = o.colours(f);
-            (0..24).fold(0u32, |m, i| m | ((col[i] % 3 == axis) as u32) << i)
-        };
-        // Staging, one axis at a time: R/L centres onto R and L, then the
-        // rest onto their axes. Each ring from the middle outwards. Its rows
-        // of centres are first made each of one kind (all of the axis or
-        // none), two orbits at a time; then the ring's corners and rows go
-        // onto their faces in one step, as the x and t centres of a 5x5x5.
+        // Staging: every centre onto a face of its own axis (`staging`).
+        // An even cube with nothing solved yet has no faces of its own: its
+        // centres may end on any faces, an axis to a pair.
         let none = |what: &str, layers: &[usize]| format!("no {} found for the centres of layers {:?}", what, layers);
-        let (x5, t5) = (&self.orbits5[0], &self.orbits5[1]);
-        for pass in 0..2 {
-            let what = ["staging on R and L", "staging on the other axes"][pass];
-            let onto_faces = |sub: &[u8]| -> Result<Vec<u8>, String> {
-                match pass {
-                    0 => {
-                        let found = self.s5.stage.phase_a(mask(x5, sub, 1), mask(t5, sub, 1), 0, 1, None);
-                        found.into_iter().next().ok_or_else(|| none(what, &[]))
-                    }
-                    // Of the two parities of the wings either will do here.
-                    _ => Ok(self.s5.stage.phase_b(mask(x5, sub, 0), mask(t5, sub, 0), false)),
-                }
-            };
-            if odd {
-                let layers = [0, half - 1, half, half + 1, last];
-                let moves = onto_faces(&g.sub_facelets(&w.f, &layers))?;
-                w.apply(&moves, &[1, half]);
-            }
-            for a in (1..first).rev() {
-                for b in (a + 1..=first).rev() {
-                    let depths = [1, a + 1, b + 1];
-                    let moves: Vec<u8> = if !odd && b == first {
-                        // No layer between the two obliques of a pair: a 6x6x6.
-                        let layers = [0, a, b, last - b, last - a, last];
-                        let sub = g.sub_facelets(&w.f, &layers);
-                        let found = match pass {
-                            0 => self.s6.stage_steps(&self.s5.stage, &sub, 4, 0..1).into_iter().next().map(|x| x.moves),
-                            _ => self.s6.pair_ud(&sub, 1).into_iter().next(),
-                        };
-                        found.ok_or_else(|| none(what, &layers))?
-                    } else {
-                        let layers = [0, a, b, mid, last - b, last - a, last];
-                        let sub = g.sub_facelets(&w.f, &layers);
-                        let range = [0..2, 3..4][pass].clone();
-                        // A beam that finds nothing is rare; a wider one then does.
-                        [(20_000, 0), (200_000, 1), (1_000_000, 2)]
-                            .iter()
-                            .map(|&(beam, salt)| self.s7.stage_steps(&self.s5.stage, &sub, 4, 4, beam, salt, range.clone()))
-                            .find(|found| !found.is_empty())
-                            .and_then(|found| found.into_iter().next())
-                            .map(|x| x.moves)
-                            .ok_or_else(|| none(what, &layers))?
-                    };
-                    w.apply(&moves, &depths);
-                    if trace {
-                        eprintln!("  {}: rows of layers {} and {} formed in {} moves, {} so far", what, a + 1, b + 1, moves.len(), w.moves.len());
-                    }
-                }
-                let layers = [0, a, mid, last - a, last];
-                let moves = onto_faces(&g.sub_facelets(&w.f, &layers))?;
-                w.apply(&moves, &[1, a + 1]);
-                if trace {
-                    eprintln!("  {}: ring of layer {} onto its faces in {} moves, {} so far", what, a + 1, moves.len(), w.moves.len());
-                }
-            }
+        let named = match (odd, matched) {
+            (true, _) => Some((half, half)),
+            (false, false) => Some((half - 1, half - 1)),
+            (false, true) => None,
+        };
+        let staged = self.stage_centres(g, &w.f, named, &self.staging)?;
+        for &m in &staged {
+            g.apply(&mut w.f, m);
+            w.moves.push(w.to_given[m]);
+        }
+        if trace {
+            eprintln!("  centres staged in {} moves, {} so far", staged.len(), w.moves.len());
         }
         // The long way: every step's centres home, from the middle outwards.
         if !matched {
