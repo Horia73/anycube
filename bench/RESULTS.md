@@ -931,6 +931,7 @@ Full solves, 20 cubes, staging beam 100,000, matching beam 300,000:
 | five steps, one beam per step for all | 53.20 | 15.55 | 68.75 | 154.75 |
 | merged, axes chosen, 8 stagings to the matching | 50.25 | 16.90 | 67.15 | 153.45 |
 | the same, 256 to the matching | 50.45 | 17.10 | 67.55 | 153.05 |
+| the same, every way to the staged state kept (below) | 50.30 | 16.40 | 66.70 | 153.15 |
 
 The staging is 2.9 moves shorter and the matching 1.4 longer. The trace
 showed why: the goal of the last search is one state of its coordinates,
@@ -939,7 +940,18 @@ for the matching to start from, where the five steps gave it 7 or 8
 different ones. The matching of a staged cube is 13 to 20 moves, and it is
 the best of the cubes offered that counts. `beam_roots` now keeps a solved
 state once for every way it was reached (they end in different cubes), one
-way to each solved state first. Measured after that: see below.
+way to each solved state first. That is the last row: the matching comes
+down by 0.7 and the two together are the shortest so far, but the ways to
+one state differ only in their last moves, and the matching is still 0.85
+above what eight stagings that differ early gave it. (The total did not
+follow in this run: the edge steps came out 0.5 longer each, which is
+their run-to-run spread on 20 cubes.)
+
+Where the 7x7x7 stands: 153.1 to 153.5 on the first 20 cubes against 154.3
+to 154.8 for the code as it was, at about half the processor time (25 s a
+cube against 53 s, both under the same load; 7.5 s by the clock at a load
+of 115). The default is now a staging beam of 100,000 and a matching beam
+of 300,000. `--mode fast` (20,000 and 100,000) has not been measured.
 
 Lengths of matchings for cubes that share most of their staging are
 close: what helps is stagings that differ early.
