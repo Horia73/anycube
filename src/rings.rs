@@ -63,8 +63,12 @@ const WIDTH: usize = 30_000;
 
 type Node = [u32; MAX];
 
+/// The tables kept as files, by fingerprint: whoever asks first makes or
+/// loads one, the others wait for it.
+type Slot = std::sync::Arc<std::sync::OnceLock<std::sync::Arc<Bytes>>>;
+static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Slot>>> = std::sync::LazyLock::new(Default::default);
+
 pub struct Ring {
-    n: usize,
     row: usize,
     /// How far from the nearer end of a face each column is.
     level: Vec<usize>,
@@ -151,7 +155,7 @@ impl Ring {
             rank8[x as usize] = i as u8;
         }
         let level = columns.iter().map(|&c| c.min(n - 1 - c)).collect();
-        Ring { n, row: a, level, moves, cells, perms, rank8, unrank8, tables: Default::default() }
+        Ring { row: a, level, moves, cells, perms, rank8, unrank8, tables: Default::default() }
     }
 
     /// The matching built from the middle of the row outwards, so that each
@@ -234,45 +238,64 @@ impl Ring {
             return table.clone();
         }
         let size = 70usize.pow(orbits.len() as u32);
-        let bytes = match orbits.len() {
-            // The large ones take seconds to make and are kept as files.
+        let (to, costs) = self.group_moves(ids, places, orbits, axis);
+        let table = match orbits.len() {
+            // The large ones take seconds to make and are kept as files,
+            // named by what they are made from: rows, sizes and axes whose
+            // orbits are moved alike share one file, and one copy in memory.
             4 => {
-                let orbit_names: Vec<String> = orbits.iter().map(|j| j.to_string()).collect();
-                let flip_names: String = flips.iter().map(|&x| if x { '1' } else { '0' }).collect();
-                let name = format!("ring-{}-{}-{}-{}-{}-{}.bin", self.n, self.row, level, orbit_names.join("_"), flip_names, axis);
-                load_or_gen(&table_dir().join(name), size, || self.make_group_table(ids, places, orbits, flips, axis))
+                let print = fingerprint(&to, &costs, flips);
+                let slot = SHARED.lock().unwrap().entry(print).or_default().clone();
+                slot.get_or_init(|| {
+                    let name = format!("ring-{:016x}.bin", print);
+                    std::sync::Arc::new(load_or_gen(&table_dir().join(name), size, || self.make_group_table(&to, &costs, flips)))
+                })
+                .clone()
             }
-            _ => Bytes::Owned(self.make_group_table(ids, places, orbits, flips, axis)),
+            _ => std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips))),
         };
-        let table = std::sync::Arc::new(bytes);
         self.tables.lock().unwrap().insert(key, table.clone());
         table
     }
 
-    fn make_group_table(&self, ids: &[u8], places: &[usize], orbits: &[usize], flips: &[bool], axis: usize) -> Vec<u8> {
+    /// What the moves do to some orbits on one axis, and what each costs
+    /// there: per move, where it takes each pattern of each orbit (already
+    /// as that orbit's part of the table's index). Moves that change
+    /// nothing are left out, moves that do the same are one, and the order
+    /// is the same whatever order the moves came in.
+    fn group_moves(&self, ids: &[u8], places: &[usize], orbits: &[usize], axis: usize) -> (Vec<Vec<u32>>, Vec<usize>) {
         let shift = 8 * axis as u32;
-        let cost: Vec<u8> = ids
-            .iter()
-            .map(|&m| match (m >= 18, axis_of(m as usize / 3 % 6) == axis) {
+        let mut moves: Vec<(Vec<u32>, usize)> = Vec::new();
+        for (i, &id) in ids.iter().enumerate() {
+            let cost = match (id >= 18, axis_of(id as usize / 3 % 6) == axis) {
                 (false, true) => 2,
                 (true, false) => 1,
-                _ => 0,
-            })
-            .collect();
-        // Moves that cannot change this axis at all are left out.
-        let used: Vec<usize> = (0..ids.len()).filter(|&i| cost[i] > 0 || ids[i] >= 18).collect();
-        let costs: Vec<usize> = used.iter().map(|&i| cost[i] as usize).collect();
-        // Per orbit: where each move takes each pattern, already as that orbit's part of the index.
-        let (k, m) = (orbits.len(), used.len());
-        let mut to = vec![0u32; k * 70 * m];
-        for (o, &j) in orbits.iter().enumerate() {
-            for r in 0..70 {
-                for (i, &u) in used.iter().enumerate() {
-                    let pattern = self.perms[j].apply(places[u] as u8, self.unrank8[r] << shift) >> shift;
-                    to[(o * 70 + r) * m + i] = self.rank8[pattern as usize] as u32 * 70u32.pow(o as u32);
+                // A move that cannot change this axis at all.
+                (false, false) => continue,
+                (true, true) => 0,
+            };
+            let mut to = Vec::with_capacity(orbits.len() * 70);
+            let mut still = true;
+            for (o, &j) in orbits.iter().enumerate() {
+                for r in 0..70 {
+                    let pattern = self.perms[j].apply(places[i] as u8, self.unrank8[r] << shift) >> shift;
+                    let rank = self.rank8[pattern as usize] as usize;
+                    still &= rank == r;
+                    to.push(rank as u32 * 70u32.pow(o as u32));
                 }
             }
+            if !still {
+                moves.push((to, cost));
+            }
         }
+        moves.sort();
+        // Of moves that do the same, the first is the cheapest.
+        moves.dedup_by(|b, a| a.0 == b.0);
+        moves.into_iter().unzip()
+    }
+
+    fn make_group_table(&self, to: &[Vec<u32>], costs: &[usize], flips: &[bool]) -> Vec<u8> {
+        let (k, m) = (flips.len(), to.len());
         let size = 70usize.pow(k as u32);
         let mut dist = vec![FAR; size];
         let mut buckets: Vec<Vec<u32>> = vec![Vec::new()];
@@ -294,13 +317,13 @@ impl Ring {
                 }
                 let mut rest = s;
                 for (o, row) in rows.iter_mut().enumerate() {
-                    *row = (o * 70 + rest % 70) * m;
+                    *row = o * 70 + rest % 70;
                     rest /= 70;
                 }
                 for i in 0..m {
                     let mut t = 0u32;
                     for &row in &rows {
-                        t += to[row + i];
+                        t += to[i][row];
                     }
                     let nd = d + costs[i];
                     if (dist[t as usize] as usize) > nd {
@@ -591,4 +614,21 @@ fn pair_table(
     }
     assert!(dist.iter().all(|&x| x != FAR), "any two staged patterns can be made to agree");
     dist
+}
+
+/// A name for a table from what it is made of (FNV-1a over the moves, their
+/// costs and the orbits taken as opposites).
+fn fingerprint(to: &[Vec<u32>], costs: &[usize], flips: &[bool]) -> u64 {
+    let mut h = 0xcbf29ce484222325u64;
+    let mut eat = |x: u32| {
+        for b in x.to_le_bytes() {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+    };
+    for (column, &cost) in to.iter().zip(costs) {
+        eat(cost as u32);
+        column.iter().for_each(|&x| eat(x));
+    }
+    flips.iter().for_each(|&x| eat(x as u32 + 7));
+    h
 }

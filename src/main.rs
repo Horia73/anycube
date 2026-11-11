@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve <moves...> [--size N] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise; any size from 2 up)\n  cubenxnxn solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube\n  cubenxnxn scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  cubenxnxn verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  cubenxnxn known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  cubenxnxn benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve <moves...> [--size N] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise; any size from 2 up)\n  cubenxnxn solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube\n  cubenxnxn scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  cubenxnxn verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  cubenxnxn known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  cubenxnxn benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  cubenxnxn row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -34,6 +34,7 @@ fn main() {
         Some("stage6") => stage6(&args[1..]),
         Some("bench6") => bench6(&args[1..]),
         Some("benchn") => benchn(&args[1..]),
+        Some("row") => row(&args[1..]),
         Some("rowtest") => rowtest(&args[1..]),
         Some("stagen") => stagen(&args[1..]),
         Some("stage7") => stage7(&args[1..]),
@@ -414,6 +415,91 @@ fn benchn(args: &[String]) {
         times.iter().sum::<f64>() / nf,
         times[times.len() / 2],
         times[times.len() - 1]
+    );
+}
+
+/// Any size on a scramble file, in one mode (the default one unless
+/// `--mode` says otherwise): one line of size, cubes, mean moves, mean and
+/// longest seconds per cube, separated by tabs. Every solution is applied
+/// on the sticker model. Tables are loaded before the clock starts.
+fn row(args: &[String]) {
+    use cubenxnxn::cuben::Geometry;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (size, limit) = (num("--size", 0), num("--limit", usize::MAX));
+    if size < 2 {
+        usage();
+    }
+    let g = Geometry::new(size);
+    // The small cubes speak the 4x4x4's move numbers: their solutions go through names.
+    let named = |g: &Geometry, moves: &[u8]| g.parse_moves(&format_moves(moves));
+    let small = |scramble: &str| parse_moves(scramble).map(|m| Cube::from_moves(&m));
+    let wide = |moves: Vec<u8>| moves.into_iter().map(|m| m as usize).collect::<Vec<usize>>();
+    // From the scramble as written and the scrambled stickers to a solution.
+    type Solve = Box<dyn Fn(&Geometry, &str, &[u8]) -> Result<Vec<usize>, String>>;
+    let solve: Solve = match size {
+        2 => {
+            let t = cubenxnxn::c2::T2::load();
+            Box::new(move |g, scr, _| named(g, &t.solve(&small(scr)?)))
+        }
+        3 => {
+            use cubenxnxn::c3::{C3, T3};
+            let t = T3::new();
+            let probes = if opt(args, "--mode") == Some("fast") { 500 } else { 30_000 };
+            Box::new(move |g, scr, _| {
+                let c3 = small(scr)?.with_home_centres().and_then(|c| C3::from_cube(&c));
+                named(g, &t.solve(&c3.ok_or_else(|| "not a 3x3x3 state".to_string())?, probes, None))
+            })
+        }
+        4 => {
+            let (s, p) = (Solver::new(), params(args));
+            Box::new(move |g, scr, _| named(g, &s.solve(&small(scr)?, &p)?.moves))
+        }
+        5 => {
+            let (s, p) = (cubenxnxn::solver5::Solver5::load(), params5(args));
+            Box::new(move |_, _, f| Ok(wide(s.solve(f, &p)?.moves)))
+        }
+        6 => {
+            let (s, p) = (cubenxnxn::solver6::Solver6::load(), params6(args));
+            Box::new(move |_, _, f| Ok(wide(s.solve(f, &p)?.moves)))
+        }
+        7 => {
+            let (s, p) = (cubenxnxn::solver7::Solver7::load(), params7(args));
+            Box::new(move |_, _, f| Ok(wide(s.solve(f, &p)?.moves)))
+        }
+        _ => {
+            let s = cubenxnxn::nnn::SolverN::load();
+            Box::new(move |g, _, f| s.solve(g, f).map(|sol| sol.moves))
+        }
+    };
+    let (mut moves, mut times) = (0usize, Vec::new());
+    for (n, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit).enumerate() {
+        let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &scramble);
+        let t = Instant::now();
+        let sol = solve(&g, scr, &f).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+        let secs = t.elapsed().as_secs_f64();
+        g.apply_seq(&mut f, &sol);
+        if !g.is_solved(&f) {
+            fail(&format!("cube {}: the solution does not solve the cube", n));
+        }
+        eprintln!("cube {:3}: {} moves, {:.2} s", n, sol.len(), secs);
+        moves += sol.len();
+        times.push(secs);
+    }
+    if times.is_empty() {
+        fail("no scrambles");
+    }
+    let nf = times.len() as f64;
+    println!(
+        "{}\t{}\t{:.2}\t{:.2}\t{:.2}",
+        size,
+        times.len(),
+        moves as f64 / nf,
+        times.iter().sum::<f64>() / nf,
+        times.iter().cloned().fold(0.0, f64::max)
     );
 }
 
