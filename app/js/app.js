@@ -96,6 +96,7 @@ export async function mount(root, options = {}) {
     mode: "normal",
     scramble: { moves: [], problem: null },
     painted: new Map(), // size -> { facelets, palette, doubt }
+    carried: null, // the scramble's cube as it stood when Paint was last left for it (see setTab)
     scan: null, // while the camera reads a cube: the colours seen so far, per facelet
     job: null, // an AbortController while a solve is under way
     ticker: 0,
@@ -403,9 +404,10 @@ export async function mount(root, options = {}) {
 
   const TABS = ["scramble", "paint", "camera", "moves"];
 
-  function setTab(tab, focus = false) {
-    if (tab !== "camera") scanner.stop();
-    const from = state.tab;
+  const PAINT_NOTE = "Pick a colour, then tap or drag over the stickers of the cube.";
+
+  // Which tab is in view, and nothing else.
+  function showTab(tab) {
     state.tab = tab;
     for (const t of TABS) {
       const on = t === tab;
@@ -413,9 +415,28 @@ export async function mount(root, options = {}) {
       $(`tab-${t}`).tabIndex = on ? 0 : -1;
       $(`panel-${t}`).hidden = !on;
     }
+  }
+
+  function setTab(tab, focus = false) {
+    if (tab !== "camera") scanner.stop();
+    setHelp(false);
+    const from = state.tab;
+    showTab(tab);
     if (focus) $(`tab-${tab}`).focus();
     // The solution's tab only shows what there is; the cube stays as it is.
     if (tab === "moves" || (from === "moves" && tab === state.input)) return;
+    const came = state.input;
+    // Paint starts from the cube on screen: the scramble's, with as much of
+    // a solution as was played, there to be corrected sticker by sticker.
+    // Only a cube painted before and not changed under Scramble since is
+    // left as it was painted.
+    if (tab === "paint" && came === "scramble" && state.size <= PAINT_MAX && !state.scramble.problem) {
+      const shown = state.model.toText(player.facelets);
+      if (shown !== state.carried) {
+        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: STICKERS.slice(), doubt: null });
+        $("paint-note").textContent = PAINT_NOTE;
+      }
+    }
     state.input = tab;
     setTouch();
     if (tab !== "scramble" && state.size <= PAINT_MAX) {
@@ -423,6 +444,7 @@ export async function mount(root, options = {}) {
       paint.set(state.size, p.facelets, p.palette, p.doubt);
     }
     show();
+    if (tab === "scramble" && came !== "scramble") state.carried = state.model.toText(player.facelets);
   }
 
   for (const t of TABS) {
@@ -561,7 +583,7 @@ export async function mount(root, options = {}) {
     state.painted.set(state.size, { facelets, palette: STICKERS.slice(), doubt: null });
     const p = painted();
     paint.set(state.size, p.facelets, p.palette, null);
-    $("paint-note").textContent = "Pick a colour, then tap or drag over the stickers of the cube.";
+    $("paint-note").textContent = PAINT_NOTE;
     show();
   }
   $("paint-reset").addEventListener("click", () => repaint(state.model.solved()));
