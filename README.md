@@ -2,9 +2,10 @@
 
 Formerly `cube444`; renamed when it grew past the 4x4x4.
 
-A Rubik's cube solver in Rust for 2x2x2 to 7x7x7. From 4x4x4 up the solvers
-aim for shorter solutions than the existing reduction solvers, within a few
-seconds per cube.
+A Rubik's cube solver in Rust for cubes of any size. Sizes 2 to 7 have
+solvers of their own; from 4x4x4 up they aim for shorter solutions than the
+existing reduction solvers, within a few seconds per cube. Sizes from 8 up go
+through one general solver, a baseline that is not tuned to any size.
 
 Move counts are in OBTM: any face turn or wide turn counts as one move.
 
@@ -32,6 +33,7 @@ longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
 | 5x5x5 | see below | |
 | 6x6x6 | see below | |
 | 7x7x7 | see below | |
+| 8x8x8 and up | the general solver, see below | |
 
 5x5x5 results on the fixed scrambles in `bench/scrambles555-200.txt`, measured
 on the same machine while it was busy with other work, so the times are on the
@@ -69,6 +71,42 @@ is 0.3 moves short of it by default. How they work, what was
 tried and the per-step lengths are in `bench/RESULTS.md` (sources:
 `src/stage6.rs`, `src/solver6.rs`, `src/stage7.rs`, `src/solver7.rs`,
 `src/search.rs`).
+
+## Any size (`src/nnn.rs`)
+
+Some layers of a large cube, taken together, behave like a small cube: pick
+a few of them symmetrically and let every layer in between follow the picked
+layer next to it towards the middle. Whatever is solved in such a block of
+layers stays solved when the small cube is solved, so a large cube can be
+done as a sequence of small ones:
+
+- Centres: ring by ring from the middle outwards, two mirror orbits of
+  oblique centres at a time, each step a 6x6x6 or a 7x7x7 made of layers.
+  The steps are gone through three times: R/L centres onto R and L, the
+  rest onto their axes (both with the staging of the 6x6x6 and 7x7x7
+  solvers), then everything home with face turns and deep half turns
+  (`src/axes.rs`).
+- Edges: orbit by orbit from the middle outwards, each a 5x5x5 whose middle
+  edges are the stretch already joined (a 4x4x4 for the innermost wings of
+  an even cube). The last one is the whole cube as a 5x5x5, solved to the end.
+
+The same code runs every size from 6 up; nothing in it knows the size.
+
+Against dwalton76 on the same scrambles (`bench/scrambles888-20.txt` and its
+neighbours; his solver on the first 5 cubes of each, ours on all 20, every
+solution checked on the sticker model):
+
+| Size | dwalton76 | cubenxnxn | cubenxnxn, his 5 cubes | Time, his | Time, ours |
+|---|---|---|---|---|---|
+| 8x8x8 | 308.40 | 301.90 | 301.00 | 15.8 s | 5.6 s |
+| 9x9x9 | 368.00 | 368.55 | 371.00 | 11.0 s | 3.5 s |
+| 10x10x10 | 523.40 | 531.00 | 534.60 | 24.8 s | 7.3 s |
+
+Sizes 11, 12 and 14 solve as well (615, 831 and 1,197 moves on three cubes
+each). This is a baseline: about as long as dwalton76's, three times as
+quick, and not yet using what makes the 6x6x6 and 7x7x7 solvers short. Run
+on those two sizes it gives 146 and 190 moves where their own solvers give
+109 and 155.
 
 ## How the 5x5x5 solver works
 
@@ -157,6 +195,18 @@ cargo build --release
 
 ```bash
 ./target/release/cubenxnxn bench7 bench/scrambles777-100.txt --limit 10
+```
+
+```bash
+./target/release/cubenxnxn solve --size 9 "4Rw U2 F' 3Uw L2 D Bw' R"
+```
+
+```bash
+./target/release/cubenxnxn benchn bench/scrambles101010-20.txt --size 10 --limit 5
+```
+
+```bash
+./target/release/cubenxnxn scrambles --size 12 --count 5 --length 480
 ```
 
 ```bash

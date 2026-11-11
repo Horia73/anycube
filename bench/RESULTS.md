@@ -673,3 +673,58 @@ with `cubenxnxn verify --size 7`: 30 of 30 solved. With the 30 cubes above,
 the default is at 154.56 on the first 50 cubes, 20.5% below dwalton76's
 194.40 (measured on the first 10 only).
 
+## Any size: the general solver (2026-11-11)
+
+`cubenxnxn benchn bench/scrambles888-20.txt --size 8` and the same for 9
+and 10: 20 scrambles each of 40 random moves per layer of size (seeds 888,
+999, 1110). Every solution was applied on the sticker model, and the result
+files checked again with `cubenxnxn verify`. dwalton76 ran on the first 5
+cubes of each set (`dwalton888-results.tsv` and neighbours; all verified).
+
+| Size | Centres | Edges | 3x3x3 | Total | First 5 cubes | dwalton76, those 5 | Mean time | Max time | dwalton76 time |
+|---|---|---|---|---|---|---|---|---|---|
+| 8x8x8 | 198.05 | 86.40 | 17.45 | 301.90 | 301.00 | 308.40 | 5.6 s | 9.6 s | 15.8 s |
+| 9x9x9 | 248.35 | 102.40 | 17.80 | 368.55 | 371.00 | 368.00 | 3.5 s | 4.3 s | 11.0 s |
+| 10x10x10 | 393.00 | 120.70 | 17.30 | 531.00 | 534.60 | 523.40 | 7.3 s | 13.3 s | 24.8 s |
+
+Files: `general888-20.tsv`, `general999-20.tsv`, `general101010-20.tsv`.
+
+Other sizes, three cubes each, all verified: 11x11x11 615.0 moves, 12x12x12
+831.3, 14x14x14 1,197.3. The same code on the sizes that have solvers of
+their own: 6x6x6 146.0 (own solver 109.2), 7x7x7 190.0 (own solver 154.6).
+
+What a step costs (10x10x10, one cube):
+
+| Step | Moves |
+|---|---|
+| innermost centres of an even cube, as a 4x4x4 | 24 |
+| a ring's first two orbits with its corner, as a 6x6x6: R/L, other axes, home | 16 + 15 + 21 |
+| two more oblique orbits, as a 7x7x7: R/L, other axes, home | 21 + 22 + 32 |
+| innermost wings, as a 4x4x4 | 17 |
+| one orbit of wings, as a 5x5x5 | 35 |
+| the last orbit of wings with the 3x3x3 | 34 + 17 |
+
+The way home is the weak part. With two oblique orbits out of place and
+four orbits to leave where they are, the lower bound alone is 15 to 17
+moves; an exact search did not finish within 3 billion positions, and the
+beam search finds 30 to 34. On the 6x6x6-type steps, where one table holds
+all four orbits, the beam is at 20 to 22 against a bound of 16 to 18.
+
+Tried on the way:
+
+- Each step staged and brought home before the next one, instead of three
+  passes over all steps: 303.5 on two 8x8x8 cubes, 380 and 547 on one
+  9x9x9 and one 10x10x10, against 300, 361 and 541 on the same cubes in
+  passes. The staging of a step mixes the colours of the centres solved
+  before it, which then have to be solved again.
+- A third table for the 7x7x7-type way home (the four orbits that are
+  already home against each other), and beam scores from the largest of
+  the tables instead of their sum: no change (30 to 34 moves).
+- A bound stretched by 1.3 or 1.5 in the exact search: 27 to 33 and 33 to
+  36 moves.
+
+A fault met once in 61 solves: a staging beam found nothing ("no staging of
+a ring of centres found", cube 2 of the 10x10x10 set; it did not happen
+again in six more runs of that cube). The staging beams and the way home
+now try again wider when they come back empty.
+

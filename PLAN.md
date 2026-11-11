@@ -341,11 +341,43 @@ oblice (x, y) se rezolvă împreună, doar cu fețe și feliile x și y, iar
 orbita „+” a fiecărei felii e martorul că felia a fost întoarsă la loc, deci
 perechile deja rezolvate nu se strică.
 
-## Spre mărimi mai mari
+## Orice mărime (2026-11-11)
 
-- 6x6x6 și 7x7x7 au centre oblice; singura referință e dwalton76.
-- Pentru N general: reducere pe orbite, cu tabele exacte doar pentru orbitele
-  mici. Modelul pe stickere acoperă deja orice N.
+Direcția dată de Horia: nu trebuie să fim perfecți acum, țintele erau
+relative; întâi o fundație curată, cu NxNxN general testat până la
+10x10x10 față de dwalton76, apoi viteză și eficiență.
+
+**Ce există:** `src/nnn.rs` rezolvă orice cub de la 6x6x6 în sus cu același
+cod (testat pe 6–12 și 14). Ideea: câteva straturi alese simetric, cu
+straturile dintre ele mișcându-se odată cu stratul ales de lângă ele
+dinspre mijloc, se poartă ca un cub mic; ce e rezolvat într-un astfel de
+bloc rămâne rezolvat când se rezolvă cubul mic.
+
+- Centrele: inel cu inel din mijloc spre exterior, câte două orbite oblice
+  în oglindă, fiecare pas un 6x6x6 sau 7x7x7 virtual. Trei treceri peste
+  toți pașii: R/L, apoi celelalte axe (cu așezările de la 6x6x6 și 7x7x7),
+  apoi „acasă” cu fețe și jumătăți de tură adânci (`src/axes.rs`).
+- Muchiile: orbită cu orbită din mijloc spre exterior, fiecare un 5x5x5
+  virtual (un 4x4x4 pentru wings din mijloc la cuburile pare); ultima e
+  tot cubul ca 5x5x5, dus până la capăt.
+
+**Cifre** (20 de cuburi; dwalton76 pe primele 5): 8x8x8 301,9 (308,4),
+9x9x9 368,55 (368,0), 10x10x10 531,0 (523,4); de ~3 ori mai rapid ca el.
+
+**Trebuie optimizat pe mărimi?** Nu pe mărimi, ci pe pași: tot ce e peste 7
+trece prin aceiași pași virtuali de 4–7 straturi, deci orice îmbunătățire
+a unui pas se vede la toate mărimile. Dar solverul general e mult sub cele
+dedicate: pe 6x6x6 dă 146 (dedicat: 109), pe 7x7x7 190 (dedicat: 155).
+
+**Unde se pierd mutările, în ordine:**
+
+1. „Acasă” la pașii de tip 7x7x7: 30–34 de mutări, limita inferioară 15–17.
+2. Fiecare pereche de orbite oblice costă ~75 de mutări (21 + 22 + 32);
+   la 10x10x10 sunt 6 perechi, la 14x14x14 sunt 15.
+3. Muchiile: ~35 de mutări pe orbită, cu centrele deja rezolvate; fazele
+   de la 5x5x5 fac și parte de centre degeaba.
+4. Ce face solverele de 6 și 7 scurte (oblicii împerecheați în fazele de
+   muchii, alegerea după total între multe variante) nu e folosit încă.
 
 ## Despre tabelele lui dwalton76
 

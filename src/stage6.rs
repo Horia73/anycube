@@ -199,9 +199,17 @@ impl Stage6 {
     /// The best stagings found, shortest first. `width` candidates are
     /// carried from step to step, each continued in up to `width` ways.
     pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize) -> Vec<Staged6> {
+        self.stage_steps(s5, facelets, width, 0..3)
+    }
+
+    /// Some of the steps only (0 and 1 do the R/L centres, 2 the rest), from
+    /// a cube on which the ones before them are done. For the larger cubes,
+    /// which stage one axis on all their layers before the next.
+    pub fn stage_steps(&self, s5: &Stage5, facelets: &[u8], width: usize, steps: std::ops::Range<usize>) -> Vec<Staged6> {
+        let whole = steps.end == 3;
         let start = Staged6 { moves: Vec::new(), lens: [0; 3] };
         let mut cands = vec![(start, facelets.to_vec())];
-        for step in 0..3 {
+        for step in steps {
             let mut next: Vec<(Staged6, Vec<u8>)> = cands
                 .par_iter()
                 .flat_map_iter(|(c, f)| {
@@ -220,7 +228,7 @@ impl Stage6 {
             next.truncate(width);
             cands = next;
         }
-        debug_assert!(cands.iter().all(|c| self.is_staged(&c.1)));
+        debug_assert!(!whole || cands.iter().all(|c| self.is_staged(&c.1)));
         cands.into_iter().map(|c| c.0).collect()
     }
 
@@ -253,7 +261,12 @@ impl Stage6 {
                         + s5.b_dist(o, a, n.odd & 2 != 0) as u32
                         + s5.b_dist(o, b, n.odd & 2 != 0) as u32
                 };
-                crate::search::beam_again(&p, &root, score, UD_BEAM, cap, 40, 0)
+                // A beam that finds nothing is rare; a wider one then does.
+                [(1, 0), (8, 1), (64, 2)]
+                    .iter()
+                    .map(|&(times, salt)| crate::search::beam_again(&p, &root, &score, UD_BEAM * times, cap, 40, salt))
+                    .find(|found| !found.is_empty())
+                    .unwrap_or_default()
             }
             _ => unreachable!("three steps"),
         }

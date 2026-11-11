@@ -306,9 +306,27 @@ impl Stage7 {
     /// step that follows. `beam` is the width of the beam searches and
     /// `salt` decides their ties (see `search::beam`).
     pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize, fan: usize, beam: usize, salt: u32) -> Vec<Staged7> {
+        self.stage_steps(s5, facelets, width, fan, beam, salt, 0..5)
+    }
+
+    /// Some of the steps only (0 to 2 do the R/L centres, 3 and 4 the
+    /// rest), from a cube on which the ones before them are done. For the
+    /// larger cubes, which stage one axis on all their layers before the next.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stage_steps(
+        &self,
+        s5: &Stage5,
+        facelets: &[u8],
+        width: usize,
+        fan: usize,
+        beam: usize,
+        salt: u32,
+        steps: std::ops::Range<usize>,
+    ) -> Vec<Staged7> {
+        let last = steps.end;
         let start = Staged7 { moves: Vec::new(), lens: [0; 5] };
         let mut cands = vec![(start, facelets.to_vec())];
-        for step in 0..5 {
+        for step in steps {
             // (staging so far, the cube, estimate of the whole length after the next step).
             let mut next: Vec<(Staged7, Vec<u8>, usize)> = cands
                 .par_iter()
@@ -319,7 +337,7 @@ impl Stage7 {
                     let mut c2 = c.clone();
                     c2.lens[step] = sol.len();
                     c2.moves.extend(sol);
-                    let ahead = self.ahead(s5, step + 1, &f2);
+                    let ahead = if step + 1 < last { self.ahead(s5, step + 1, &f2) } else { 0 };
                     (c2, f2, ahead)
                 })
                 .collect();
@@ -332,7 +350,7 @@ impl Stage7 {
             }
             cands = next.into_iter().map(|x| (x.0, x.1)).collect();
         }
-        debug_assert!(cands.iter().all(|c| self.is_staged(&c.1)));
+        debug_assert!(last < 5 || cands.iter().all(|c| self.is_staged(&c.1)));
         cands.into_iter().map(|c| c.0).collect()
     }
 

@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|6|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150, 216 or 294 facelets> [search flags]   solve a cube of size 2 to 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   the same for 6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|6|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150, 216 or 294 facelets> [search flags]   solve a cube of size 2 to 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   the same for 6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 up\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -680,8 +680,8 @@ fn startup() {
 /// Prints the facelets of a scrambled cube of any size.
 fn facelets(args: &[String]) {
     let n = opt(args, "--size").and_then(|s| s.parse::<usize>().ok()).unwrap_or_else(|| usage());
-    if !(2..=7).contains(&n) {
-        fail("supported sizes: 2 to 7");
+    if n < 2 {
+        fail("supported sizes: 2 and up");
     }
     let g = cubenxnxn::cuben::Geometry::new(n);
     let tokens: Vec<&str> =

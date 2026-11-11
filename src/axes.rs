@@ -124,11 +124,13 @@ impl AxisSolver {
 
     /// A shortest way home from a cube with staged centres, in the moves of
     /// that cube; if that search grows past `budget` positions, a way found
-    /// by beam search instead.
-    pub fn solve(&self, f: &[u8], budget: u64) -> Vec<u8> {
+    /// by beam search instead (on the sum of the groups' distances; a
+    /// handful of moves above the bound with one group, about twice the
+    /// bound with two). `None` if that finds nothing either.
+    pub fn solve(&self, f: &[u8], budget: u64) -> Option<Vec<u8>> {
         let root = self.node(f);
         if self.solved(&root) {
-            return Vec::new();
+            return Some(Vec::new());
         }
         let h = self.bound(&root).max(1);
         let (nodes, stop) = (AtomicU64::new(0), AtomicBool::new(false));
@@ -136,14 +138,14 @@ impl AxisSolver {
             let found: Vec<Vec<u8>> = (0..self.moves.len())
                 .into_par_iter()
                 .filter_map(|i| {
-                    let mut run = Run { s: self, nodes: &nodes, stop: &stop, budget, seen: 0, path: [0; 40] };
+                    let mut run = Run { s: self, nodes: &nodes, stop: &stop, budget, seen: 0, path: [0; 64] };
                     let hit = run.dfs(&root, i, depth, 0);
                     nodes.fetch_add(run.seen, Relaxed);
                     hit.then(|| run.path[..depth].to_vec())
                 })
                 .collect();
             if let Some(path) = found.into_iter().next() {
-                return path;
+                return Some(path);
             }
             if nodes.load(Relaxed) > budget {
                 break;
@@ -151,8 +153,10 @@ impl AxisSolver {
             stop.store(false, Relaxed);
         }
         let score = |n: &Node| (0..self.groups.len()).map(|g| self.halves(n, g)).sum::<usize>() as u32;
-        let found = beam_again(&Beam { s: self }, &root, score, 100_000, 1, 60, 0);
-        found.into_iter().next().expect("staged centres can be solved")
+        [(100_000, 0), (1_000_000, 1)]
+            .iter()
+            .map(|&(width, salt)| beam_again(&Beam { s: self }, &root, &score, width, 1, 60, salt))
+            .find_map(|found| found.into_iter().next())
     }
 }
 
@@ -162,7 +166,7 @@ struct Run<'a> {
     stop: &'a AtomicBool,
     budget: u64,
     seen: u64,
-    path: [u8; 40],
+    path: [u8; 64],
 }
 
 impl Run<'_> {

@@ -16,7 +16,10 @@
 //! lies either in the middle block, which never leaves its face, or in
 //! blocks that are solved throughout. Each step is a 6x6x6 or a 7x7x7 with
 //! most of its centres done: its centres are staged with the staging of
-//! those cubes (`stage6`, `stage7`) and brought home by `axes`.
+//! those cubes (`stage6`, `stage7`) and brought home by `axes`. The same
+//! holds for staging with "of its own axis" in place of "solved", so the
+//! steps are gone through three times: the R/L centres of every step onto R
+//! and L, then the rest onto their axes, then everything home.
 //!
 //! The edges follow, orbit by orbit from the middle outwards, each one a
 //! 5x5x5 whose middle edges are the stretch of edge already joined (a
@@ -35,14 +38,18 @@ use crate::solver5::{Params5, Solver5};
 use crate::stage6::Stage6;
 use crate::stage7::Stage7;
 
-/// Positions the exact search for the way home may visit before a beam search takes over.
-const HOME_BUDGET: u64 = 30_000_000;
+/// Positions the exact search for the way home may visit before a beam
+/// search takes over. On a cube with several orbits out of place it does
+/// not finish within a hundred times as many, so it is kept short: it is
+/// there for the cubes that are nearly home.
+const HOME_BUDGET: u64 = 1_000_000;
 
 pub struct SolverN {
     solver4: Solver,
     s5: Solver5,
     s6: Stage6,
     s7: Stage7,
+    orbits5: Vec<crate::orbits::CentreOrbit>,
     home5: AxisSolver,
     home6: AxisSolver,
     home7: AxisSolver,
@@ -115,7 +122,7 @@ impl SolverN {
         let home6 = AxisSolver::new("666", &all(&s6.orbits), 54, &[&[0, 1, 2, 3]]);
         // Outer x, oblique, outer t, oblique, inner x, inner t: the obliques with the inner and with the outer ones.
         let home7 = AxisSolver::new("777", &all(&s7.orbits), 54, &[&[1, 3, 4, 5], &[1, 3, 0, 2]]);
-        SolverN { solver4: Solver::new(), s5: Solver5::load(), s6, s7, home5, home6, home7 }
+        SolverN { solver4: Solver::new(), s5: Solver5::load(), s6, s7, orbits5, home5, home6, home7 }
     }
 
     /// The four layers as a 4x4x4, reduced: its moves.
@@ -141,52 +148,77 @@ impl SolverN {
         // The layer the innermost ring of centres is in, and the layer that stands for the middle.
         let (first, mid) = if odd { (half - 1, half) } else { (half - 1, half - 1) };
 
-        // The innermost centres.
+        // The steps of the centres, from the middle outwards: each a small
+        // cube made of some layers, and how deep its turns reach in ours.
+        let mut steps: Vec<(usize, Vec<usize>, Vec<usize>)> = Vec::new();
         if odd {
-            let layers = [0, half - 1, half, half + 1, last];
-            let depths = [1, half];
-            let staged = self.s5.stage.stage(&g.sub_facelets(&w.f, &layers), 0, 100_000, 1, None)?;
-            let staging = staged.first().ok_or("no staging of the innermost centres found")?;
-            w.apply(&staging.moves, &depths);
-            let home = self.home5.solve(&g.sub_facelets(&w.f, &layers), HOME_BUDGET);
-            w.apply(&home, &depths);
+            steps.push((5, vec![0, half - 1, half, half + 1, last], vec![1, half]));
         } else {
-            let layers = [0, half - 1, half, last];
-            let reduction = self.reduce4(g, &w.f, &layers)?;
+            // The innermost centres of an even cube say which colour belongs on which face.
+            let reduction = self.reduce4(g, &w.f, &[0, half - 1, half, last])?;
             w.apply(&reduction, &[1, half]);
             w.rehome(half - 1, half - 1)?;
         }
-        if trace {
-            eprintln!("  innermost centres: {} moves so far", w.moves.len());
-        }
-
-        // The rings around them, from the middle outwards.
         for a in (1..first).rev() {
             for b in (a + 1..=first).rev() {
-                if !odd && b == first {
+                match !odd && b == first {
                     // No layer between the two obliques of a pair: a 6x6x6.
-                    let layers = [0, a, b, last - b, last - a, last];
-                    let depths = [1, a + 1, b + 1];
-                    let staged = self.s6.stage(&self.s5.stage, &g.sub_facelets(&w.f, &layers), 4);
-                    let staging = staged.first().ok_or("no staging of a ring of centres found")?;
-                    w.apply(&staging.moves, &depths);
-                    let home = self.home6.solve(&g.sub_facelets(&w.f, &layers), HOME_BUDGET);
-                    w.apply(&home, &depths);
-                } else {
-                    let layers = [0, a, b, mid, last - b, last - a, last];
-                    let depths = [1, a + 1, b + 1];
-                    let sub = g.sub_facelets(&w.f, &layers);
-                    let mut staged = self.s7.stage(&self.s5.stage, &sub, 4, 4, 20_000, 0);
-                    if staged.is_empty() {
-                        staged = self.s7.stage(&self.s5.stage, &sub, 4, 4, 200_000, 1);
-                    }
-                    let staging = staged.first().ok_or("no staging of a ring of centres found")?;
-                    w.apply(&staging.moves, &depths);
-                    let home = self.home7.solve(&g.sub_facelets(&w.f, &layers), HOME_BUDGET);
-                    w.apply(&home, &depths);
+                    true => steps.push((6, vec![0, a, b, last - b, last - a, last], vec![1, a + 1, b + 1])),
+                    false => steps.push((7, vec![0, a, b, mid, last - b, last - a, last], vec![1, a + 1, b + 1])),
                 }
+            }
+        }
+        // One axis at a time on every step, then everything home. A step's
+        // staging mixes the colours of the centres staged before it; done
+        // this way they are still to be solved then, so nothing is solved twice.
+        let mask = |o: &crate::orbits::CentreOrbit, f: &[u8], axis: u8| {
+            let col = o.colours(f);
+            (0..24).fold(0u32, |m, i| m | ((col[i] % 3 == axis) as u32) << i)
+        };
+        for pass in 0..3 {
+            for (size, layers, depths) in &steps {
+                let sub = g.sub_facelets(&w.f, layers);
+                let what = ["staging on R and L", "staging on the other axes", "way home"][pass];
+                let none = || format!("no {} found for the centres of layers {:?} (as a {}x{}x{})", what, layers, size, size, size);
+                let home = none;
+                // A beam that finds nothing is rare; a wider one then does.
+                let stage7 = |range: std::ops::Range<usize>| {
+                    [(20_000, 0), (200_000, 1), (1_000_000, 2)]
+                        .iter()
+                        .map(|&(beam, salt)| self.s7.stage_steps(&self.s5.stage, &sub, 4, 4, beam, salt, range.clone()))
+                        .find(|found| !found.is_empty())
+                        .and_then(|found| found.into_iter().next())
+                        .map(|x| x.moves)
+                        .ok_or_else(none)
+                };
+                let (x, t) = (&self.orbits5[0], &self.orbits5[1]);
+                let moves: Vec<u8> = match (size, pass) {
+                    (5, 0) => {
+                        let found = self.s5.stage.phase_a(mask(x, &sub, 1), mask(t, &sub, 1), 0, 1, None);
+                        found.into_iter().next().ok_or_else(none)?
+                    }
+                    // Of the two parities of the wings either will do here.
+                    (5, 1) => self.s5.stage.phase_b(mask(x, &sub, 0), mask(t, &sub, 0), false),
+                    (5, _) => self.home5.solve(&sub, HOME_BUDGET).ok_or_else(home)?,
+                    (6, 0) => self.s6.stage_steps(&self.s5.stage, &sub, 4, 0..2).into_iter().next().map(|x| x.moves).ok_or_else(none)?,
+                    (6, 1) => self.s6.stage_steps(&self.s5.stage, &sub, 4, 2..3).into_iter().next().map(|x| x.moves).ok_or_else(none)?,
+                    (6, _) => self.home6.solve(&sub, HOME_BUDGET).ok_or_else(home)?,
+                    (_, 0) => stage7(0..3)?,
+                    (_, 1) => stage7(3..5)?,
+                    _ => self.home7.solve(&sub, HOME_BUDGET).ok_or_else(home)?,
+                };
+                w.apply(&moves, depths);
                 if trace {
-                    eprintln!("  centres of layers {} and {}: {} moves so far", a + 1, b + 1, w.moves.len());
+                    eprintln!(
+                        "  {} of layers {:?} as a {}x{}x{}: {} moves, {} so far",
+                        ["R/L centres", "U/D centres", "centres home"][pass],
+                        &layers[1..layers.len() / 2 + 1],
+                        size,
+                        size,
+                        size,
+                        moves.len(),
+                        w.moves.len()
+                    );
                 }
             }
         }
