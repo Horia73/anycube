@@ -254,7 +254,7 @@ fn benchn(args: &[String]) {
     let t0 = Instant::now();
     let solver = cubenxnxn::nnn::SolverN::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
-    let (mut sums, mut times, mut n) = ([0usize; 3], Vec::new(), 0usize);
+    let (mut sums, mut times, mut n, mut long_way) = ([0usize; 3], Vec::new(), 0usize, 0usize);
     let mut out = opt(args, "--out").map(|p| {
         std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
     });
@@ -269,10 +269,12 @@ fn benchn(args: &[String]) {
         if !g.is_solved(&f) {
             fail(&format!("cube {}: the solution does not solve the cube", n));
         }
-        eprintln!("cube {:3}: {:?} = {} moves, {:.0} ms", n, sol.lens, sol.moves.len(), ms);
+        let way = if sol.long_way { ", the long way" } else { "" };
+        eprintln!("cube {:3}: {:?} = {} moves, {:.0} ms{}", n, sol.lens, sol.moves.len(), ms, way);
         for k in 0..3 {
             sums[k] += sol.lens[k];
         }
+        long_way += sol.long_way as usize;
         times.push(ms);
         if let Some(o) = out.as_mut() {
             let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m)).collect();
@@ -284,6 +286,9 @@ fn benchn(args: &[String]) {
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let nf = n as f64;
     println!("solved {} cubes of size {}, every solution verified on the sticker model", n, size);
+    if long_way > 0 {
+        println!("{} of them the long way (no matching of the centres found)", long_way);
+    }
     println!(
         "mean length {:.2}  (centres {:.2}, edges {:.2}, 3x3x3 {:.2})",
         sums.iter().sum::<usize>() as f64 / nf,

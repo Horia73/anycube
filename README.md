@@ -80,12 +80,13 @@ layer next to it towards the middle. Whatever is solved in such a block of
 layers stays solved when the small cube is solved, so a large cube can be
 done as a sequence of small ones:
 
-- Centres: ring by ring from the middle outwards, two mirror orbits of
-  oblique centres at a time, each step a 6x6x6 or a 7x7x7 made of layers.
-  The steps are gone through three times: R/L centres onto R and L, the
-  rest onto their axes (both with the staging of the 6x6x6 and 7x7x7
-  solvers), then everything home with face turns and deep half turns
-  (`src/axes.rs`).
+- Centres: staged two mirror orbits of oblique centres at a time, each
+  step a 6x6x6 or a 7x7x7 made of layers (with the staging of those
+  solvers), first onto R and L, then onto the other axes. Then, row by row
+  from the rim inwards, every centre is made to agree in colour with the
+  one under it (`src/rings.rs`); the edge steps bring them home. Where no
+  such matching is found (some cubes, and every cube from 10x10x10 up) the
+  centres are brought home one step at a time instead (`src/axes.rs`).
 - Edges: orbit by orbit from the middle outwards, each a 5x5x5 whose middle
   edges are the stretch already joined (a 4x4x4 for the innermost wings of
   an even cube). The last one is the whole cube as a 5x5x5, solved to the end.
@@ -94,19 +95,19 @@ The same code runs every size from 6 up; nothing in it knows the size.
 
 Against dwalton76 on the same scrambles (`bench/scrambles888-20.txt` and its
 neighbours; his solver on the first 5 cubes of each, ours on all 20, every
-solution checked on the sticker model):
+solution checked on the sticker model). "Bound" is the number of positions
+counted in moves, below which no solver can average:
 
-| Size | dwalton76 | cubenxnxn | cubenxnxn, his 5 cubes | Time, his | Time, ours |
-|---|---|---|---|---|---|
-| 8x8x8 | 308.40 | 301.90 | 301.00 | 15.8 s | 5.6 s |
-| 9x9x9 | 368.00 | 368.55 | 371.00 | 11.0 s | 3.5 s |
-| 10x10x10 | 523.40 | 531.00 | 534.60 | 24.8 s | 7.3 s |
+| Size | Bound | dwalton76 | cubenxnxn | cubenxnxn, his 5 cubes | Time, his | Time, ours |
+|---|---|---|---|---|---|---|
+| 8x8x8 | 117.1 | 308.40 | 264.50 | 261.60 | 15.8 s | 14.3 s |
+| 9x9x9 | 149.2 | 368.00 | 349.45 | 356.40 | 11.0 s | 32.6 s |
+| 10x10x10 | 179.1 | 523.40 | 529.40 | 531.60 | 24.8 s | 10.2 s |
 
-Sizes 11, 12 and 14 solve as well (615, 831 and 1,197 moves on three cubes
-each). This is a baseline: about as long as dwalton76's, three times as
-quick, and not yet using what makes the 6x6x6 and 7x7x7 solvers short. Run
-on those two sizes it gives 146 and 190 moves where their own solvers give
-109 and 155.
+The solvers for 4x4x4 to 7x7x7 are at 1.4 to 1.7 times the bound; this one
+is at 2.3 to 3 times, so most of what can be gained on large cubes is still
+ahead. Sizes 11, 12 and 14 solve as well. Run on 6x6x6 and 7x7x7 it gives
+122 and 174 moves where their own solvers give 109 and 155.
 
 ## How the 5x5x5 solver works
 

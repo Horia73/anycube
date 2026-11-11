@@ -728,3 +728,82 @@ a ring of centres found", cube 2 of the 10x10x10 set; it did not happen
 again in six more runs of that cube). The staging beams and the way home
 now try again wider when they come back empty.
 
+## Any size: centres matched, not brought home (2026-11-11, later)
+
+What makes the 6x6x6 and 7x7x7 solvers short, taken to the general solver:
+the centres are staged as before, but then each centre is only made to agree
+in colour with the one under it (`src/rings.rs`), row by row from the rim
+inwards, and the edge steps, which solve the innermost centres of their
+small cube anyway, bring the rest home with them. No centre is brought home
+by itself and the 4x4x4 solve at the start of an even cube is gone.
+
+20 cubes each, every solution applied on the sticker model and the files
+checked again with `cubenxnxn verify`. "Bound" is the number of positions
+of the cube counted in moves (log of the positions over log of the number
+of moves): no solver can average less.
+
+| Size | Bound | dwalton76 (5 cubes) | Baseline of this morning | Now | Now, his 5 cubes | Now over bound | Mean time | Max time |
+|---|---|---|---|---|---|---|---|---|
+| 8x8x8 | 117.1 | 308.40 | 301.90 | 264.50 | 261.60 | 2.26 | 14.3 s | 50.9 s |
+| 9x9x9 | 149.2 | 368.00 | 368.55 | 349.45 | 356.40 | 2.34 | 32.6 s | 71.1 s |
+| 10x10x10 | 179.1 | 523.40 | 531.00 | 529.40 | 531.60 | 2.96 | 10.2 s | 14.9 s |
+
+Files: `general888-20.tsv`, `general999-20.tsv`, `general101010-20.tsv`
+(they replace the ones of the section above).
+
+- 8x8x8: all 20 cubes matched in this run; in an earlier run of the same
+  cubes 2 went the long way and the mean was 269.40 (the searches run in
+  parallel and do not always keep the same states).
+- 9x9x9: 6 cubes of 20 went the long way (no matching found for the row of
+  five), and on some of the others the row was matched column by column,
+  at 71 to 75 moves instead of 46 to 55. The time for 9x9x9 was measured
+  while other runs were going on.
+- 10x10x10: its outermost row has six centres and no matching was found
+  for it on any cube, so every cube goes the long way; the solver no
+  longer tries. The small difference to the morning is run-to-run.
+- The same code on 6x6x6: 121.60 on 10 cubes (146.0 before; own solver
+  109.2). On 7x7x7: 173.5 on 10 cubes, one the long way (190.0 before; own
+  solver 154.6).
+
+For comparison, the own solvers are at 1.38 (4x4x4), 1.44 (5x5x5), 1.63
+(6x6x6) and 1.67 (7x7x7) times the bound, dwalton76 at 1.75, 1.67, 2.03,
+2.10, 2.63, 2.47 and 2.92 for sizes 4 to 10.
+
+What a matched row costs: a row of two centres 11 to 15 moves, of four 28
+to 42, of five 46 to 55 (all columns in one search); column by column a row
+of four 37 to 46, of five 71 to 75. Against that, bringing the same centres
+home takes 21 moves per 6x6x6-type step and about 32 per 7x7x7-type step,
+that is 21, 53 and 85 moves for the rows of an 8x8x8 and a 10x10x10.
+
+How it got there, and what did not work:
+
+- **A row in one search, exact agreement only**: fine on 8x8x8 (39 and 13
+  moves on the first cube), 78 s on the first 9x9x9, nothing on the
+  10x10x10.
+- **Agree or opposite, whichever is nearer at each state**: the beam stays
+  undecided; 7 of 10 8x8x8 cubes found no matching (8 tries with other
+  ties, 30,000 states). **The choice fixed per axis before the search**,
+  the eight choices tried in the order of their starting scores: all ten.
+- **Column by column with shallow cuts only** (cuts no deeper than the
+  column worked on, so that the columns nearer the middle are never cut):
+  found nothing on the 9x9x9. With all cuts allowed it works on some cubes
+  and is the second way now.
+- **Slab moves** (slab under one face half way round, the row under a
+  neighbouring face half way round, both again: six moves that change the
+  columns the slab cuts and leave the others as they are, so each further
+  pair of columns is a search over two columns only): always finds a
+  matching, but 105 to 139 moves for a row of six and 122 for a row of
+  five. 520.0 on three 10x10x10 cubes against 533 the long way, at a
+  minute and a half per cube; one 9x9x9 cube came out at 420. Removed.
+- **A score that also weighs the column furthest from done**: a row of six
+  still found nothing.
+- **Staging all orbits at once before the steps** (a beam on the sum of
+  each orbit's distance to its staged state, in small drops): the sum goes
+  from 83 down for 9 moves and stops, and the steps after it are no
+  shorter: 545 moves on a 10x10x10 against 515 without. Removed. The same
+  thing was seen on the 7x7x7 and on the R/L axis of the 6x6x6.
+
+Where the moves of a 10x10x10 go now: staging about 220 (six steps of about
+36), the way home about 170, edges 120, 3x3x3 18. On an 8x8x8: staging
+about 110, matching about 48, edges 88, 3x3x3 18.
+

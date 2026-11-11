@@ -369,15 +369,31 @@ trece prin aceiași pași virtuali de 4–7 straturi, deci orice îmbunătățir
 a unui pas se vede la toate mărimile. Dar solverul general e mult sub cele
 dedicate: pe 6x6x6 dă 146 (dedicat: 109), pe 7x7x7 190 (dedicat: 155).
 
-**Unde se pierd mutările, în ordine:**
+**A doua versiune (2026-11-11, seara):** ideea de la 6x6x6 și 7x7x7 dusă în
+solverul general: centrele nu mai sunt aduse acasă, ci fiecare e făcut de
+aceeași culoare cu cel de sub el (`src/rings.rs`), rând cu rând de la
+margine spre interior, iar pașii de muchii le rezolvă odată cu centrele
+din interior. 8x8x8: 264,5 (era 301,9; dwalton76 308,4). 9x9x9: 349,45
+(368,55; 368,0). 10x10x10: 529,4, neschimbat, fiindcă pentru rândul de 6
+centre nu găsesc potrivire și cubul merge pe drumul vechi.
 
-1. „Acasă” la pașii de tip 7x7x7: 30–34 de mutări, limita inferioară 15–17.
-2. Fiecare pereche de orbite oblice costă ~75 de mutări (21 + 22 + 32);
-   la 10x10x10 sunt 6 perechi, la 14x14x14 sunt 15.
-3. Muchiile: ~35 de mutări pe orbită, cu centrele deja rezolvate; fazele
-   de la 5x5x5 fac și parte de centre degeaba.
-4. Ce face solverele de 6 și 7 scurte (oblicii împerecheați în fazele de
-   muchii, alegerea după total între multe variante) nu e folosit încă.
+**Cât se mai poate.** Măsura e raportul față de limita dată de numărul de
+stări: solverele dedicate sunt la 1,38 (4), 1,44 (5), 1,63 (6), 1,67 (7);
+cel general e la 2,26 (8), 2,34 (9), 2,96 (10). La raportul de la 6 și 7
+ar ieși ~193, ~246 și ~295 de mutări. Deci impresia lui Horia e corectă:
+de la 8 în sus se mai poate câștiga masiv.
+
+**Ce urmează, pe idei proprii (nu după dwalton76 sau Kociemba):**
+
+1. Potrivirea rândurilor lungi. Cu toate coloanele într-o singură căutare
+   costă ~9 mutări pe coloană, dar se blochează de la 5–6 coloane; cu
+   mutări care nu ating restul (comutatoare) e sigură, dar costă 20+ pe
+   coloană. Trebuie o căutare care rămâne în regimul ieftin.
+2. Așezarea: ~36 de mutări pentru fiecare pereche de orbite oblice, adică
+   220 la 10x10x10. E cea mai mare parte și crește cu pătratul mărimii.
+   Coborârea comună pe toate orbitele nu a mers; de încercat așezarea pe
+   rânduri întregi, nu pe perechi de orbite.
+3. Muchiile: ~35 de mutări pe orbită.
 
 ## Despre tabelele lui dwalton76
 

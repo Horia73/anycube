@@ -14,6 +14,7 @@ pub mod joint;
 pub mod nnn;
 pub mod opt3;
 pub mod orbits;
+pub mod rings;
 pub mod search;
 pub mod solver;
 pub mod solver5;

@@ -60,6 +60,12 @@ pub struct SolutionN {
     pub moves: Vec<usize>,
     /// Moves spent on the centres, on the edges, and on the 3x3x3 at the end.
     pub lens: [usize; 3],
+    /// The matching of the centres found nothing and the cube went the
+    /// longer way: every centre home before the edges.
+    pub long_way: bool,
+    /// Some row of centres was not matched in one search but piece by
+    /// piece, which takes many more moves.
+    pub laboured: bool,
 }
 
 /// The cube while it is being solved: as it is now, seen in a frame in
@@ -81,6 +87,14 @@ impl Work<'_> {
             let ours = (face + 6 * (depths[d] - 1)) * 3 + power;
             self.g.apply(&mut self.f, ours);
             self.moves.push(self.to_given[ours]);
+        }
+    }
+
+    /// Moves of the cube itself.
+    fn apply_ours(&mut self, ours: &[u8]) {
+        for &m in ours {
+            self.g.apply(&mut self.f, m as usize);
+            self.moves.push(self.to_given[m as usize]);
         }
     }
 
@@ -135,6 +149,31 @@ impl SolverN {
     /// Solves a cube of size 6 or more given as its facelets (faces U R F D
     /// L B, row by row; colours 0 to 5 in that order).
     pub fn solve(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
+        let trace = std::env::var_os("CUBEN_TRACE").is_some();
+        let matched = match self.attempt(g, facelets, true) {
+            // Every row matched in one search: this is the shorter way.
+            Ok(sol) if !sol.laboured => return Ok(sol),
+            Ok(sol) => Some(sol),
+            Err(e) => {
+                if trace {
+                    eprintln!("  {}; the long way instead", e);
+                }
+                None
+            }
+        };
+        // Otherwise the matching may have cost more than it saves: both ways, and the shorter.
+        let long = self.attempt(g, facelets, false);
+        match (matched, long) {
+            (Some(a), Ok(b)) => Ok(if a.moves.len() <= b.moves.len() { a } else { b }),
+            (Some(a), Err(_)) => Ok(a),
+            (None, long) => long,
+        }
+    }
+
+    /// `matched`: the centres are only made to agree with their neighbours
+    /// towards the middle (`rings`), and the edge steps bring them home.
+    /// Otherwise every centre is brought home first (`axes`).
+    fn attempt(&self, g: &Geometry, facelets: &[u8], matched: bool) -> Result<SolutionN, String> {
         let n = g.n;
         if n < 6 {
             return Err("sizes below 6 have solvers of their own".to_string());
@@ -153,7 +192,7 @@ impl SolverN {
         let mut steps: Vec<(usize, Vec<usize>, Vec<usize>)> = Vec::new();
         if odd {
             steps.push((5, vec![0, half - 1, half, half + 1, last], vec![1, half]));
-        } else {
+        } else if !matched {
             // The innermost centres of an even cube say which colour belongs on which face.
             let reduction = self.reduce4(g, &w.f, &[0, half - 1, half, last])?;
             w.apply(&reduction, &[1, half]);
@@ -175,7 +214,7 @@ impl SolverN {
             let col = o.colours(f);
             (0..24).fold(0u32, |m, i| m | ((col[i] % 3 == axis) as u32) << i)
         };
-        for pass in 0..3 {
+        for pass in 0..if matched { 2 } else { 3 } {
             for (size, layers, depths) in &steps {
                 let sub = g.sub_facelets(&w.f, layers);
                 let what = ["staging on R and L", "staging on the other axes", "way home"][pass];
@@ -222,10 +261,20 @@ impl SolverN {
                 }
             }
         }
+        // Every centre made to agree with the one under it, ring by ring
+        // from the rim inwards; the edge steps then bring them home.
+        let mut laboured = false;
+        if matched {
+            for a in 1..first {
+                let (moves, whole) = crate::rings::Ring::new(g, a).solve(g, &w.f)?;
+                laboured |= !whole;
+                w.apply_ours(&moves);
+                if trace {
+                    eprintln!("  centres of layer {} matched to layer {}: {} moves, {} so far", a + 1, a + 2, moves.len(), w.moves.len());
+                }
+            }
+        }
         let centres = w.moves.len();
-        debug_assert!((0..6).all(|face| {
-            (1..last).all(|r| (1..last).all(|c| w.f[face * n * n + r * n + c] as usize == face))
-        }));
 
         // The edges, from the middle outwards.
         let mut tail = 0;
@@ -257,6 +306,6 @@ impl SolverN {
             return Err("the steps did not solve the cube".to_string());
         }
         let total = w.moves.len();
-        Ok(SolutionN { moves: w.moves, lens: [centres, total - centres - tail, tail] })
+        Ok(SolutionN { moves: w.moves, lens: [centres, total - centres - tail, tail], long_way: !matched, laboured })
     }
 }
