@@ -722,8 +722,10 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 .part {
   display: contents;
 }
+/* Each phase begins a row of its own, under its title. */
 .part h4 {
-  margin: 0 2px 0 6px;
+  flex: 0 0 100%;
+  margin: 7px 0 1px;
   font: 600 0.66rem/1 var(--sans);
   letter-spacing: 0.07em;
   text-transform: uppercase;
@@ -731,7 +733,7 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   white-space: nowrap;
 }
 .part:first-child h4 {
-  margin-left: 0;
+  margin-top: 0;
 }
 .part h4 span {
   font-family: var(--mono);
