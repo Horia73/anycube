@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>Any cube, solved short.</b><br>
-  A Rubik's cube solver for every size from 2x2x2 up, written in Rust.
+  An NxNxN Rubik's cube solver, written in Rust:<br>
+  2x2x2, 3x3x3, 4x4x4, 5x5x5, 6x6x6, 7x7x7 and every larger size.
 </p>
 
 <p align="center">
@@ -196,9 +197,9 @@ other people's. Thank you to:
   and 5x5x5 solvers here follow the way his are built.
 - **[dwalton76](https://github.com/dwalton76)**, for the
   [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver) he
-  built so that his LEGO Mindstorms robots could take on cubes of any size.
-  It is the inspiration for this project, and the general solver here began
-  from how his works. I have a LEGO cube robot of my own.
+  built so that his LEGO Mindstorms robots could take on bigger cubes. It is
+  the inspiration for this project, and the general solver here began from
+  how his works.
 
 ## Licence
 
