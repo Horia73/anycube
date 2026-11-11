@@ -298,6 +298,18 @@ De ce nu ajunge schema de acum, după numărătoarea de stări:
 pentru interior, tripletele oblic–t–oblic în locul perechilor, apoi 5x5x5
 virtual din straturile 1, 2, 4, 6, 7.
 
+**7x7x7, stadiu 2026-11-11:** solver complet (`src/stage7.rs`,
+`src/solver7.rs`, `src/search.rs`), scris de un agent pe ramura
+`seven-by-seven` și adus în `shorter-solutions`. Ținta e atinsă la limită:
+154,56 de mutări pe primele 50 de cuburi (dwalton76: 194,40 pe primele 10;
+ținta 155,5), ~6 s pe cub; modul rapid 155,6 în 3,3 s. Am rulat separat 20
+de cuburi pe care agentul nu le folosise: 155,00, toate verificate.
+Împărțirea: așezare 53, potrivire 16, muchii interioare 34, muchii
+exterioare 35, 3x3x3 17. Ce a mers acolo și nu la 6x6x6: căutarea în
+fascicul (beam) cu 100.000 de stări pe nivel, acolo unde pragul e mult sub
+răspuns. Punctele slabe: așezarea (53) și potrivirea (16 mutări de pură
+pregătire). Timpul e peste țintele de 1 s și 5 s.
+
 **Kociemba, RubikNxNxNSolver** (citit 2026-11-10): rezolvă doar centrele,
 în metrica de felii simple, ~1,19 mutări pe centru la 101x101x101; pentru
 7x7x7 ar însemna ~170 de mutări doar pe centre, deci nu ajută la 6 și 7.

@@ -2,7 +2,7 @@
 
 Formerly `cube444`; renamed when it grew past the 4x4x4.
 
-A Rubik's cube solver in Rust for 2x2x2 to 5x5x5. The 4x4x4 and 5x5x5 solvers
+A Rubik's cube solver in Rust for 2x2x2 to 7x7x7. From 4x4x4 up the solvers
 aim for shorter solutions than the existing reduction solvers, within a few
 seconds per cube.
 
@@ -30,7 +30,8 @@ longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
 | 3x3x3 | two-phase search; `--mode full` searches for the optimal solution | about 10 ms; seconds to minutes for optimal |
 | 4x4x4 | see above | |
 | 5x5x5 | see below | |
-| 6x6x6, 7x7x7 | scrambles and checking only (`src/cuben.rs`) | |
+| 6x6x6 | see below | |
+| 7x7x7 | see below | |
 
 5x5x5 results on the fixed scrambles in `bench/scrambles555-200.txt`, measured
 on the same machine while it was busy with other work, so the times are on the
@@ -47,6 +48,25 @@ With the defaults 159 of the 200 solutions are shorter than cube555's, 20 are
 equal and 21 are longer; the slowest solve took 3.5 s, and 0.74 s in the fast
 mode. The times assume the tables are in memory; the first solve of a process
 pays for reading them.
+
+6x6x6 and 7x7x7 against dwalton76's
+[NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver), on the
+fixed scrambles in `bench/scrambles666-100.txt` and `bench/scrambles777-100.txt`.
+The target is 20% fewer moves than his: 108.9 and 155.5.
+
+| Size | Solver | Mean length | Mean time | Cubes | Against dwalton76 |
+|---|---|---|---|---|---|
+| 6x6x6 | dwalton76 | 136.10 | 43 s | first 10 | |
+| 6x6x6 | cubenxnxn `--mode fast` | 119.00 | 2.8 s | first 20 | -12.6% |
+| 6x6x6 | cubenxnxn, default | 116.95 | 5.6 s | first 20 | -14.1% |
+| 7x7x7 | dwalton76 | 194.40 | 9.4 s | first 10 | |
+| 7x7x7 | cubenxnxn `--mode fast` | 155.60 | 3.3 s | cubes 31 to 50 | -20.0% |
+| 7x7x7 | cubenxnxn, default | 154.56 | 6 s | first 50 | -20.5% |
+
+The 7x7x7 meets the target; the 6x6x6 does not yet. How they work, what was
+tried and the per-step lengths are in `bench/RESULTS.md` (sources:
+`src/stage6.rs`, `src/solver6.rs`, `src/stage7.rs`, `src/solver7.rs`,
+`src/search.rs`).
 
 ## How the 5x5x5 solver works
 
@@ -118,7 +138,23 @@ cargo build --release
 ```
 
 ```bash
-./target/release/cubenxnxn solve --state <24, 54, 96 or 150 facelets in URFDLB order>
+./target/release/cubenxnxn solve --size 6 "3Rw U2 F' Uw L2 D 3Bw' R"
+```
+
+```bash
+./target/release/cubenxnxn solve --size 7 "3Rw U2 F' Uw L2 D 3Bw' R" --mode fast
+```
+
+```bash
+./target/release/cubenxnxn solve --state <24, 54, 96, 150, 216 or 294 facelets in URFDLB order>
+```
+
+```bash
+./target/release/cubenxnxn bench6 bench/scrambles666-100.txt --limit 20
+```
+
+```bash
+./target/release/cubenxnxn bench7 bench/scrambles777-100.txt --limit 10
 ```
 
 ```bash

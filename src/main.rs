@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150 or 294 facelets> [search flags]   solve a cube of size 2 to 5 or 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|6|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150, 216 or 294 facelets> [search flags]   solve a cube of size 2 to 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   the same for 6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 to 7\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -46,11 +46,15 @@ fn solve(args: &[String]) {
         (None, Some(24)) => 2,
         (None, Some(54)) => 3,
         (None, Some(150)) => 5,
+        (None, Some(216)) => 6,
         (None, Some(294)) => 7,
         _ => 4,
     };
     if size == 5 {
         return solve5(state, args);
+    }
+    if size == 6 {
+        return solve6(state, args);
     }
     if size == 7 {
         return solve7(state, args);
@@ -70,7 +74,7 @@ fn solve(args: &[String]) {
         2 => solve2(&cube),
         3 => solve3(&cube, args),
         4 => solve4(&cube, args),
-        _ => fail("supported sizes: 2, 3, 4, 5 and 7"),
+        _ => fail("supported sizes: 2 to 7"),
     }
 }
 
@@ -118,6 +122,66 @@ fn solve5(state: Option<&str>, args: &[String]) {
                 sol.lens[3],
                 sol.lens[4],
                 sol.lens[5],
+                (t1 - t0).as_secs_f64() * 1e3,
+                t1.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        Err(e) => fail(&e),
+    }
+}
+
+fn params6(args: &[String]) -> cubenxnxn::solver6::Params6 {
+    use cubenxnxn::solver6::Params6;
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let d = match opt(args, "--mode") {
+        Some("fast") => Params6::fast(),
+        Some("full") => Params6::full(),
+        Some("normal") | None => Params6::normal(),
+        Some(_) => usage(),
+    };
+    let outer = match opt(args, "--mode") {
+        // The 5x5x5 part follows the mode unless its own flags say otherwise.
+        Some("fast") | None | Some("normal") => cubenxnxn::solver5::Params5 { ..params5(args) },
+        _ => cubenxnxn::solver5::Params5 { time_ms: 0, ..d.outer.clone() },
+    };
+    Params6 {
+        width: num("--width", d.width),
+        tries: num("--tries", d.tries),
+        finals: num("--finals", d.finals),
+        budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
+        outer,
+    }
+}
+
+fn solve6(state: Option<&str>, args: &[String]) {
+    let t0 = Instant::now();
+    let solver = cubenxnxn::solver6::Solver6::load();
+    let g = &solver.s6.g;
+    let mut facelets = match state {
+        Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
+        None => {
+            let moves = g.parse_moves(&move_text(args)).unwrap_or_else(|e| fail(&e));
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &moves);
+            f
+        }
+    };
+    let t1 = Instant::now();
+    match solver.solve(&facelets, &params6(args)) {
+        Ok(sol) => {
+            g.apply_seq(&mut facelets, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            if !g.is_solved(&facelets) {
+                fail("the solution found does not solve the cube");
+            }
+            let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            println!("{}", names.join(" "));
+            eprintln!(
+                "{} moves (staging {}, preparing {}, inner reduction {}, outer 5x5x5 {}), tables {:.0} ms, search {:.0} ms",
+                sol.moves.len(),
+                sol.lens[0],
+                sol.lens[1],
+                sol.lens[2],
+                sol.lens[3],
                 (t1 - t0).as_secs_f64() * 1e3,
                 t1.elapsed().as_secs_f64() * 1e3
             );
@@ -775,29 +839,12 @@ fn stage6(args: &[String]) {
 
 /// 6x6x6 on a scramble file: full solves, lengths per step and times.
 fn bench6(args: &[String]) {
-    use cubenxnxn::solver6::{Params6, Solver6};
+    use cubenxnxn::solver6::Solver6;
     let Some(path) = args.first() else { usage() };
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let limit = num("--limit", usize::MAX);
-    let d = match opt(args, "--mode") {
-        Some("fast") => Params6::fast(),
-        Some("full") => Params6::full(),
-        Some("normal") | None => Params6::normal(),
-        Some(_) => usage(),
-    };
-    let outer = match opt(args, "--mode") {
-        // The 5x5x5 part follows the mode unless its own flags say otherwise.
-        Some("fast") | None | Some("normal") => cubenxnxn::solver5::Params5 { ..params5(args) },
-        _ => cubenxnxn::solver5::Params5 { time_ms: 0, ..d.outer.clone() },
-    };
-    let p = Params6 {
-        width: num("--width", d.width),
-        tries: num("--tries", d.tries),
-        finals: num("--finals", d.finals),
-        budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
-        outer,
-    };
+    let p = params6(args);
     let t0 = Instant::now();
     let solver = Solver6::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());

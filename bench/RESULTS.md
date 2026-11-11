@@ -535,3 +535,19 @@ carried from step to step 54.33; 8 candidates 53.33 to 53.50 (3.5 s).
 Reproduce with `cubenxnxn bench7 bench/scrambles777-100.txt --limit 10
 [--mode fast] [--restarts 3] [--out file]`; tables are generated on first
 use (`stage777-*.bin`, about 300 MB).
+
+### Checked again after the merge (2026-11-11)
+
+Run from `shorter-solutions` with all eight cores and nothing else running:
+
+| Mode | Cubes | Mean | Mean time | Max time |
+|---|---|---|---|---|
+| default | first 10 | 154.80 (the same solutions' lengths as above) | 5.7 s | 6.4 s |
+| default | cubes 31 to 50, not used while the solver was written | 155.00 | 6.2 s | 8.1 s |
+| `--mode fast` | cubes 31 to 50 | 155.60 | 3.3 s | 4.7 s |
+
+Both default runs were written out as scramble and solution and checked
+with `cubenxnxn verify --size 7`: 30 of 30 solved. With the 30 cubes above,
+the default is at 154.56 on the first 50 cubes, 20.5% below dwalton76's
+194.40 (measured on the first 10 only).
+
