@@ -1,7 +1,139 @@
 # cubenxnxn
 
 A Rubik's cube solver in Rust for cubes of **any size**, built to find
-**short solutions in seconds**.
+**short solutions in seconds**. It is measured on every size from 2x2x2 to
+21x21x21, the largest cube that is mass-produced.
+
+- **2x2x2 and 3x3x3**: optimal solutions (always for 2x2x2, with `--mode full`
+  for 3x3x3), or a two-phase solution in a fraction of a second.
+- **4x4x4 to 7x7x7**: a solver written for each size, tuned for length.
+- **8x8x8 and up**: one general solver that does not know the size. It treats
+  groups of layers as smaller cubes and reuses the solvers above.
+- Every solution is applied to a full model of the cube and checked before it
+  is printed.
+
+The project is young and under active work: each release gets a row in the
+table below, so the progress can be followed.
+
+## Results
+
+Mean number of moves and seconds per cube, by release. Moves are counted in
+OBTM (any turn of a face, with any number of layers, is one move).
+
+<!-- releases:begin -->
+Release **v0.1.0** (commit `b2f038a`, 2026-11-11), default mode:
+
+| Cube | Moves | Seconds | Longest | Memory | Cubes |
+|---|---:|---:|---:|---:|---:|
+| 2x2x2 | 8.79 | 0.00 | 0.00 | 6 MB | 100 |
+| 3x3x3 | 19.03 | 0.22 | 0.42 | 77 MB | 100 |
+| 4x4x4 | 40.71 | 2.8 | 3.8 | 3.0 GB | 100 |
+| 5x5x5 | 67.75 | 0.58 | 2.5 | 2.9 GB | 200 |
+| 6x6x6 | 108.85 | 8.4 | 10.8 | 3.7 GB | 20 |
+| 7x7x7 | 152.75 | 3.8 | 4.7 | 4.0 GB | 20 |
+| 8x8x8 | 235.65 | 12.9 | 23.4 | 4.4 GB | 20 |
+| 9x9x9 | 314.65 | 3.7 | 12.7 | 4.1 GB | 20 |
+| 10x10x10 | 406.05 | 16.6 | 32.7 | 5.3 GB | 20 |
+| 11x11x11 | 510.40 | 7.5 | 13.1 | 3.7 GB | 5 |
+| 12x12x12 | 619.80 | 21.7 | 28.0 | 4.4 GB | 5 |
+| 13x13x13 | 757.80 | 15.8 | 24.2 | 4.0 GB | 5 |
+| 14x14x14 | 888.40 | 30.4 | 36.9 | 4.3 GB | 5 |
+| 15x15x15 | 1031.80 | 21.4 | 29.0 | 4.3 GB | 5 |
+| 16x16x16 | 1185.60 | 40.3 | 45.6 | 4.1 GB | 5 |
+| 17x17x17 | 1392.00 | 37.0 | 75.5 | 4.1 GB | 5 |
+| 18x18x18 | 1548.00 | 45.8 | 59.8 | 4.1 GB | 5 |
+| 19x19x19 | 1763.80 | 49.5 | 72.7 | 3.9 GB | 5 |
+| 20x20x20 | 1938.60 | 56.5 | 87.8 | 4.2 GB | 5 |
+| 21x21x21 | 2254.00 | 84.2 | 135 | 3.8 GB | 5 |
+
+Every release, the newest first: mean moves, and under them mean seconds per cube.
+
+| Release | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **v0.1.0** | 8.8<br>0.00 s | 19.0<br>0.22 s | 40.7<br>2.8 s | 67.8<br>0.58 s | 108.8<br>8.4 s | 152.8<br>3.8 s | 235.7<br>12.9 s | 314.6<br>3.7 s | 406.1<br>16.6 s | 510.4<br>7.5 s | 619.8<br>21.7 s | 757.8<br>15.8 s | 888.4<br>30.4 s | 1031.8<br>21.4 s | 1185.6<br>40.3 s | 1392.0<br>37.0 s | 1548.0<br>45.8 s | 1763.8<br>49.5 s | 1938.6<br>56.5 s | 2254.0<br>84.2 s |
+<!-- releases:end -->
+
+How to read it:
+
+- Measured on an Apple M1 Pro (10 cores, 16 GB) with the default mode of
+  every size, on the fixed scrambles in `bench/` (random moves; the "Cubes"
+  column says how many).
+- Seconds are per cube, with the lookup tables already made; "Longest" is the
+  slowest cube.
+- Memory is the most the whole run held at once, lookup tables included.
+- Two runs of the same release differ a little on the large cubes, a few
+  moves on one cube: the searches run on all cores and not every one of
+  them is repeatable yet.
+- A release is measured with `scripts/release.py measure <name>` and the
+  tables are written with `scripts/release.py readme`; the numbers are kept
+  in `bench/releases.tsv`.
+
+## Install
+
+Rust is all it needs ([rustup.rs](https://rustup.rs)):
+
+```bash
+cargo build --release
+```
+
+**The first solve of a size builds its lookup tables**, once, into `tables/`
+(set `CUBENXNXN_TABLES` to put them elsewhere). The 2x2x2 and 3x3x3 need a few
+megabytes and a moment; the 4x4x4 about four minutes and 4.9 GB; every size
+together about 8.5 GB. See [Tables](#tables).
+
+## Usage
+
+A scramble is given as moves. The size is 4x4x4 unless `--size` says
+otherwise:
+
+```bash
+./target/release/cubenxnxn solve "Rw U2 F' Uw L2 D Bw' R"
+```
+
+```bash
+./target/release/cubenxnxn solve --size 7 "3Rw U2 F' Uw L2 D 3Bw' R"
+```
+
+A cube can also be given as it looks, 6·N·N letters in the order of the faces
+U R F D L B:
+
+```bash
+./target/release/cubenxnxn solve --state <facelets>
+```
+
+`--mode fast`, `normal` (the default) or `full` trades time for length on
+the sizes that have modes (3x3x3 to 7x7x7).
+
+Moves are written as on any cube: `U R F D L B` for the faces, `'` for a
+turn the other way, `2` for a half turn; `Rw` turns two layers and `3Rw`
+three.
+
+## Examples
+
+A 2x2x2, always solved in the fewest moves there are:
+
+```bash
+./target/release/cubenxnxn solve --size 2 "R U2 F' R2 U F R' U' F2 R"
+```
+
+```text
+R2 F' U R F2 R2 F U2 R'
+9 moves, optimal, 7 ms
+```
+
+A 3x3x3:
+
+```bash
+./target/release/cubenxnxn solve --size 3 "R U R' F2 D L B' U2 R2 D' F L2 U B2 R' D2 F' L U2 B"
+```
+
+```text
+D' R' L2 U' B2 D' B D2 B' L B' U2 R2 U D2 R2 F2 D R2 D'
+20 moves, two-phase search, 405 ms
+```
+
+A 4x4x4 scrambled with 100 random moves (the third line of the scramble
+file):
 
 ```bash
 ./target/release/cubenxnxn solve "$(sed -n 3p bench/scrambles-1000.txt)"
@@ -9,91 +141,39 @@ A Rubik's cube solver in Rust for cubes of **any size**, built to find
 
 ```text
 Fw R2 U' F Fw' Uw B U2 Rw2 F2 R Fw R F' R' D2 F' Fw2 Rw2 Fw2 R2 B' Uw2 B' F L2 B' R2 D2 L' U' L F2 U B U' B2 F D' B2 U2
-41 moves (phases [12, 0, 11, 18]), tables 25 ms, search 2572 ms
+41 moves (phases [12, 0, 11, 18]), tables 28 ms, search 3247 ms
 ```
 
-That is a 4x4x4 scrambled with 100 random moves, solved in 41.
-
-- **2x2x2 and 3x3x3**: optimal solutions (always for 2x2x2, with `--mode full`
-  for 3x3x3), or a two-phase solution in about 10 ms.
-- **4x4x4 to 7x7x7**: a solver written for each size, tuned for length.
-- **8x8x8 and up**: one general solver that does not know the size. It treats
-  groups of layers as smaller cubes and reuses the solvers above.
-- Every solution is applied to a full model of the cube and checked before it
-  is printed.
-
-The project is young and under active work. The numbers below still change;
-`bench/RESULTS.md` is the dated log of what was measured, what was tried and
-what was dropped.
-
-## Results at a glance
-
-Mean solution length with the default settings, against the strongest solver
-we could run for each size, **on the same scrambles**. Moves are counted in
-OBTM (any face turn or wide turn is one move). Apple M1 Pro, 8 cores.
-
-| Size | Compared with | Theirs | cubenxnxn | Difference | Cubes | Time, theirs | Time, ours |
-|---|---|---|---|---|---|---|---|
-| 4x4x4 | [TPR](https://github.com/cs0x7f/TPR-4x4x4-Solver) | 44.57 | **40.60** | **-8.9%** | 1,000 | 0.15 s | 2.5 s |
-| 5x5x5 | [cube555](https://github.com/cs0x7f/cube555) | 70.58 | **68.82** | **-2.5%** | 200 | 1.1 s | 1.4 s |
-| 6x6x6 | [dwalton76](https://github.com/dwalton76/rubiks-cube-NxNxN-solver) | 136.10 | **109.30** | **-19.7%** | 10 | 43 s | 9.7 s |
-| 7x7x7 | dwalton76 | 194.40 | **154.80** | **-20.4%** | 10 | 9.4 s | 6 s |
-| 8x8x8 | dwalton76 | 308.40 | **261.60** | **-15.2%** | 5 | 15.8 s | 14.3 s |
-| 9x9x9 | dwalton76 | 368.00 | **356.40** | **-3.2%** | 5 | 11.0 s | 32.6 s |
-| 10x10x10 | dwalton76 | **523.40** | 531.60 | +1.6% | 5 | 24.8 s | 10.2 s |
-
-What the table does not hide:
-
-- TPR is seventeen times faster on the 4x4x4. `--mode fast` narrows that to
-  0.36 s and still averages 41.54 moves.
-- On the 10x10x10 dwalton76's solutions are shorter, and on the 9x9x9 ours
-  take three times as long.
-- The sets for the large cubes are small, because the other solver takes a
-  while per cube. Our own runs cover 20 to 50 cubes per size and are in the
-  detailed tables below.
-- Nobody else has reproduced these numbers yet. The scrambles, every result
-  file and the commands are in `bench/`; reports of different results are
-  welcome.
-
-## Quick start
+A 7x7x7 scrambled with 200 random moves:
 
 ```bash
-cargo build --release
+./target/release/cubenxnxn solve --size 7 "$(sed -n 1p bench/scrambles777-100.txt)"
 ```
+
+```text
+Dw Rw 3Bw Rw2 D 3Dw2 3Lw2 3Bw 3Dw' 3Fw' L2 Lw' 3Bw2 Lw' 3Rw' 3Bw2 Uw 3Lw' R D Rw' Fw Lw Fw2 L' Bw Rw Uw' D2 3Rw' D' 3Lw ...
+154 moves (staging 51, matching 17, inner edges 34, outer edges 34, 3x3x3 18), tables 551 ms, search 7386 ms
+```
+
+And a 21x21x21 scrambled with 1,050 random moves:
 
 ```bash
-./target/release/cubenxnxn solve "Rw U2 F' Uw L2 D Bw' R"
+./target/release/cubenxnxn solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
 ```
 
-The size is 4x4x4 unless `--size` says otherwise:
-
-```bash
-./target/release/cubenxnxn solve --size 3 "R U R' F2 D L B' U2" --mode full
-./target/release/cubenxnxn solve --size 5 "Rw U2 F' Uw L2 D Bw' R" --mode fast
-./target/release/cubenxnxn solve --size 7 "3Rw U2 F' Uw L2 D 3Bw' R"
-./target/release/cubenxnxn solve --size 9 "4Rw U2 F' 3Uw L2 D Bw' R"
+```text
+U' D 10Fw' R 10Rw' 10Dw' F 10Lw D2 10Fw 10Lw2 B2 9Uw 10Uw2 10Fw2 9Uw' 9Rw' 9Fw' 10Fw2 10Rw2 R' 9Bw' ...
+2126 moves (centres 1800, edges 308, 3x3x3 18), tables 1158 ms, search 59571 ms
 ```
 
-A cube can also be given as facelets, 6·N·N letters in URFDLB order:
-
-```bash
-./target/release/cubenxnxn solve --state <facelets>
-```
-
-**The first run builds lookup tables.** They are generated into `tables/`
-(set `CUBENXNXN_TABLES` to put them elsewhere), once: about four minutes and
-4.9 GB for the 4x4x4, about 8.4 GB for every size and option. The 2x2x2 and
-3x3x3 need only a few megabytes. See [Tables](#tables).
-
-`--mode fast`, `normal` (the default) or `full` trades time for length on
-every size that has modes.
+The solution goes to standard output and the summary line to standard
+error, so a solution can be piped on its own.
 
 ## How it works
 
 Every solver here is a reduction solver: it turns the cube into a smaller
 problem in a few phases, and each phase is searched with exact lookup tables
-where they fit in memory. Three things make the solutions shorter than the
-solvers these phases come from:
+where they fit in memory. Three things keep the solutions short:
 
 - **Phases are joined** where the tables allow it, so that one search does
   what two did.
@@ -154,9 +234,9 @@ Tsai's 8-step method) and now has three stages:
 3. **3x3x3**: Kociemba's two-phase algorithm on the reduced cube, with an exact
    table for its first phase.
 
-What makes the solutions shorter than TPR's:
+What keeps the solutions short:
 
-- Phases 1 and 2 are searched as one phase (about 1.2 moves).
+- Phases 1 and 2 of TPR are searched as one phase (about 1.2 moves).
 - The solver collects thousands of joint-phase endpoints and many reductions,
   and the 3x3x3 stage picks the reduction with the shortest total (about 2
   moves). The most promising reductions get a much deeper 3x3x3 search.
@@ -190,76 +270,6 @@ How they work, what was tried and the per-step lengths are in
 `bench/RESULTS.md` (sources: `src/stage6.rs`, `src/solver6.rs`,
 `src/stage7.rs`, `src/solver7.rs`, `src/search.rs`).
 
-## Results in detail
-
-All on fixed scramble files in `bench/`, on an Apple M1 Pro.
-
-### 4x4x4 (`bench/scrambles-1000.txt`)
-
-| Solver | Mean length | Mean time | Cubes |
-|---|---|---|---|
-| TPR (Java) | 44.57 | 146 ms | 1,000 |
-| cubenxnxn `--mode fast` | 41.54 | 0.36 s | first 100 |
-| cubenxnxn, default | 40.60 | 2.5 s | 1,000 |
-| cubenxnxn `--mode full` | 40.00 | 15.9 s | first 30 |
-
-With the defaults no solution is longer than TPR's for the same cube, the
-longest is 44 moves and the slowest solve took 5.3 s. Start-up takes about
-25 ms once the tables exist.
-
-### 5x5x5 (`bench/scrambles555-200.txt`)
-
-Measured while the machine was busy with other work, so the times are on the
-high side.
-
-| Solver | Mean length | Mean time | Longest | Cubes |
-|---|---|---|---|---|
-| cube555 (Java) with min2phase | 70.58 | 1.1 s | 75 | 200 |
-| cubenxnxn `--mode fast` | 70.16 | 0.34 s | 74 | 200 |
-| cubenxnxn, default | 68.82 | 1.4 s | 72 | 200 |
-| cubenxnxn `--mode full` | 68.20 | 5.3 s | 70 | first 40 |
-
-With the defaults 159 of the 200 solutions are shorter than cube555's, 20 are
-equal and 21 are longer; the slowest solve took 3.5 s, and 0.74 s in the fast
-mode. The times assume the tables are in memory; the first solve of a process
-pays for reading them.
-
-### 6x6x6 and 7x7x7 (`bench/scrambles666-100.txt`, `bench/scrambles777-100.txt`)
-
-Against dwalton76's
-[NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver). The
-target is 20% fewer moves than his: 108.9 and 155.5.
-
-| Size | Solver | Mean length | Mean time | Cubes | Against dwalton76 |
-|---|---|---|---|---|---|
-| 6x6x6 | dwalton76 | 136.10 | 43 s | first 10 | |
-| 6x6x6 | cubenxnxn `--mode fast` | 112.00 | 4.1 s | first 20 | -17.7% |
-| 6x6x6 | cubenxnxn, default | 109.20 | 9.7 s | first 20 | -19.8% |
-| 6x6x6 | cubenxnxn `--mode full` | 108.85 | under a minute | first 20 | -20.0% |
-| 7x7x7 | dwalton76 | 194.40 | 9.4 s | first 10 | |
-| 7x7x7 | cubenxnxn `--mode fast` | 155.60 | 3.3 s | cubes 31 to 50 | -20.0% |
-| 7x7x7 | cubenxnxn, default | 154.56 | 6 s | first 50 | -20.5% |
-
-The 7x7x7 meets the target by default; the 6x6x6 meets it in the full mode and
-is 0.3 moves short of it by default.
-
-### 8x8x8 and up (`bench/scrambles888-20.txt` and its neighbours)
-
-dwalton76's solver on the first 5 cubes of each set, ours on all 20, every
-solution checked on the sticker model. "Bound" is the number of positions
-counted in moves, below which no solver can average:
-
-| Size | Bound | dwalton76 | cubenxnxn | cubenxnxn, his 5 cubes | Time, his | Time, ours |
-|---|---|---|---|---|---|---|
-| 8x8x8 | 117.1 | 308.40 | 264.50 | 261.60 | 15.8 s | 14.3 s |
-| 9x9x9 | 149.2 | 368.00 | 349.45 | 356.40 | 11.0 s | 32.6 s |
-| 10x10x10 | 179.1 | 523.40 | 529.40 | 531.60 | 24.8 s | 10.2 s |
-
-The solvers for 4x4x4 to 7x7x7 are at 1.4 to 1.7 times the bound; this one
-is at 2.3 to 3 times, so most of what can be gained on large cubes is still
-ahead. Sizes 11, 12 and 14 solve as well. Run on 6x6x6 and 7x7x7 it gives
-122 and 174 moves where their own solvers give 109 and 155.
-
 ## Commands
 
 | Command | What it does |
@@ -269,23 +279,31 @@ ahead. Sizes 11, 12 and 14 solve as well. Run on 6x6x6 and 7x7x7 it gives
 | `facelets --size N <moves>` | print the facelets of a scrambled cube |
 | `scrambles --size N --count C --length L` | random-move scrambles, one per line |
 | `verify --size N <file>` | check solutions; each line is `scramble<TAB>solution` |
-| `bench`, `bench5`, `bench6`, `bench7 <file>` | run a scramble file of 4x4x4, 5x5x5, 6x6x6 or 7x7x7 cubes |
-| `benchn <file> --size N` | the same for sizes from 8 up |
+| `row <file> --size N` | solve a scramble file of any size: mean moves and seconds on one line |
+| `bench`, `bench5`, `bench6`, `bench7 <file>` | the same for 4x4x4 to 7x7x7 with the lengths of every step |
+| `benchn <file> --size N` | and for sizes from 8 up |
 
-To reproduce the tables above:
+The row of one size in the results table, and the whole table for a release:
 
 ```bash
-./target/release/cubenxnxn bench bench/scrambles-1000.txt --tpr bench/tpr-results.tsv
-./target/release/cubenxnxn bench5 bench/scrambles555-200.txt
-./target/release/cubenxnxn bench6 bench/scrambles666-100.txt --limit 20
-./target/release/cubenxnxn bench7 bench/scrambles777-100.txt --limit 10
-./target/release/cubenxnxn benchn bench/scrambles101010-20.txt --size 10 --limit 5
+./target/release/cubenxnxn row bench/scrambles101010-20.txt --size 10
 ```
 
-And to make new scrambles or look at a cube:
+```bash
+scripts/release.py measure v0.2.0
+```
 
 ```bash
-./target/release/cubenxnxn scrambles --size 12 --count 5 --length 480
+scripts/release.py readme
+```
+
+To make new scrambles or look at a cube:
+
+```bash
+./target/release/cubenxnxn scrambles --size 12 --count 5 --length 600
+```
+
+```bash
 ./target/release/cubenxnxn facelets --size 5 "Uw R' F2"
 ```
 
@@ -316,7 +334,12 @@ also uses `phase1-exact.bin` for the 3x3x3 step, `stage555-near8.bin`
 `centres555-x.bin` and `centres555-t.bin` (300 MB each, 100 s to generate).
 
 The 6x6x6 and 7x7x7 solvers add about 0.7 GB (`axes-*.bin`, `stage666-*.bin`,
-`stage777-*.bin`). With everything generated the directory holds about 8.4 GB.
+`stage777-*.bin`).
+
+Sizes from 8 up need no tables of their own size: they use the ones above,
+and twelve small ones for matching rows of centres (`ring-*.bin`, 24 MB
+each), which every size shares. With everything generated the directory
+holds about 8.5 GB.
 
 ## Search flags
 
@@ -385,21 +408,33 @@ returned. Beyond that:
 |---|---|
 | `src/` | the solvers; one file per phase or table family |
 | `bench/` | scramble sets, result files of every solver measured, and `RESULTS.md` |
+| `bench/releases.tsv` | the numbers behind the results table, one line per release and size |
 | `bench/RESULTS.md` | dated log: what was measured, what was tried, what did not pay |
+| `scripts/release.py` | measures a release and writes the results table |
+| `FINDINGS.md` | what was learned so far, size by size |
 | `PLAN.md` | working notes (in Romanian) |
 
-## Credits
+## References and thanks
 
-All code here is written for this project; nothing is copied from other
-solvers. The ideas are not all ours:
+All code here is written for this project. The ideas it stands on are other
+people's, and it would not exist without them:
 
-- 4x4x4: piece numbering, move definitions and the design of phase 3 come
-  from TPR by Chen Shuang (MIT licence).
-- 5x5x5: the split into phases follows cube555 by Chen Shuang.
-- 3x3x3: the two-phase algorithm and the exact search bounded by distances
-  to a subgroup are Herbert Kociemba's.
-- The comparisons from 6x6x6 up are against dwalton76's NxNxN solver, which
-  set the mark to beat on every one of those sizes.
+- **Herbert Kociemba**: the [two-phase algorithm](https://kociemba.org/cube.htm)
+  and the exact search bounded by distances to a subgroup, used for the
+  3x3x3 and at the end of every larger cube.
+- **Chen Shuang**: [TPR](https://github.com/cs0x7f/TPR-4x4x4-Solver) (itself
+  based on Tsai's 8-step method), where the 4x4x4's piece numbering, move
+  definitions and third phase come from, and
+  [cube555](https://github.com/cs0x7f/cube555), whose split into phases the
+  5x5x5 follows.
+- **dwalton76**: the
+  [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver), which
+  showed that one program can solve every size and is where the general
+  solver's first version started.
+
+Their solvers were run on the same scrambles while this one was built; those
+results are in `bench/` and in `bench/RESULTS.md`, the dated log of what was
+measured, what was tried and what was dropped.
 
 ## Licence
 

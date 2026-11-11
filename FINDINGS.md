@@ -16,17 +16,37 @@ and sent corrections and figures, which are in; the sections of the
 Mean number of moves (outer block turns) on the fixed scramble sets in
 `bench/`. "Before" is the state at the start of the day.
 
-| Size | dwalton76 | Before | Best measured now | Branch | Note |
+| Size | dwalton76 | Before | Now, the single version | Cubes | Seconds per cube |
 |---|---|---|---|---|---|
-| 4x4x4 | 51.71 | 40.60 | 40.60 | `shorter-solutions` | nothing shorter found; see below |
-| 5x5x5 fast | 79.78 | 70.16 | 68.84 (200 cubes) | `faster-555` | a third of the processor time |
-| 5x5x5 default | 79.78 | 68.82 | 67.90 (first 30; 68.6 before on those) | `faster-555` | whole set not run yet |
-| 6x6x6 fast | 136.10 | 112.00 | 111.65 (20 cubes) | `six-faster` | half the processor time |
-| 6x6x6 default | 136.10 | 109.20 | 108.59 (first 17; 109.35 before on those) | `six-faster` | run not finished |
-| 7x7x7 default | 194.40 | 154.56 | 153.15 (first 20; 154.3 to 154.8 before on those) | `faster-777` | half the processor time; fast mode not measured |
-| 8x8x8 | 308.40 | 301.90 | 243.15 (20 cubes) | `six-faster` on top of `shorter-solutions` | |
-| 9x9x9 | 368.00 | 368.55 | 326.90 (20 cubes) | `shorter-solutions` | |
-| 10x10x10 | 523.40 | 531.00 | 427.95 (20 cubes) | `shorter-solutions` | |
+| 4x4x4 default | 51.71 | 40.60 | 40.67 | first 100 | 2.8 |
+| 5x5x5 default | 79.78 | 68.82 | 67.77 | 200 | 0.55 |
+| 6x6x6 default | 136.10 | 109.20 | 108.45 | first 20 | 8.6 |
+| 7x7x7 default | 194.40 | 154.56 | 152.75 | first 20 | 3.6 |
+| 8x8x8 | 308.40 | 301.90 | 235.80 | 20 | 13.0 |
+| 9x9x9 | 368.00 | 368.55 | 314.65 | 20 | 4.0 |
+| 10x10x10 | 523.40 | 531.00 | 402.45 | 20 | 16.6 |
+
+"Now" is one run of every size, one after another, on the single version
+(10b980f: `shorter-solutions` and `together` at the same commit) at 16:17 to
+16:39 with nothing else running; every solution applied on the sticker
+model, no cube of 8 to 10 the long way. The 4x4x4 is unchanged (40.60 was
+all 1,000 cubes; 40.67 is the first 100, where the morning's run gave the
+same). Measured apart by the session of the 6x6x6 on the same code: 6x6x6
+default 108.35 in 9.4 s and fast 110.65 in 2.4 s (20 cubes). Not measured
+on the single version: the fast modes of 5x5x5 and 7x7x7, every full mode.
+
+Every size from 2 to 21 was then measured the same way (release v0.1.0):
+the table is in `README.md`, the numbers in `bench/releases.tsv`. Moves per
+piece are 0.69 to 0.73 for sizes 4 to 7, 0.80 at 8 and rise slowly to 0.94
+at 21; even cubes take about one 6x6x6 solve longer than the odd size next
+to them, and from 13 up the odd ones are 1 to 3% longer per piece.
+
+Two runs of the same code do not give the same solutions on the even
+cubes: one 10x10x10 cube gave 397, 399 and 403 moves in three runs, and the
+mean of the 20 moved from 402.45 to 406.05, while 7x7x7 and 9x9x9 repeated
+to the hundredth. So it is in the 6x6x6 steps; the searches that count
+their results across threads (`src/solver6.rs`, `src/edges5.rs`) are the
+first to look at.
 
 Targets to judge by: the solvers of sizes 4 to 7 make about 0.71 moves per
 piece (a cube of size n has 6n² - 12n + 8 pieces), which would be about 210,
@@ -102,11 +122,20 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
   8x8x8 cubes the long way.
 - A third to a half of the candidates carried from step to step were the
   same cube reached by other moves. Only different cubes are carried now.
-- Did not pay: narrow beams for many candidates, the cube held six ways,
-  more solutions per start in phase E, more results of the first step.
+- Did not pay: narrow beams for many candidates, more solutions per start
+  in phase E, more results of the first step. The cube held six ways gave
+  nothing at equal effort; it stays as an option (`--holds`).
+- On the single version the edge phases of the 5x5x5 return about as many
+  results as they are asked for, so the 6x6x6 asks for three times as many
+  (`p_keep` 12000, `e_keep` 2400): 108.35 where the old numbers gave
+  108.85. The full mode is scaled the same way and not measured.
 - For the larger cubes: on an even cube the innermost ring and the four
   middle layers are a 6x6x6, and its inner steps replace the matching of
   that ring and the 4x4x4 on the innermost wings (8x8x8 246.50 to 243.15).
+  The staging of the 7x7x7 may leave a pair of colours on the faces of
+  another axis, and these steps take each pair on its own axis: the frame is
+  turned first (`Work::reaxis`). Without it 5 of the first 8 8x8x8 cubes
+  went the long way.
 
 ### 7x7x7 (`faster-777`)
 
@@ -186,42 +215,26 @@ detail is the last section of `bench/RESULTS.md` on that branch.
 
 ## State of the code
 
-- `together` (in the worktree of the 6x6x6 session) has every branch as
-  of 15:50 (71341bb): `shorter-solutions` up to f8394fa, `faster-555`,
-  `faster-777`, `six-faster`, `known-reductions`, `public-cleanup`. Only
-  this file is not in it yet.
-- `together`, checked from a scratch worktree by the session of the
-  general solver: it builds without warnings, its 24 tests pass, and the
-  general solver solves three cubes of each size, every solution applied
-  on the sticker model (at cd09239, before the last merges):
-
-  | Size | `together`, first 3 cubes | `shorter-solutions`, first 5 cubes |
-  |---|---|---|
-  | 8x8x8 | 231.3 (235, 237, 222) | 251.0 |
-  | 9x9x9 | 319.0 (320, 325, 312) | 336.4 |
-  | 10x10x10 | 416.7 (398, 396, 456) | 427.8 |
-
-  So what the sessions did adds up on the large cubes. The third
-  10x10x10 cube found no matching there and took the long way (456
-  moves). The session of the 6x6x6 then turned the frame onto the colours'
-  own axes before its step for the innermost ring (f9e8980).
-- `together` at 1ccbd0a (16:01, with this file and that fix), checked the
-  same way: it builds, its 25 tests pass; 8x8x8 235 and 233 moves, 9x9x9
-  320 and 325, 10x10x10 393, 402, 399 and 384, none the long way. A run of
-  all 20 cubes of each size on a quiet machine is still to be done.
+- There is one version: `shorter-solutions` (the main folder) and
+  `together` are the same commit and hold every branch of the day. The
+  branches of the sessions (`faster-555`, `six-faster`, `faster-777`,
+  `known-reductions`, `public-cleanup`) are all inside it and are history.
+- One session measures at a time, one run after another; the table at the
+  top is that run.
+- After it: `row` solves a scramble file of any size from 2 up in one mode
+  and prints one line; `scripts/release.py` measures sizes 2 to 21 with it
+  and writes the tables of releases in `README.md` from
+  `bench/releases.tsv`.
+- The tables of the row matching (`tables/ring-*.bin`, 24 MB each) are
+  named by what they are made of, so rows, sizes and axes whose orbits are
+  moved alike share one file. Before, every size made its own: 86 files for
+  sizes 8 to 12, more than the disk holds up to 21.
 - On even cubes the staging of `src/staging.rs` may leave the colours of
   an axis on the faces of another axis (every centre is still staged). The
   matching in `src/rings.rs` needs only four of each colour per axis and
   orbit, and the steps after it name the frame from the innermost centres,
   so this is allowed for.
-- Tried in a scratch worktree: on top of f8394fa the code of `faster-555`
-  applies cleanly; `faster-777` then conflicts in `src/stage5.rs`, and
-  `six-faster` in `src/edges5.rs` and `src/stage5.rs`. `src/nnn.rs` and
-  `src/search.rs` are changed by `six-faster`, `faster-777` and
-  `faster-555` (the first two heavily); `src/rings.rs` only by
-  `shorter-solutions`.
-- New tables since the morning: `tables/ring-*.bin` (general solver, 24 MB
-  each, about 1 GB for sizes 8 to 10, made on first use).
-- After the branches are together: run every size once more on a quiet
-  machine. None of today's times and several of today's lengths (5x5x5
-  default, 6x6x6 default, 7x7x7, 8x8x8 with everything) are final.
+- Open: the solutions are not the same from run to run (above); matching
+  time on the large cubes; staging and edges are the long parts (254 and
+  131 of 402 moves at 10x10x10); the fast and full modes on the single
+  version.

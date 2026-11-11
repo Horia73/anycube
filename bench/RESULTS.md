@@ -1608,3 +1608,46 @@ and the 10x10x10 cubes that were seen to take it). The frame is now turned
 onto the colours' own axes first: 8 of 8 matched, 236.75 moves on those 8
 cubes (247.0 this morning).
 
+## 2026-11-11, evening: one version, every size from 2 to 21
+
+The branches of the day are one commit (10b980f), and one session measures,
+one run after another on an otherwise idle machine (M1 Pro, 10 cores).
+
+The fixed sets of sizes 4 to 10 on that commit, default modes, every
+solution applied on the sticker model:
+
+| Size | Mean length | Seconds per cube | Cubes |
+|---|---|---|---|
+| 4x4x4 | 40.67 | 2.8 | first 100 |
+| 5x5x5 | 67.77 | 0.55 | 200 |
+| 6x6x6 | 108.45 | 8.6 | first 20 |
+| 7x7x7 | 152.75 | 3.6 | first 20 |
+| 8x8x8 | 235.80 | 13.0 | 20 |
+| 9x9x9 | 314.65 | 4.0 | 20 |
+| 10x10x10 | 402.45 (centres 253.90, edges 131.05, 3x3x3 17.50) | 16.6 | 20 |
+
+No cube of 8 to 10 went the long way.
+
+Then every size from 2 to 21 with `scripts/release.py measure v0.1.0`
+(commit b2f038a: the same solvers, the `row` command and ring tables shared
+between sizes); the numbers are in `bench/releases.tsv` and in the table of
+README.md. New scramble sets: 100 cubes of 2x2x2 and 3x3x3 (40 random
+moves), 5 cubes of each size from 11 to 21 (50 random moves per layer of
+size).
+
+What the two runs show together:
+
+- The odd sizes repeat to the hundredth (7x7x7 152.75 twice, 9x9x9 314.65
+  twice); the even ones do not (6x6x6 108.45 and 108.85, 8x8x8 235.80 and
+  235.65, 10x10x10 402.45 and 406.05). So what is not repeatable is in the
+  6x6x6 steps, which every even cube goes through. The 4x4x4 and 5x5x5
+  move in the second decimal; their default modes have a clock.
+- Even cubes take 6 to 9 seconds more than the odd size after them, about
+  one 6x6x6 solve, whatever the size. The rest of the time grows with the
+  number of rings for both.
+- Moves per piece (6n² - 12n + 8 pieces): 0.69 to 0.73 for sizes 4 to 7,
+  0.80 at 8, rising slowly to 0.91 at 19 and 0.94 at 21. From 13 up the odd
+  sizes are 1 to 3% above their even neighbours.
+- Sizes 11 to 21 needed no ring table that sizes 8 to 10 had not made:
+  twelve files, 275 MB, for every size.
+
