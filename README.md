@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://anycube.agenticweb.ro"><b>Try it in the browser</b></a> ·
   <a href="#results">Results</a> ·
   <a href="#install">Install</a> ·
   <a href="#usage">Usage</a> ·
