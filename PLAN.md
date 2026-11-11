@@ -128,6 +128,14 @@ Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
   pierde în primele ~10 mutări, adică în direcția aleasă la început.
 - Rezolvarea cubului invers (soluția întoarsă începe cu 3x3x3): −0,4…−0,5 la
   timp dublu; modul full pe cub și pe invers dă 39,67 pe 30 de cuburi.
+- Rețea mică încercată (`ml/`, 4,4 milioane de parametri, 192 de milioane de
+  cuburi, 36 de minute pe GPU-ul Mac-ului): deosebește de ~10 ori mai bine
+  decât scorul de mână, dar beam search-ul ghidat de ea găsește reduceri de
+  27–30 de mutări pe o minoritate de cuburi aleatoare, față de 23 la solver.
+  La scara asta nu merge; o încercare serioasă ar însemna de zeci de ori mai
+  multă antrenare și lățimi de căutare mult mai mari, fără garanție.
+- Cuburi puțin amestecate: 10 mutări → 10, 15 → 28, 20 → 42. De reparat cu un
+  tabel în jurul cubului rezolvat (optim până la ~12–13 mutări).
 - Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
   cunoscută; bancul și tabelul dau etichete exacte până la 12 mutări). Câștigul
   maxim pe cuburi aleatoare e ~2 mutări, iar reușita nu e sigură.

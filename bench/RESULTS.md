@@ -492,6 +492,60 @@ So the last 12 to 13 moves of the solver's reduction are almost always as
 short as any reduction from that point: whatever the three-phase reduction
 loses against a free one, it loses in its first ten moves or so.
 
+## 4x4x4: a small network as the estimate of the distance to a reduced cube (2026-11-11)
+
+`ml/reduce_net.py`: a ResMLP with 4.4 million parameters, trained on the GPU
+of the M1 Pro for 36 minutes on 192 million cubes from `free-dump` (a reduced
+cube plus K random moves, K from 1 to 26; the label is K, or the exact
+distance when it is at most 6). Its input is what decides the reductions of a
+cube: which pairs of centres have the same or opposite colours, where the
+other half of each wing's dedge is, and the wing parity.
+
+Share of 300,000 random cubes that look at least as close to a reduced cube
+as the median cube K moves away (3,000 cubes per K, none seen in training);
+the hand score is the one of the beam search above:
+
+| K | Network's estimate | Network | Hand score |
+|---|---|---|---|
+| 8 | 9.20 ± 2.04 | 0.0003% | 0.001% |
+| 10 | 12.01 ± 3.04 | 0.011% | 0.25% |
+| 12 | 14.49 ± 3.44 | 0.26% | 2.7% |
+| 14 | 16.34 ± 3.27 | 1.6% | 19.6% |
+| 16 | 17.56 ± 3.09 | 5.8% | 19.6% |
+| 18 | 18.56 ± 2.72 | 13.1% | 38.4% |
+| 20 | 19.33 ± 2.29 | 22.7% | 38.4% |
+| random | 20.66 ± 1.32 | | |
+
+`ml/reduce_beam.py`: beam search with all moves guided by the network alone
+(no table near the goal), up to 30 moves, on the first cubes of
+`scrambles-1000.txt`; every reduction was checked with `free-verify`. The
+solver's shortest reduction on these 20 cubes averages 23.05.
+
+| Beam width | Cubes | Reduction found | Lengths | Time per cube (Mac GPU) |
+|---|---|---|---|---|
+| 1,024 | 20 | 1 | 29 | 5 s |
+| 4,096 | 20 | 4 | 28, 29, 30, 30 | 42 s |
+| 16,384 | 10 | 2 | 27, 29 | 47 s |
+
+The network is about ten times more selective than the hand score, and a beam
+guided by it is still far behind the solver: 27 to 30 moves on a minority of
+cubes against 23. On cubes close to a reduced cube it works (an 11-move walk
+is found in 11 moves at width 4,096).
+
+## 4x4x4: lightly scrambled cubes (2026-11-11)
+
+`cubenxnxn known --walk N --base solved --count 20`, default flags: the
+solved cube gets N random moves.
+
+| N | Solver, mean length |
+|---|---|
+| 10 | 10.00 |
+| 15 | 28.25 |
+| 20 | 41.75 |
+| 25 | 41.70 |
+
+The machine was running the beam search above on its GPU during these runs.
+
 ## 4x4x4: our solutions in single-layer quarter turns (2026-11-11)
 
 CayleyPy (arXiv 2502.13266) reports 4x4x4 results in the metric of the Kaggle
