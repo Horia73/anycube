@@ -12,8 +12,9 @@ Cifrele măsurate sunt în `bench/RESULTS.md`.
 | implicit | 40,60 | 2,5 s | 1.000 de cuburi |
 | `--mode full` | 40,00 | 15,9 s | primele 30 |
 
-Alte mărimi: 2x2x2 se rezolvă optim în ~2 ms; 3x3x3 cu two-phase în ~10 ms sau
-optim cu `--mode full`. Pornirea durează ~25 ms.
+Alte mărimi: 2x2x2 se rezolvă optim în ~2 ms; 3x3x3 cu two-phase în ~2 ms
+(`--mode fast`, 18,84 mutări) sau ~0,2 s (implicit, 18,13), ori optim cu
+`--mode full` (vezi „3x3x3” mai jos). Pornirea durează ~25 ms.
 
 ## De ce nu am schimbat structura fazei 3
 
@@ -594,6 +595,52 @@ unite; fascicule mai late la așezare (100.000 → 300.000: 0,3 mutări).
 5. `Stage5::a_close` (pragul fazei A folosit de fasciculele de 7x7x7)
    trece acum prin cele 16 simetrii la fiecare stare: de măsurat dacă
    încetinește așezarea de 7x7x7.
+
+## 3x3x3 (2026-11-11, noaptea, ramura `three-shorter`)
+
+Înainte: 19,03 mutări în 0,22 s pe un singur fir (30.000 de faze a doua),
+optimul mediu al unui cub aleator fiind 17,7. Modul `full` găsea optimul în
+5–30 s pe cub.
+
+Ce am măsurat întâi: aceeași căutare cu de 10 și de 100 de ori mai multe
+faze a doua dă 18,61 și 18,28. Deci lungimea depinde de câte drumuri spre
+subgrupul domino sunt încercate; trebuia o căutare mai ieftină pe drum, nu
+una diferită.
+
+Ce există acum (`src/two3.rs`, `src/first3.rs`):
+
+| Mod | Faza 1 până la | Mutări | Secunde pe cub |
+|---|---|---|---|
+| `fast` | 12 mutări | 18,84 | 0,002 |
+| | 13 | 18,41 | 0,02 |
+| implicit | 14 | 18,13 | 0,20 |
+| | 15 | 17,87 | 2,9 |
+| `full` (optim) | | 17,75 pe primele 20 | 7,1 (înainte 18,8) |
+
+- Toate drumurile de o lungime dată, pe cele trei axe, pentru cub și
+  inversul lui, pe toate nucleele; răspunsul nu depinde de fire.
+- Tabel exact al fazei 1 redus prin cele 16 simetrii: 35 MB în loc de
+  554 MB. Pentru pozițiile la cel mult 7 mutări de subgrup, drumurile cele
+  mai scurte sunt scrise în fișier și se citesc direct; pentru cele de la 8
+  mutări, mutările care apropie. Fișierul are 122 MB.
+- Permutarea colțurilor respinge cele mai multe drumuri înainte ca cubul să
+  fie compus.
+- `full` pornește de la soluția two-phase și caută doar lungimile de sub
+  ea. Un cub care are nevoie de 19 mutări ia ~50 s: acolo trebuie arătat că
+  nu există 18.
+
+Ce a rămas:
+
+1. Cuburile mari își rezolvă 3x3x3-ul tot cu căutarea veche, pe fiecare
+   reducere. Proba pe 4x4x4 (`ANYCUBE_TWO3=11,13`, primele 30 de cuburi):
+   40,53 față de 40,67 și 40,90 în două rulări fără ea, în același timp;
+   diferența e cât zgomotul dintre rulări (modul implicit are ceas). De
+   făcut cum trebuie: reducerile în ordinea lungimii, fiecare căutată doar
+   pentru soluții care bat cel mai bun total de până atunci
+   (`Two3::solve_within`), și măsurat fără ceas.
+2. Ce nu a mers: clasa de simetrie din tabele mici în doi pași în locul
+   unui tabel de 4 MB (aceleași drumuri, 10% mai mult timp de procesor);
+   filtrarea mutărilor cu tabelele mici twist+felie și flip+felie.
 
 ## Despre tabelele lui dwalton76
 

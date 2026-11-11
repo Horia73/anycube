@@ -288,7 +288,7 @@ mod tests {
     use crate::api::check::{check, Input};
 
     /// These load the tables of the 2x2x2 and the 3x3x3 from the tables directory
-    /// (`ANYCUBE_TABLES`), 150 MB, and build them if they are missing.
+    /// (`ANYCUBE_TABLES`), 190 MB, and build them if they are missing.
     #[test]
     fn small_cubes_from_moves_and_from_facelets() {
         for (size, scramble) in [(2, "R U2 F' R2 U F R' U'"), (3, "R U R' U' F2 D L' B U2 R D' F L2 B' U")] {

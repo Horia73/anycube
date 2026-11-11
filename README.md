@@ -122,9 +122,9 @@ That opens the interface: a cube of any size up to 50x50x50 to scramble,
 paint, show to a camera or turn by hand, then solve and follow move by move.
 [`app/README.md`](app/README.md) shows the other modes.
 
-The first solve of a size builds its lookup tables, once: a moment for 2x2x2
-and 3x3x3, about four minutes and 4.9 GB for 4x4x4, about 8.5 GB for every
-size together.
+The first solve of a size builds its lookup tables, once: a moment for
+2x2x2, five seconds for 3x3x3, about four minutes and 4.9 GB for 4x4x4,
+about 8.5 GB for every size together.
 
 On the command line, a cube is given as it looks: its stickers face by face
 in the order U R F D L B, each face row by row, each sticker named by the
@@ -157,7 +157,7 @@ Or as the moves that scrambled it, with the size of the cube:
 # 3x3x3, 25 random moves
 anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 
-# the same cube in the fewest moves there are: 18, after about 25 seconds
+# the same cube in the fewest moves there are, 18: a few seconds for most cubes, half a minute for this one
 anycube solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'" --mode full
 
 # 5x5x5, 60 random moves, the quick way

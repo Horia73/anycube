@@ -16,8 +16,13 @@ once.
 | `pairing.bin` | 240 MB | 20 s | moves to pair the dedges in phase 3 |
 | nine small files | 70 MB | under 1 s | everything else, so that start-up reads instead of rebuilding |
 
-The 2x2x2 solver needs only `cube222.bin` (3.7 MB) and the 3x3x3 solver only
-`cube333.bin` (10 MB), plus `slice-exact.bin` for `--mode full`.
+The 2x2x2 solver needs only `cube222.bin` (3.7 MB). The 3x3x3 solver needs
+190 MB, made in about five seconds: `cube333.bin` (10 MB), `phase2-333.bin`
+(57 MB: corners and U/D edges of its second phase together) and
+`phase1-333.bin` (122 MB: the distances of its first phase for classes of
+positions under 16 symmetries, the shortest ways of the positions within
+7 moves of the subgroup and the moves that lead nearer from those at 8).
+`--mode full` adds `slice-exact.bin`.
 
 The library also builds for `wasm32-unknown-unknown`, with the 2x2x2 and
 3x3x3 solvers only. There is no file system there, so they build their

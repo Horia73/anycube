@@ -48,6 +48,44 @@ flowchart LR
 
 The same code runs every size from 6 up; nothing in it knows the size.
 
+## 3x3x3 (`src/two3.rs`, `src/first3.rs`, `src/opt3.rs`)
+
+Kociemba's two-phase algorithm. The first phase brings the cube into the
+subgroup that `U D R2 L2 F2 B2` generate (no edge flipped, no corner
+twisted, the four slice edges in their slice); the second solves it with
+those moves alone.
+
+- **The first phase is taken by length.** Every way into the subgroup of up
+  to 14 moves is tried (12 in `--mode fast`), along each of the three axes,
+  for the cube and for its inverse: nine million ways for a cube in the
+  default mode. A solution of 18 moves is found when one of them leaves at
+  most four moves of the second phase.
+- **A way costs a few table entries.** The search follows the exact
+  distance to the subgroup, so it never enters a dead end. That table has
+  one row per class of positions under the sixteen symmetries that keep the
+  U/D axis (35 MB; 554 MB without them). For the 850 thousand positions
+  within 7 moves of the subgroup the file also holds every shortest way,
+  written out: once a position is as far away as there are moves left, its
+  ways are read from that list. Such positions are looked up 64 at a time,
+  so that the waits for memory overlap. The 8 million positions one move
+  further out have the moves that lead nearer listed.
+- **Most ways are turned away by the corners.** The corners' permutation
+  is carried along, and the moves of the second phase it needs by itself
+  are in a small table. Only for the few ways that pass is the cube put
+  together and the second phase searched, with a table of the exact moves
+  for corners and U/D edges together.
+- The search runs on all cores and its answer does not depend on how the
+  work falls on them.
+- **`--mode full` is optimal.** It starts from the two-phase solution and
+  searches every shorter length completely (`src/opt3.rs`), with the exact
+  distance, along each axis, to the smaller subgroup in which the slice
+  edges are also in place (1.7 GB). Showing that nothing shorter exists
+  takes a fraction of the time of finding a solution of that length, so a
+  good two-phase solution is most of the work.
+
+On one core in the browser (WebAssembly) the older search of `src/c3.rs`
+runs instead: it stops after a number of second phases.
+
 ## 4x4x4
 
 The phase structure started from Chen Shuang's

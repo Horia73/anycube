@@ -2,6 +2,25 @@
 
 `--mode fast`, `normal` or `full` is all most uses need; these are the flags a mode sets.
 
+## 3x3x3
+
+| Flag | fast | normal | full | Meaning |
+|---|---|---|---|---|
+| `--depth` | 12 | 14 | 14, then 15 | longest first phase of the two-phase search that is tried in full |
+| `--variants` | 6 | 6 | 6 | how many of the six variants (three axes, the cube and its inverse) are tried at that length; the shorter lengths are tried in all six |
+| `--time` | | | 120000 | milliseconds the search for the optimal solution may take; past them the two-phase solution is returned |
+
+Each move of `--depth` takes about 13 times as long. On the 100 scrambles
+of `bench/scrambles333-100.txt`:
+
+| `--depth` | 12 | 13 | 14 | 15 |
+|---|---:|---:|---:|---:|
+| Moves | 18.84 | 18.41 | 18.13 | 17.87 |
+| Seconds | 0.002 | 0.02 | 0.20 | 2.9 |
+
+`full` asks for 15 only when 14 has found nothing under 19 moves, and then
+only for a solution of 18 or fewer.
+
 ## 5x5x5
 
 `--mode fast|normal|full` sets all of them; each can be overridden.

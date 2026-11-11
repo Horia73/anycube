@@ -1651,3 +1651,112 @@ What the two runs show together:
 - Sizes 11 to 21 needed no ring table that sizes 8 to 10 had not made:
   twelve files, 275 MB, for every size.
 
+## 3x3x3: every first phase of 14 moves, on all cores (2026-11-11, night, branch `three-shorter`)
+
+The 3x3x3 of the release stopped after 30,000 second phases on one core:
+19.03 moves in 0.22 s on the 100 scrambles of `scrambles333-100.txt`, where
+the optimum of a random cube is 17.7 on average. `--mode full` found the
+optimum in 5 to 30 seconds a cube, some in two minutes.
+
+Where the moves were: the same search with 10 and 100 times as many second
+phases gave 18.61 and 18.28, so the length follows the number of ways into
+the domino subgroup that are tried. The search needed to be cheaper per
+way, not different.
+
+The new search (`src/two3.rs`, `src/first3.rs`; how it works is in
+`docs/how-it-works.md`) takes the ways by length, all of a length for all
+six variants (three axes, the cube and its inverse). 100 cubes, every
+solution applied on the sticker model, the machine otherwise idle except
+where it says:
+
+| First phase up to | Ways per cube | Moves | Seconds per cube | Longest |
+|---|---:|---:|---:|---:|
+| the release, default | 30 thousand | 19.03 | 0.22 | 0.42 |
+| the release, fast | 500 | 19.93 | 0.003 | 0.01 |
+| 12, all variants (`--mode fast`) | 49 thousand | 18.84 | 0.002 | 0.01 |
+| 13, three variants | | 18.60 | | |
+| 13, all | 0.67 million | 18.41 | 0.02 | 0.03 |
+| 14, one variant | | 18.33 | | |
+| 14, two | | 18.28 | | |
+| 14, three | | 18.21 | | |
+| 14, four | | 18.17 | | |
+| 14, all (default) | 9.2 million | 18.13 | 0.20 | 0.38 |
+| 15, one variant | | 18.07 | | |
+| 15, two | | 18.04 | | |
+| 15, all | 125 million | 17.87 | 2.9 (first 30) | |
+
+Lengths at 14: 2 cubes of 16 moves, 13 of 17, 56 of 18, 28 of 19, 1 of 20.
+The fast mode is now shorter than the default was, in a hundredth of the
+time; the default is 0.9 moves shorter in the same time. Memory is 208 MB
+(77 MB before): the table of the first phase is 122 MB on disk, and the
+three tables of the 3x3x3 take 4.3 s to make from nothing, once.
+
+The optimal mode starts from the two-phase solution and searches only the
+lengths below it; if the two-phase search found nothing under 19 moves it
+is first run one move deeper, for 18 or fewer. First 20 cubes (7 of 17
+moves, 11 of 18, 2 of 19; mean 17.75, the same lengths from both):
+
+| | Mean seconds | Longest |
+|---|---:|---:|
+| the release | 18.8 | 112 |
+| now | 7.1 | 43 |
+
+A cube that needs 19 moves is what takes long now: every length up to 18
+has to be searched to the end to show it. A cube of 18 whose two-phase
+solutions are all of 19 is the other slow case: the 18 is then found by
+the exact search, as before (the example in the README is one: 37 s, against 25 s when the release was measured, here with other sessions running).
+
+What it took to make a way cheap, in the order it was found. Counted on
+the first two cubes at 14 moves (17.8 million ways), one core, or side by
+side on the first 30 cubes on all cores:
+
+| Step | Instructions per way | Processor time |
+|---|---:|---|
+| exact distances from the 554 MB table, a table entry per move tried | 2040 | 9.2 s |
+| the same from a 35 MB table by symmetry, moves listed near the subgroup | about the same | |
+| shortest ways of the positions within 7 moves written out | 1400 | 6.9 s |
+| inner loop without the checks and copies it did not need | 1040 | 4.7 s |
+| positions with listed ways looked up 64 at a time | 1040 | a quarter less, measured side by side under load |
+| moves that lead nearer listed for the positions at 8 moves | | 65 s to 55 s on 30 cubes, all cores |
+
+- The number of ways was the same to the last one after each step
+  (6,736,006 and 11,081,968 for the two cubes; 253,215,066 for the 30):
+  that is how each step was checked, beside every solution being applied.
+- Most of what is left is waiting for memory: the table entries read to
+  find which moves lead nearer from the positions 9 and more moves from the
+  subgroup, where nothing is listed.
+
+Tried and dropped:
+
+- Turning moves away with the two small tables (twist with slice, flip
+  with slice) before asking the large one: more instructions, no fewer
+  entries read.
+- Walking the near positions move by move with their listed moves, one
+  list entry per position: correct, but a way is a chain of six or seven
+  such positions, each waiting for memory in turn. Writing the ways out
+  replaced it.
+- The class of a flip and slice in two steps from tables of half a
+  megabyte together (a symmetry for the slice, then the class of the flip
+  it leaves) instead of one table of 4 MB: the same ways, a tenth more
+  processor time (201 to 214 against 183 to 194 thousand million cycles
+  on 30 cubes). The 4 MB table is not what waits.
+
+The larger cubes still solve their 3x3x3 with the old search on each
+reduction. `ANYCUBE_TWO3=a,b` makes the 4x4x4 use the new one, to `a`
+moves of first phase for every reduction and `b` for the best sixteenth.
+First 30 cubes, default mode (it has a clock, and other sessions were
+running):
+
+| | Length | 3x3x3 part | Seconds |
+|---|---:|---:|---:|
+| as it is, first run | 40.90 | 17.37 | 2.6 |
+| as it is, second run | 40.67 | 17.13 | 2.6 |
+| 11, 13 | 40.53 | 17.10 | 2.6 |
+| 12, 13 | 40.67 | 17.10 | 2.8 |
+| 12, 14 | 40.33 | 16.63 | 8.1 |
+
+The two runs without it differ by as much as it gains, so this shows no
+more than that it does not hurt. Left off. What should be tried instead:
+the reductions in order of length, each searched only for a solution that
+beats the best total so far (`Two3::solve_within`), measured without a
+clock.
