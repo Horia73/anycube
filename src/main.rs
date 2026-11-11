@@ -22,6 +22,7 @@ fn main() {
         Some("free-beam") => free_beam(&args[1..]),
         Some("free-tail") => free_tail(&args[1..]),
         Some("free-dump") => free_dump(&args[1..]),
+        Some("short") => short(&args[1..]),
         Some("free-export") => free_export(&args[1..]),
         Some("free-verify") => free_verify(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
@@ -447,6 +448,63 @@ fn free_dump(args: &[String]) {
         }
     }
     eprintln!("{} records in {:.1} s", count, t0.elapsed().as_secs_f64());
+}
+
+/// Experiment: lightly scrambled cubes. The solved cube gets `--walk` random
+/// moves; the shortest solution is found exactly when it has at most
+/// `--forward` + `--ball` moves (every sequence of up to `--forward` moves is
+/// tried against a table of all cubes within `--ball` moves of solved), and
+/// compared with what the solver finds.
+fn short(args: &[String]) {
+    use cubenxnxn::free::Ball;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count, forward, depth) = (num("--walk", 12), num("--count", 10), num("--forward", 6), num("--ball", 5));
+    let mut seed = num("--seed", 5000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let t0 = Instant::now();
+    let ball = Ball::build_solved(depth as u8);
+    eprintln!("cubes by distance from solved: {:?}, {:.1} s", ball.levels, t0.elapsed().as_secs_f64());
+    let solver = Solver::new();
+    let params = params(args);
+    let (mut sum_exact, mut sum_solver, mut found, mut secs) = (0usize, 0usize, 0usize, 0.0);
+    for i in 0..count {
+        let (_, steps) = known_cube(&mut rnd, walk, true);
+        let cube = Cube::from_moves(&steps);
+        let t = Instant::now();
+        let exact = ball.shortest(&cube, forward).map(|p| {
+            let mut c = cube;
+            c.apply_seq(&p);
+            if !c.is_solved() {
+                fail(&format!("cube {}: the exact solution does not solve the cube", i));
+            }
+            p.len()
+        });
+        let s = t.elapsed().as_secs_f64();
+        let sol = solver.solve(&cube, &params).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        println!("cube {:2}: scrambled with {}, exact {:?} in {:.1} s, solver {}", i, walk, exact, s, sol.moves.len());
+        if let Some(e) = exact {
+            found += 1;
+            sum_exact += e;
+            sum_solver += sol.moves.len();
+            secs += s;
+        }
+    }
+    if found > 0 {
+        println!(
+            "{} cubes scrambled with {} moves: exact solution on {}, mean {:.2} in {:.1} s; solver on the same cubes {:.2}",
+            count,
+            walk,
+            found,
+            sum_exact as f64 / found as f64,
+            secs / found as f64,
+            sum_solver as f64 / found as f64
+        );
+    }
 }
 
 /// Experiment: what a search outside this program needs, as JSON: the 27 moves

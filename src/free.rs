@@ -122,16 +122,53 @@ pub fn class_parts(c: &Cube) -> ([u8; 24], [u8; 24], u8) {
     (best_ct, partner, bits)
 }
 
-/// Every class within `depth` moves of a reduced cube, with its distance.
+/// A 64-bit name for the cube itself, the same in all 24 orientations.
+pub fn key_solved(c: &Cube) -> u64 {
+    let t = tables();
+    let (mut best, mut best_ct) = (0usize, [u8::MAX; 24]);
+    for (r, map) in colour_maps().iter().enumerate() {
+        let mut ct = [0u8; 24];
+        for i in 0..24 {
+            ct[i] = map[c.ct[i] as usize];
+        }
+        if ct < best_ct {
+            best = r;
+            best_ct = ct;
+        }
+    }
+    let x = c.after_rotation(&t.rots[best].state);
+    let mut h = 1u64;
+    for part in [&x.ct[..], &x.ep[..], &x.cp[..], &x.co[..]] {
+        for chunk in part.chunks(8) {
+            h = mix(h, u64::from_le_bytes(chunk.try_into().unwrap()));
+        }
+    }
+    h
+}
+
+/// Every class within `depth` moves of a goal, with its distance. The goal is
+/// the reduced cubes (`build`) or the solved cube (`build_solved`).
 pub struct Ball {
     map: Map,
     pub depth: u8,
     /// Classes at each distance.
     pub levels: Vec<usize>,
+    key: fn(&Cube) -> u64,
+    goal: fn(&Cube) -> bool,
 }
 
 impl Ball {
+    /// Around the reduced cubes.
     pub fn build(depth: u8) -> Ball {
+        Ball::build_with(depth, key, is_reduced)
+    }
+
+    /// Around the solved cube: whole solutions instead of reductions.
+    pub fn build_solved(depth: u8) -> Ball {
+        Ball::build_with(depth, key_solved, Cube::is_solved)
+    }
+
+    fn build_with(depth: u8, key: fn(&Cube) -> u64, goal: fn(&Cube) -> bool) -> Ball {
         let mut map = Map::default();
         map.insert(key(&Cube::solved()), 0);
         let mut frontier = vec![Cube::solved()];
@@ -166,13 +203,13 @@ impl Ball {
             levels.push(count);
             frontier = next;
         }
-        Ball { map, depth, levels }
+        Ball { map, depth, levels, key, goal }
     }
 
     /// Moves to a reduced cube, when that is at most `depth`.
     #[inline]
     pub fn dist(&self, c: &Cube) -> Option<u8> {
-        self.map.get(&key(c)).copied()
+        self.map.get(&(self.key)(c)).copied()
     }
 
     /// A shortest reduction of a cube inside the ball; `None` if the walk down
@@ -192,7 +229,7 @@ impl Ball {
             x = y;
             d -= 1;
         }
-        is_reduced(&x).then_some(path)
+        (self.goal)(&x).then_some(path)
     }
 
     /// The shortest reduction of `cube` with all moves, if it has at most
