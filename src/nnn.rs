@@ -150,6 +150,10 @@ impl SolverN {
     /// L B, row by row; colours 0 to 5 in that order).
     pub fn solve(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
+        // The outermost row of centres is the longest; if it is too long to match there is no point in trying.
+        if g.n > crate::rings::LONGEST + 4 {
+            return self.attempt(g, facelets, false);
+        }
         let matched = match self.attempt(g, facelets, true) {
             // Every row matched in one search: this is the shorter way.
             Ok(sol) if !sol.laboured => return Ok(sol),
@@ -207,57 +211,85 @@ impl SolverN {
                 }
             }
         }
-        // One axis at a time on every step, then everything home. A step's
-        // staging mixes the colours of the centres staged before it; done
-        // this way they are still to be solved then, so nothing is solved twice.
         let mask = |o: &crate::orbits::CentreOrbit, f: &[u8], axis: u8| {
             let col = o.colours(f);
             (0..24).fold(0u32, |m, i| m | ((col[i] % 3 == axis) as u32) << i)
         };
-        for pass in 0..if matched { 2 } else { 3 } {
-            for (size, layers, depths) in &steps {
-                let sub = g.sub_facelets(&w.f, layers);
-                let what = ["staging on R and L", "staging on the other axes", "way home"][pass];
-                let none = || format!("no {} found for the centres of layers {:?} (as a {}x{}x{})", what, layers, size, size, size);
-                let home = none;
-                // A beam that finds nothing is rare; a wider one then does.
-                let stage7 = |range: std::ops::Range<usize>| {
-                    [(20_000, 0), (200_000, 1), (1_000_000, 2)]
-                        .iter()
-                        .map(|&(beam, salt)| self.s7.stage_steps(&self.s5.stage, &sub, 4, 4, beam, salt, range.clone()))
-                        .find(|found| !found.is_empty())
-                        .and_then(|found| found.into_iter().next())
-                        .map(|x| x.moves)
-                        .ok_or_else(none)
-                };
-                let (x, t) = (&self.orbits5[0], &self.orbits5[1]);
-                let moves: Vec<u8> = match (size, pass) {
-                    (5, 0) => {
-                        let found = self.s5.stage.phase_a(mask(x, &sub, 1), mask(t, &sub, 1), 0, 1, None);
-                        found.into_iter().next().ok_or_else(none)?
+        // Staging, one axis at a time: R/L centres onto R and L, then the
+        // rest onto their axes. Each ring from the middle outwards. Its rows
+        // of centres are first made each of one kind (all of the axis or
+        // none), two orbits at a time; then the ring's corners and rows go
+        // onto their faces in one step, as the x and t centres of a 5x5x5.
+        let none = |what: &str, layers: &[usize]| format!("no {} found for the centres of layers {:?}", what, layers);
+        let (x5, t5) = (&self.orbits5[0], &self.orbits5[1]);
+        for pass in 0..2 {
+            let what = ["staging on R and L", "staging on the other axes"][pass];
+            let onto_faces = |sub: &[u8]| -> Result<Vec<u8>, String> {
+                match pass {
+                    0 => {
+                        let found = self.s5.stage.phase_a(mask(x5, sub, 1), mask(t5, sub, 1), 0, 1, None);
+                        found.into_iter().next().ok_or_else(|| none(what, &[]))
                     }
                     // Of the two parities of the wings either will do here.
-                    (5, 1) => self.s5.stage.phase_b(mask(x, &sub, 0), mask(t, &sub, 0), false),
-                    (5, _) => self.home5.solve(&sub, HOME_BUDGET).ok_or_else(home)?,
-                    (6, 0) => self.s6.stage_steps(&self.s5.stage, &sub, 4, 0..2).into_iter().next().map(|x| x.moves).ok_or_else(none)?,
-                    (6, 1) => self.s6.stage_steps(&self.s5.stage, &sub, 4, 2..3).into_iter().next().map(|x| x.moves).ok_or_else(none)?,
-                    (6, _) => self.home6.solve(&sub, HOME_BUDGET).ok_or_else(home)?,
-                    (_, 0) => stage7(0..3)?,
-                    (_, 1) => stage7(3..5)?,
-                    _ => self.home7.solve(&sub, HOME_BUDGET).ok_or_else(home)?,
+                    _ => Ok(self.s5.stage.phase_b(mask(x5, sub, 0), mask(t5, sub, 0), false)),
+                }
+            };
+            if odd {
+                let layers = [0, half - 1, half, half + 1, last];
+                let moves = onto_faces(&g.sub_facelets(&w.f, &layers))?;
+                w.apply(&moves, &[1, half]);
+            }
+            for a in (1..first).rev() {
+                for b in (a + 1..=first).rev() {
+                    let depths = [1, a + 1, b + 1];
+                    let moves: Vec<u8> = if !odd && b == first {
+                        // No layer between the two obliques of a pair: a 6x6x6.
+                        let layers = [0, a, b, last - b, last - a, last];
+                        let sub = g.sub_facelets(&w.f, &layers);
+                        let found = match pass {
+                            0 => self.s6.stage_steps(&self.s5.stage, &sub, 4, 0..1).into_iter().next().map(|x| x.moves),
+                            _ => self.s6.pair_ud(&sub, 1).into_iter().next(),
+                        };
+                        found.ok_or_else(|| none(what, &layers))?
+                    } else {
+                        let layers = [0, a, b, mid, last - b, last - a, last];
+                        let sub = g.sub_facelets(&w.f, &layers);
+                        let range = [0..2, 3..4][pass].clone();
+                        // A beam that finds nothing is rare; a wider one then does.
+                        [(20_000, 0), (200_000, 1), (1_000_000, 2)]
+                            .iter()
+                            .map(|&(beam, salt)| self.s7.stage_steps(&self.s5.stage, &sub, 4, 4, beam, salt, range.clone()))
+                            .find(|found| !found.is_empty())
+                            .and_then(|found| found.into_iter().next())
+                            .map(|x| x.moves)
+                            .ok_or_else(|| none(what, &layers))?
+                    };
+                    w.apply(&moves, &depths);
+                    if trace {
+                        eprintln!("  {}: rows of layers {} and {} formed in {} moves, {} so far", what, a + 1, b + 1, moves.len(), w.moves.len());
+                    }
+                }
+                let layers = [0, a, mid, last - a, last];
+                let moves = onto_faces(&g.sub_facelets(&w.f, &layers))?;
+                w.apply(&moves, &[1, a + 1]);
+                if trace {
+                    eprintln!("  {}: ring of layer {} onto its faces in {} moves, {} so far", what, a + 1, moves.len(), w.moves.len());
+                }
+            }
+        }
+        // The long way: every step's centres home, from the middle outwards.
+        if !matched {
+            for (size, layers, depths) in &steps {
+                let sub = g.sub_facelets(&w.f, layers);
+                let home = match size {
+                    5 => self.home5.solve(&sub, HOME_BUDGET),
+                    6 => self.home6.solve(&sub, HOME_BUDGET),
+                    _ => self.home7.solve(&sub, HOME_BUDGET),
                 };
+                let moves = home.ok_or_else(|| none("way home", layers))?;
                 w.apply(&moves, depths);
                 if trace {
-                    eprintln!(
-                        "  {} of layers {:?} as a {}x{}x{}: {} moves, {} so far",
-                        ["R/L centres", "U/D centres", "centres home"][pass],
-                        &layers[1..layers.len() / 2 + 1],
-                        size,
-                        size,
-                        size,
-                        moves.len(),
-                        w.moves.len()
-                    );
+                    eprintln!("  centres of layers {:?} home in {} moves, {} so far", &layers[1..layers.len() / 2 + 1], moves.len(), w.moves.len());
                 }
             }
         }

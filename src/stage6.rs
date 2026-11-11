@@ -232,6 +232,23 @@ impl Stage6 {
         cands.into_iter().map(|c| c.0).collect()
     }
 
+    /// Step 3 without the part that is phase B of the 5x5x5: the U/D inner
+    /// x centres onto U and D, the inner wings even, the U/D obliques into
+    /// pairs, wherever those pairs then are. For the larger cubes, which
+    /// bring a whole row of centres onto its faces at once.
+    pub fn pair_ud(&self, f: &[u8], cap: usize) -> Vec<Vec<u8>> {
+        let rank = |o: usize| self.ranks.rank16[self.mask(o, f, 0) as usize];
+        let root = Node34 { x: rank(X_IN), a: rank(OBL_A), b: rank(OBL_B), o: 0, odd: self.wings_odd(f, [0, 2, 3, 5]) as u8 };
+        let p = PairUd { s: self };
+        let score =
+            |n: &Node34| self.in_ud[n.x as usize * 2 + n.odd as usize] as u32 + self.obl_ud[n.a as usize * N_UD + n.b as usize] as u32;
+        [(1, 0), (8, 1), (64, 2)]
+            .iter()
+            .map(|&(times, salt)| crate::search::beam_again(&p, &root, score, UD_BEAM * times, cap, 40, salt))
+            .find(|found| !found.is_empty())
+            .unwrap_or_default()
+    }
+
     /// Solutions of one step from a cube on which the earlier steps are done.
     fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize) -> Vec<Vec<u8>> {
         match step {
@@ -377,6 +394,39 @@ struct Node34 {
     b: u16,
     o: u16,
     odd: u8,
+}
+
+/// `pair_ud`: the state of step 3 without the outer x centres and the outer wings.
+struct PairUd<'a> {
+    s: &'a Stage6,
+}
+
+impl crate::search::Problem for PairUd<'_> {
+    type Node = Node34;
+
+    fn moves(&self) -> &[u8] {
+        &self.s.m3
+    }
+
+    fn next(&self, n: &Node34, k: usize) -> Node34 {
+        let (s, m) = (self.s, self.s.m3[k]);
+        Node34 {
+            x: s.in_ud_mv[n.x as usize][k],
+            a: s.obl_ud_mv[0][n.a as usize][k],
+            b: s.obl_ud_mv[1][n.b as usize][k],
+            o: 0,
+            odd: n.odd ^ flips_inner(m) as u8,
+        }
+    }
+
+    fn bound(&self, n: &Node34) -> usize {
+        let s = self.s;
+        s.in_ud[n.x as usize * 2 + n.odd as usize].max(s.obl_ud[n.a as usize * N_UD + n.b as usize]) as usize
+    }
+
+    fn done(&self, _: &Node34) -> bool {
+        true
+    }
 }
 
 struct Step34<'a> {

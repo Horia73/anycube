@@ -80,9 +80,12 @@ layer next to it towards the middle. Whatever is solved in such a block of
 layers stays solved when the small cube is solved, so a large cube can be
 done as a sequence of small ones:
 
-- Centres: staged two mirror orbits of oblique centres at a time, each
+- Centres: staged one axis at a time, ring by ring from the middle
+  outwards. The rows of a ring are first made each of one kind (all of
+  the axis or none), two mirror orbits of oblique centres at a time, each
   step a 6x6x6 or a 7x7x7 made of layers (with the staging of those
-  solvers), first onto R and L, then onto the other axes. Then, row by row
+  solvers); then the whole ring goes onto its faces in one step, as the x
+  and t centres of a 5x5x5. Then, row by row
   from the rim inwards, every centre is made to agree in colour with the
   one under it (`src/rings.rs`); the edge steps bring them home. Where no
   such matching is found (some cubes, and every cube from 10x10x10 up) the
@@ -100,13 +103,13 @@ counted in moves, below which no solver can average:
 
 | Size | Bound | dwalton76 | cubenxnxn | cubenxnxn, his 5 cubes | Time, his | Time, ours |
 |---|---|---|---|---|---|---|
-| 8x8x8 | 117.1 | 308.40 | 264.50 | 261.60 | 15.8 s | 14.3 s |
-| 9x9x9 | 149.2 | 368.00 | 349.45 | 356.40 | 11.0 s | 32.6 s |
-| 10x10x10 | 179.1 | 523.40 | 529.40 | 531.60 | 24.8 s | 10.2 s |
+| 8x8x8 | 117.1 | 308.40 | 246.50 | 251.00 | 15.8 s | 24 s |
+| 9x9x9 | 149.2 | 368.00 | 333.80 | 345.20 | 11.0 s | 23 s |
+| 10x10x10 | 179.1 | 523.40 | 482.75 | 478.80 | 24.8 s | 18 s |
 
-The solvers for 4x4x4 to 7x7x7 are at 1.4 to 1.7 times the bound; this one
-is at 2.3 to 3 times, so most of what can be gained on large cubes is still
-ahead. Sizes 11, 12 and 14 solve as well. Run on 6x6x6 and 7x7x7 it gives
+The solvers for 4x4x4 to 7x7x7 are at 1.4 to 1.7 times the bound (0.71
+moves per piece); this one is at 2.1 to 2.7 times (0.83 to 0.99 per piece),
+so much of what can be gained on large cubes is still ahead. Sizes 11, 12 and 14 solve as well. Run on 6x6x6 and 7x7x7 it gives
 122 and 174 moves where their own solvers give 109 and 155.
 
 ## How the 5x5x5 solver works

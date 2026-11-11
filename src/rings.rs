@@ -57,7 +57,7 @@ const FAR: u8 = 255;
 const MAX: usize = 48;
 /// The longest row the searches here get through: on rows of six centres
 /// neither of them found a matching on any cube tried.
-const LONGEST: usize = 5;
+pub const LONGEST: usize = 5;
 
 type Node = [u32; MAX];
 

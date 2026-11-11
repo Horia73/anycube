@@ -807,3 +807,42 @@ Where the moves of a 10x10x10 go now: staging about 220 (six steps of about
 36), the way home about 170, edges 120, 3x3x3 18. On an 8x8x8: staging
 about 110, matching about 48, edges 88, 3x3x3 18.
 
+## Any size: a ring onto its faces once (2026-11-11, night)
+
+Until now every staging step (two mirror orbits of obliques as a 6x6x6 or
+7x7x7 made of layers) both formed its rows of centres (every centre of a
+row of the axis being staged, or none) and brought them onto their faces.
+The second part is the same job for every step of a ring, done over and
+over. Now the steps only form the rows, and when all rows of a ring are
+formed the ring's corner centres and its rows go onto their faces in one
+step, as the x and t centres of a 5x5x5 (phase A, then phase B, of the
+5x5x5 solver).
+
+20 cubes each, every solution applied on the sticker model and the files
+checked again with `cubenxnxn verify`.
+
+| Size | Bound | dwalton76 (5 cubes) | This morning | Before this change | Now | Now, his 5 cubes | Against dwalton76 | Now over bound | Moves per piece | Mean time |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 8x8x8 | 117.1 | 308.40 | 301.90 | 264.50 | 246.50 | 251.00 | -20.1% | 2.10 | 0.83 | 24 s |
+| 9x9x9 | 149.2 | 368.00 | 368.55 | 349.45 | 333.80 | 345.20 | -9.3% | 2.24 | 0.86 | 23 s |
+| 10x10x10 | 179.1 | 523.40 | 531.00 | 529.40 | 482.75 | 478.80 | -7.8% | 2.70 | 0.99 | 18 s |
+
+Files: `general888-20.tsv`, `general999-20.tsv`, `general101010-20.tsv`.
+The 8x8x8 and 9x9x9 were timed while other runs were going on. Every
+10x10x10 cube goes the long way (its outermost row is too long to match).
+
+Staging on one 10x10x10: 165 moves where it was about 220 (R/L: rows
+formed in 9, 7 + 10 and 6 + 12 + 13 moves for the three rings, each ring
+onto its faces in 10 or 11; the other axes the same). On one 8x8x8: 95
+where it was about 110.
+
+The solvers of sizes 4 to 7 make 0.70 to 0.73 moves per piece (a cube of
+size n has 6n² - 12n + 8 pieces); at that rate an 8x8x8 would take about
+210 moves, a 9x9x9 about 274 and a 10x10x10 about 346.
+
+Tried once more for rows of six centres, in a build of its own: a score
+that counts, per axis, the column furthest from done once instead of adding
+all columns (so that columns disturbed together are not counted many
+times). The searches did not finish one cube in the four and a half minutes
+allowed. Not kept.
+

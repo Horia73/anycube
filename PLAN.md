@@ -383,6 +383,22 @@ cel general e la 2,26 (8), 2,34 (9), 2,96 (10). La raportul de la 6 și 7
 ar ieși ~193, ~246 și ~295 de mutări. Deci impresia lui Horia e corectă:
 de la 8 în sus se mai poate câștiga masiv.
 
+**A treia versiune (2026-11-11, noaptea):** pașii de așezare doar formează
+rândurile de centre; inelul întreg merge pe fețele lui o singură dată (ca
+centrele x și t ale unui 5x5x5). 8x8x8: 246,5 (−20% față de dwalton76),
+9x9x9: 333,8 (−9%), 10x10x10: 482,75 (−8%).
+
+**De ce cuburile mari sunt mai departe de limită decât 4–7** (întrebarea
+lui Horia): un solver de 4–7 își tratează toate piesele într-un plan cu
+puține etape mari; cel general taie cubul în bucăți de câte două orbite
+și fiecare bucată plătește singură, iar numărul de bucăți crește cu
+pătratul mărimii. Nu e nevoie de reglaj pe mărimi, ci de etape generale
+care lucrează pe rânduri sau inele întregi. Regula pe piese: solverele de
+4–7 fac 0,71 mutări pe piesă (6n² − 12n + 8 piese); la rata asta ar ieși
+~210 la 8, ~274 la 9, ~346 la 10. Regula lui Horia (creșterea se mărește
+cu 10 la fiecare mărime) dă 219 / 289 / 369 și se potrivește la fel de
+bine pe 3–7.
+
 **Ce urmează, pe idei proprii (nu după dwalton76 sau Kociemba):**
 
 1. Potrivirea rândurilor lungi. Cu toate coloanele într-o singură căutare
