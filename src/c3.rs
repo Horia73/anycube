@@ -4,6 +4,9 @@
 //! so no convention mapping is needed. Edge flip is "low slot holds a high
 //! wing": quarter turns of R and L flip, everything else does not.
 
+// The WebAssembly build leaves the large phase-2 table and its generator out.
+#![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_imports, unused_variables))]
+
 use crate::big1::Big1;
 use crate::cache::{Reader, Writer};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
@@ -360,6 +363,12 @@ impl T3 {
     }
 
     fn corners_edges(cperm_mv: &[[u16; 10]], uperm_mv: &[[u16; 10]]) -> Bytes {
+        // The WebAssembly build does without this table: 57 MB is a lot to
+        // build in a browser's memory, and without it the search is only
+        // slower. An empty table stands for "no bound".
+        #[cfg(target_arch = "wasm32")]
+        return Bytes::Owned(Vec::new());
+        #[cfg(not(target_arch = "wasm32"))]
         load_or_gen(&table_dir().join(CE_FILE), CE_LEN, || gen_corners_edges(cperm_mv, uperm_mv))
     }
 
@@ -368,6 +377,10 @@ impl T3 {
     #[inline(always)]
     fn corners_and_edges(&self, c: usize, u: usize) -> u8 {
         let d = &self.ce[..];
+        #[cfg(target_arch = "wasm32")]
+        if d.is_empty() {
+            return 0;
+        }
         let class = u16::from_le_bytes([d[CE_CLASS + 2 * c], d[CE_CLASS + 2 * c + 1]]) as usize;
         let at = CE_CONJ + 2 * (d[CE_SYM + c] as usize * N_PERM + u);
         let i = class * N_PERM + u16::from_le_bytes([d[at], d[at + 1]]) as usize;

@@ -15,6 +15,11 @@ once.
 The 2x2x2 solver needs only `cube222.bin` (3.7 MB) and the 3x3x3 solver only
 `cube333.bin` (10 MB), plus `slice-exact.bin` for `--mode full`.
 
+The library also builds for `wasm32-unknown-unknown`, with the 2x2x2 and
+3x3x3 solvers only. There is no file system there, so they build their
+tables in memory (0.1 s and 0.7 s), and the 3x3x3 runs without
+`phase2-333.bin`.
+
 The 5x5x5 solver has its own tables, 2.1 GB, generated in about two minutes on
 8 cores: `phase4-555-*.bin` (850 MB, phase P), `phase5-555*.bin` (600 MB,
 phase E), `phase2-555.bin` (331 MB, centres), `phase3-555-sym.bin` (175 MB,
