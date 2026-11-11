@@ -303,15 +303,16 @@ impl Stage7 {
     /// The best stagings found, shortest first. `width` candidates are
     /// carried from step to step. Each is continued in up to `fan` ways, and
     /// the continuations kept are the ones shortest with an estimate of the
-    /// step that follows. `beam` is the width of the beam searches.
-    pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize, fan: usize, beam: usize) -> Vec<Staged7> {
+    /// step that follows. `beam` is the width of the beam searches and
+    /// `salt` decides their ties (see `search::beam`).
+    pub fn stage(&self, s5: &Stage5, facelets: &[u8], width: usize, fan: usize, beam: usize, salt: u32) -> Vec<Staged7> {
         let start = Staged7 { moves: Vec::new(), lens: [0; 5] };
         let mut cands = vec![(start, facelets.to_vec())];
         for step in 0..5 {
             // (staging so far, the cube, estimate of the whole length after the next step).
             let mut next: Vec<(Staged7, Vec<u8>, usize)> = cands
                 .par_iter()
-                .flat_map_iter(|(c, f)| self.step(s5, step, f, fan, beam).into_iter().map(move |sol| (c, f, sol)))
+                .flat_map_iter(|(c, f)| self.step(s5, step, f, fan, beam, salt).into_iter().map(move |sol| (c, f, sol)))
                 .map(|(c, f, sol)| {
                     let mut f2 = f.clone();
                     self.g.apply_seq(&mut f2, &sol.iter().map(|&m| m as usize).collect::<Vec<_>>());
@@ -359,19 +360,19 @@ impl Stage7 {
     /// Step 2 by beam search. States are ranked by the two bounds for the
     /// outer t centres against each oblique orbit, then by how many obliques
     /// do not agree with the outer t centre beside them.
-    fn step2(&self, root: &[u32; 3], width: usize, cap: usize) -> Vec<Vec<u8>> {
+    fn step2(&self, root: &[u32; 3], width: usize, cap: usize, salt: u32) -> Vec<Vec<u8>> {
         let d = &self.diff2;
         let score = |n: &[u32; 3]| {
             let (x, y) = (n[0] ^ n[1], n[1] ^ n[2]);
             (d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
         };
-        beam(&Step2 { s: self }, root, score, width, cap, 40)
+        beam(&Step2 { s: self }, root, score, width, cap, 40, salt)
     }
 
     /// Up to `cap` solutions of one step from a cube on which the earlier
     /// steps are done. Where a step has many, they are taken evenly from all
     /// of them, so that they differ from the first move on.
-    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize, wide: usize) -> Vec<Vec<u8>> {
+    fn step(&self, s5: &Stage5, step: usize, f: &[u8], cap: usize, wide: usize, salt: u32) -> Vec<Vec<u8>> {
         // The searches of phase A also give the solutions one move longer when more than a few are wanted.
         let extra = (cap > 8) as usize;
         let mut sols: Vec<Vec<u8>> = match step {
@@ -380,7 +381,7 @@ impl Stage7 {
                 .into_iter()
                 .map(|sol| sol.into_iter().map(from_inner).collect())
                 .collect(),
-            1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], wide, cap),
+            1 => self.step2(&[self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], wide, cap, salt),
             2 => s5.phase_a(self.mask(X_OUT, f, 1), self.mask(T_OUT, f, 1), extra, cap, None),
             3 => {
                 // The two halves of the job share few moves, so the bound is
@@ -395,7 +396,7 @@ impl Stage7 {
                         + nibble(&t[1], a * N_UD + o) as u32
                         + nibble(&t[2], o * N_UD + b) as u32
                 };
-                beam(&p, &self.node4(f), score, wide, cap, 40)
+                beam(&p, &self.node4(f), score, wide, cap, 40, salt)
             }
             _ => vec![s5.phase_b(self.mask(X_OUT, f, 0), self.mask(T_OUT, f, 0), self.wings_odd(f, OUTER_WINGS))],
         };

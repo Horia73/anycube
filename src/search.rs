@@ -17,11 +17,49 @@ const NONE: u8 = 255;
 
 /// A fixed hash of a state. States with the same score are kept in the
 /// order of their hashes, so that what the beam keeps of them is a sample;
-/// in the order of the states themselves it would be a cluster of similar ones.
-fn mixed<N: Hash>(n: &N) -> u32 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+/// in the order of the states themselves it would be a cluster of similar
+/// ones. The sample depends on `salt`.
+fn mixed<N: Hash>(n: &N, salt: u32) -> u32 {
+    let mut h = Mixer(0x9E37_79B9_7F4A_7C15 ^ salt as u64);
     n.hash(&mut h);
-    h.finish() as u32
+    (h.finish() >> 32) as u32
+}
+
+/// A small multiplicative hasher: quality enough for a sample, and several
+/// times quicker than the standard one on states of a few words.
+struct Mixer(u64);
+
+impl Hasher for Mixer {
+    fn finish(&self) -> u64 {
+        let x = self.0 ^ (self.0 >> 29);
+        x.wrapping_mul(0xBF58_476D_1CE4_E5B9)
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(b as u64);
+        }
+    }
+
+    fn write_u8(&mut self, x: u8) {
+        self.write_u64(x as u64);
+    }
+
+    fn write_u16(&mut self, x: u16) {
+        self.write_u64(x as u64);
+    }
+
+    fn write_u32(&mut self, x: u32) {
+        self.write_u64(x as u64);
+    }
+
+    fn write_usize(&mut self, x: usize) {
+        self.write_u64(x as u64);
+    }
+
+    fn write_u64(&mut self, x: u64) {
+        self.0 = (self.0.rotate_left(23) ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
 }
 
 /// A problem for `beam`: a state and the moves allowed.
@@ -41,6 +79,10 @@ pub trait Problem: Sync {
 /// continued (states reached twice count once). Returns up to `cap`
 /// solutions of the first length at which any is found, or nothing if there
 /// is none within `max_len` moves.
+///
+/// Which of the states with the same score are kept depends on `salt`.
+/// Searches that differ only in it find solutions a move or two apart, so
+/// a few of them are worth more than one search a few times as wide.
 pub fn beam<P: Problem>(
     p: &P,
     root: &P::Node,
@@ -48,6 +90,7 @@ pub fn beam<P: Problem>(
     width: usize,
     cap: usize,
     max_len: usize,
+    salt: u32,
 ) -> Vec<Vec<u8>>
 where
     P::Node: Ord + Hash,
@@ -59,20 +102,53 @@ where
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
     let mut level: Vec<(P::Node, u8)> = vec![(*root, NONE)];
     for _ in 0..max_len {
-        // (score, hash, state, parent, move); a score of 0 marks a solution.
-        let mut next: Vec<(u32, u32, P::Node, u32, u8)> = level
+        // The score of every state one move on; 0 marks a solution, the
+        // largest value a move that need not be tried.
+        let moves = p.moves();
+        let scores: Vec<u16> = level
             .par_iter()
-            .enumerate()
-            .flat_map_iter(|(i, (n, last))| {
-                let moves = p.moves();
+            .flat_map_iter(|(n, last)| {
                 let score = &score;
-                (0..moves.len()).filter(move |&k| *last == NONE || !skip54(*last, moves[k])).map(move |k| {
+                (0..moves.len()).map(move |k| {
+                    if *last != NONE && skip54(*last, moves[k]) {
+                        return u16::MAX;
+                    }
                     let c = p.next(n, k);
-                    let solved = p.bound(&c) == 0 && p.done(&c);
-                    (if solved { 0 } else { 1 + score(&c) }, mixed(&c), c, i as u32, moves[k])
+                    match p.bound(&c) == 0 && p.done(&c) {
+                        true => 0,
+                        false => (1 + score(&c)).min(u16::MAX as u32 - 1) as u16,
+                    }
                 })
             })
             .collect();
+        // The score at which the beam is full, with room for states reached twice.
+        let most = width + width / 2;
+        let mut count = vec![0usize; 1 << 16];
+        for &x in &scores {
+            count[x as usize] += 1;
+        }
+        let (mut cut, mut total) = (0usize, count[0]);
+        while total < most && cut < u16::MAX as usize - 1 {
+            cut += 1;
+            total += count[cut];
+        }
+        // Only the states up to that score are built: (score, hash, state, parent, move).
+        let mut next: Vec<(u32, u32, P::Node, u32, u8)> = (0..scores.len())
+            .into_par_iter()
+            .filter(|&j| scores[j] as usize <= cut)
+            .map(|j| {
+                let (i, k) = (j / moves.len(), j % moves.len());
+                let c = p.next(&level[i].0, k);
+                (scores[j] as u32, mixed(&c, salt), c, i as u32, moves[k])
+            })
+            .collect();
+        // Where many share the last score, a sample of them stays. A state
+        // reached twice has the same score and hash both times, so its
+        // copies end up side by side.
+        if next.len() > most {
+            next.select_nth_unstable(most);
+            next.truncate(most);
+        }
         next.par_sort_unstable();
         next.dedup_by(|x, y| x.2 == y.2);
         let solved = next.iter().take_while(|x| x.0 == 0).count();

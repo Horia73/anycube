@@ -867,7 +867,7 @@ fn stage7(args: &[String]) {
         let mut f = s7.g.solved();
         s7.g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
-        let found = s7.stage(&s5, &f, width, num("--fan", width), num("--beam", 20_000));
+        let found = s7.stage(&s5, &f, width, num("--fan", width), num("--beam", 20_000), num("--salt", 0) as u32);
         let took = t.elapsed().as_secs_f64() * 1e3;
         ms += took;
         let Some(best) = found.first() else { fail(&format!("cube {}: no staging found", n)) };
@@ -904,6 +904,7 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
         width: num("--width", d.width),
         fan: num("--fan", d.fan),
         beam: num("--beam", d.beam),
+        restarts: num("--restarts", d.restarts),
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
         inner: cubenxnxn::solver5::Params5 {

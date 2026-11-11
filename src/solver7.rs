@@ -386,8 +386,11 @@ pub struct Params7 {
     /// is continued by a step.
     pub width: usize,
     pub fan: usize,
-    /// States kept per level in the beam searches (two staging steps and the matching).
+    /// States kept per level in the beam searches (two staging steps and
+    /// the matching), and how many times each is run with its ties broken
+    /// differently.
     pub beam: usize,
+    pub restarts: usize,
     /// Stagings taken on to the matching step, and matchings kept of each.
     pub tries: usize,
     pub matchings: usize,
@@ -405,6 +408,7 @@ impl Params7 {
             width: 8,
             fan: 8,
             beam: 20_000,
+            restarts: 1,
             tries: 8,
             matchings: 4,
             inner: Params5 { c_keep: 500, p_keep: 500, e_keep: 100, time_ms: 0, ..Params5::normal() },
@@ -459,7 +463,7 @@ impl Solver7 {
     }
 
     /// Step 2 from a staged cube: the shortest matchings (up to `cap`).
-    pub fn match_blocks(&self, f: &[u8], width: usize, cap: usize) -> Vec<Vec<u8>> {
+    pub fn match_blocks(&self, f: &[u8], width: usize, cap: usize, salt: u32) -> Vec<Vec<u8>> {
         let mut root = [0u32; 5];
         for i in 0..5 {
             root[i] = self.s7.primary(MATCHED[i], f);
@@ -468,7 +472,7 @@ impl Solver7 {
         // The bound is far below the true length, so: beam search, states
         // ranked by the half moves the three axes need.
         let score = |n: &[u32; 5]| p.axis(n, 0) as u32 + p.axis(n, 1) as u32 + p.axis(n, 2) as u32;
-        beam(&p, &root, score, width, cap, 40)
+        beam(&p, &root, score, width, cap, 40, salt)
     }
 
     /// True if the outer cube is a 5x5x5: every triple of one colour, the
@@ -502,14 +506,21 @@ impl Solver7 {
             }
         };
         // Step 1.
-        let staged = self.s7.stage(&self.s5.stage, facelets, p.width, p.fan, p.beam);
+        // Beam searches whose ties are broken differently give stagings a
+        // move or two apart: a few runs, and the shortest of all go on.
+        let mut staged: Vec<_> =
+            (0..p.restarts as u32).flat_map(|salt| self.s7.stage(&self.s5.stage, facelets, p.width, p.fan, p.beam, salt)).collect();
+        staged.sort_by(|x, y| (x.moves.len(), &x.moves).cmp(&(y.moves.len(), &y.moves)));
+        staged.dedup_by(|x, y| x.moves == y.moves);
         lap("staged", staged.len(), staged.first().map_or(0, |s| s.moves.len()));
         // Step 2: (moves so far, lengths of steps 1 and 2, the cube).
         let mut matched: Vec<(Vec<u8>, [usize; 2], Vec<u8>)> = staged[..staged.len().min(p.tries)]
             .par_iter()
             .flat_map_iter(|st| {
                 let f1 = apply(facelets, &st.moves);
-                self.match_blocks(&f1, p.beam, p.matchings)
+                (0..p.restarts as u32)
+                    .flat_map(|salt| self.match_blocks(&f1, p.beam, p.matchings, salt))
+                    .collect::<Vec<_>>()
                     .into_iter()
                     .map(|sol| {
                         let f2 = apply(&f1, &sol);
