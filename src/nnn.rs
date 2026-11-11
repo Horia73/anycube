@@ -242,15 +242,18 @@ impl SolverN {
             for a in (1..first).rev() {
                 for b in (a + 1..=first).rev() {
                     let depths = [1, a + 1, b + 1];
-                    let moves: Vec<u8> = if !odd && b == first {
+                    // The last rows of a ring are followed by the ring going
+                    // onto its faces, and how long that takes depends on how
+                    // the rows were formed: several ways are asked for.
+                    let closing = b == a + 1;
+                    let ways: Vec<Vec<u8>> = if !odd && b == first {
                         // No layer between the two obliques of a pair: a 6x6x6.
                         let layers = [0, a, b, last - b, last - a, last];
                         let sub = g.sub_facelets(&w.f, &layers);
-                        let found = match pass {
-                            0 => self.s6.stage_steps(&self.s5.stage, &sub, 4, 0..1).into_iter().next().map(|x| x.moves),
-                            _ => self.s6.pair_ud(&sub, 1).into_iter().next(),
-                        };
-                        found.ok_or_else(|| none(what, &layers))?
+                        match pass {
+                            0 => self.s6.stage_steps(&self.s5.stage, &sub, 4, 0..1).into_iter().map(|x| x.moves).collect(),
+                            _ => self.s6.pair_ud(&sub, if closing { 8 } else { 1 }),
+                        }
                     } else {
                         let layers = [0, a, b, mid, last - b, last - a, last];
                         let sub = g.sub_facelets(&w.f, &layers);
@@ -260,10 +263,29 @@ impl SolverN {
                             .iter()
                             .map(|&(beam, salt)| self.s7.stage_steps(&self.s5.stage, &sub, 4, 4, beam, salt, range.clone()))
                             .find(|found| !found.is_empty())
-                            .and_then(|found| found.into_iter().next())
-                            .map(|x| x.moves)
-                            .ok_or_else(|| none(what, &layers))?
+                            .map(|found| found.into_iter().map(|x| x.moves).collect())
+                            .unwrap_or_default()
                     };
+                    // Each step is chosen by what it and the step after it take together,
+                    // as in the 5x5x5 solver; here the step after is known only for the last rows.
+                    let total = |moves: &Vec<u8>| -> usize {
+                        if !closing {
+                            return moves.len();
+                        }
+                        let mut f = w.f.clone();
+                        for &m in moves {
+                            let (face, d, power) = (m as usize / 3 % 6, m as usize / 18, m as usize % 3);
+                            g.apply(&mut f, (face + 6 * (depths[d] - 1)) * 3 + power);
+                        }
+                        let ring = g.sub_facelets(&f, &[0, a, mid, last - a, last]);
+                        moves.len() + onto_faces(&ring).map_or(usize::MAX / 2, |after| after.len())
+                    };
+                    let moves: Vec<u8> = match closing {
+                        // The first of the shortest in all, as the first was taken before.
+                        true => ways.iter().min_by_key(|&m| total(m)).cloned(),
+                        false => ways.into_iter().next(),
+                    }
+                    .ok_or_else(|| none(what, &[0, a, b]))?;
                     w.apply(&moves, &depths);
                     if trace {
                         eprintln!("  {}: rows of layers {} and {} formed in {} moves, {} so far", what, a + 1, b + 1, moves.len(), w.moves.len());
@@ -322,10 +344,12 @@ impl SolverN {
         for k in (1..if odd { half } else { half - 1 }).rev() {
             let layers = [0, k, mid, last - k, last];
             let sub = g.sub_facelets(&w.f, &layers);
+            // Without a clock: the same cube gives the same solution however busy the machine is.
+            let wide = Params5 { time_ms: 0, ..Params5::normal() };
             let moves = if k > 1 {
-                self.s5.reduce(&sub, &Params5 { time_ms: 0, ..Params5::fast() })?
+                self.s5.reduce(&sub, &wide)?
             } else {
-                let sol = self.s5.solve(&sub, &Params5::normal())?;
+                let sol = self.s5.solve(&sub, &wide)?;
                 tail = sol.lens[5];
                 sol.moves
             };

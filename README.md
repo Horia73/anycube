@@ -45,11 +45,17 @@ high side:
 | cubenxnxn `--mode fast` | 70.16 | 0.34 s | 74 | 200 |
 | cubenxnxn, default | 68.82 | 1.4 s | 72 | 200 |
 | cubenxnxn `--mode full` | 68.20 | 5.3 s | 70 | first 40 |
+| cubenxnxn `--mode fast`, since 2026-11-11, no clock | 68.84 | not timed | 71 | 200 |
+| cubenxnxn, default, since 2026-11-11, no clock | 67.90 | not timed | 70 | first 30 |
 
 With the defaults 159 of the 200 solutions are shorter than cube555's, 20 are
 equal and 21 are longer; the slowest solve took 3.5 s, and 0.74 s in the fast
 mode. The times assume the tables are in memory; the first solve of a process
-pays for reading them.
+pays for reading them. The last two rows are the search as it is now (see
+"5x5x5: shorter and with a third of the work" in `bench/RESULTS.md`): run
+side by side on the same cubes it takes a third of the processor time the
+old one took, but the machine was too busy for wall-clock times and the
+default has not been run on the whole set yet.
 
 6x6x6 and 7x7x7 against dwalton76's
 [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver), on the
@@ -245,7 +251,9 @@ The 5x5x5 solver has its own tables, 2.1 GB, generated in about two minutes on
 8 cores: `phase4-555-*.bin` (850 MB, phase P), `phase5-555*.bin` (600 MB,
 phase E), `phase2-555.bin` (331 MB, centres), `phase3-555-sym.bin` (175 MB,
 phase C, one entry per class under its 16 symmetries) and four small ones. It
-also uses `phase1-exact.bin` for the 3x3x3 step. `--joint` needs two more,
+also uses `phase1-exact.bin` for the 3x3x3 step, `stage555-near8.bin`
+(320 MB, 30 s: the first centre phase near its goal) and `phase2-333.bin`
+(57 MB, 3 s: corners and U/D edges of the 3x3x3 together, used by every size). `--joint` needs two more,
 `centres555-x.bin` and `centres555-t.bin` (300 MB each, 100 s to generate).
 
 ### Search flags (5x5x5)
@@ -255,11 +263,14 @@ also uses `phase1-exact.bin` for the 3x3x3 step. `--joint` needs two more,
 | Flag | fast | normal | full | Meaning |
 |---|---|---|---|---|
 | `--time` | 800 | 4000 | 0 | milliseconds the solve aims at; 0 is no limit |
-| `--staged` | 200 | 400 | 2000 | centre stagings kept |
-| `--labellings` | 4 | 8 | 16 | ways of splitting the wings tried per staging |
-| `--c-keep`, `--p-keep` | 300 | 2000 | 5000 | results phases C and P aim for |
-| `--e-keep` | 50 | 200 | 1000 | reduced cubes aimed for |
-| `--pool`, `--probes` | 16, 500 | 60, 3000 | 400, 20000 | reduced cubes given the full 3x3x3 effort, and that effort |
+| `--staged` | 400 | 1200 | 4000 | centre stagings kept |
+| `--extra` | 2 | 3 | 3 | lengths of the first centre phase searched past its shortest |
+| `--a-budget` | 200000 | 1000000 | 10000000 | positions each of those lengths may take from the second on; a length that does not fit is searched in part; 0 is no limit |
+| `--labellings` | 8 | 16 | 16 | ways of splitting the wings tried per staging |
+| `--c-keep` | 2000 | 6000 | 20000 | results phase C aims for |
+| `--p-keep` | 300 | 700 | 2000 | results phase P aims for |
+| `--e-keep` | 50 | 100 | 400 | reduced cubes aimed for |
+| `--pool`, `--probes` | 30, 1500 | 100, 5000 | 400, 20000 | reduced cubes given the full 3x3x3 effort, and that effort |
 | `--joint N` | off | off | off | also stage the centres in one step, exactly, N lengths past the shortest; minutes per cube |
 
 ### Search flags (4x4x4)

@@ -370,6 +370,11 @@ impl Stage5 {
             if optimum.is_some_and(|o| depth > o + extra) || stop.load(Relaxed) {
                 break;
             }
+            // A cube whose centres are staged as it comes (as the larger
+            // cubes hand them over) has nothing to gain past one more move.
+            if best.load(Relaxed) == 0 && optimum.is_some_and(|o| depth > o + 1) {
+                break;
+            }
             // Only the lengths past the optimum may be cut short.
             let cut = if optimum.is_some() { deadline } else { None };
             let seen = AtomicUsize::new(0);
