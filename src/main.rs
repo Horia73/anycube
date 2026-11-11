@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|6|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150, 216 or 294 facelets> [search flags]   solve a cube of size 2 to 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   the same for 6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 up\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  cubenxnxn solve <moves...> [--size 2|3|4|5|6|7] [search flags]   solve a scramble given as moves (4x4x4 unless --size says otherwise)\n  cubenxnxn solve --state <24, 54, 96, 150, 216 or 294 facelets> [search flags]   solve a cube of size 2 to 7 given as URFDLB facelets\n  cubenxnxn bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]\n  cubenxnxn known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  cubenxnxn bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   the same for 5x5x5 scrambles\n  cubenxnxn bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   the same for 6x6x6 scrambles\n  cubenxnxn bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   the same for 7x7x7 scrambles\n  cubenxnxn facelets --size N <moves...>   print the facelets of a scrambled cube of any size from 2 up\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -16,6 +16,15 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("solve") => solve(&args[1..]),
         Some("bench") => bench(&args[1..]),
+        Some("known") => known(&args[1..]),
+        Some("free3") => free3(&args[1..]),
+        Some("free-features") => free_features(&args[1..]),
+        Some("free-beam") => free_beam(&args[1..]),
+        Some("free-tail") => free_tail(&args[1..]),
+        Some("free-dump") => free_dump(&args[1..]),
+        Some("short") => short(&args[1..]),
+        Some("free-export") => free_export(&args[1..]),
+        Some("free-verify") => free_verify(&args[1..]),
         Some("probe333") => probe333(&args[1..]),
         Some("gen-centres") => gen_centres(),
         Some("startup") => startup(),
@@ -699,6 +708,636 @@ fn bench(args: &[String]) {
     println!("length histogram: {:?}", hist);
     if tpr.is_some() {
         println!("TPR on the same cubes: mean length {:.3} (facelets and solutions cross-checked)", tpr_total as f64 / n);
+    }
+}
+
+/// Experiment: training data for a learned estimate of the distance to a
+/// reduced cube. Each record is a cube `K` moves away from a reduced cube
+/// (`--kmin`..`--kmax`, or the list `--ks`), 52 bytes: the 24 recoloured
+/// centres, the 24 partner positions, the parity bits, K, the exact distance
+/// when it is at most 6 (else 255), and with `--hand` the score the beam search
+/// uses (2 x staging distance - dedges paired + 12, else 255).
+fn free_dump(args: &[String]) {
+    use cubenxnxn::free::{class_parts, Ball};
+    use cubenxnxn::tables::axis_masks;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (count, kmin, kmax, seed) = (num("--count", 1_000_000), num("--kmin", 1), num("--kmax", 26), num("--seed", 1));
+    let ks: Option<Vec<usize>> =
+        opt(args, "--ks").map(|s| s.split(',').map(|v| v.parse().unwrap_or_else(|_| usage())).collect());
+    let out = opt(args, "--out").unwrap_or_else(|| usage());
+    let hand = args.iter().any(|a| a == "--hand");
+    let t0 = Instant::now();
+    let ball = Ball::build(6);
+    let solver = hand.then(Solver::new);
+    let record = |i: usize| -> [u8; 52] {
+        let mut state = (seed as u64) << 32 ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+        let mut rnd = |n: usize| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize % n
+        };
+        // A few steps to separate neighbouring seeds.
+        for _ in 0..4 {
+            rnd(2);
+        }
+        let k = match &ks {
+            Some(list) => list[i % list.len()],
+            None => kmin + rnd(kmax - kmin + 1),
+        };
+        let cube = Cube::from_moves(&free_walk(&mut rnd, k));
+        let (centres, partner, bits) = class_parts(&cube);
+        let mut rec = [255u8; 52];
+        rec[..24].copy_from_slice(&centres);
+        rec[24..48].copy_from_slice(&partner);
+        rec[48] = bits;
+        rec[49] = k as u8;
+        if let Some(d) = ball.dist(&cube) {
+            rec[50] = d;
+        }
+        if let Some(s) = &solver {
+            let m = axis_masks(&cube);
+            let stage = [(0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1)]
+                .iter()
+                .map(|&(a, b)| s.ctab.exact(&s.tabs.bp, &s.tabs.ranks, m[a], m[b]))
+                .min()
+                .unwrap();
+            let paired = (0..12).filter(|&p| cube.ep[p + 12] == (cube.ep[p] + 12) % 24).count() as u8;
+            rec[51] = 2 * stage + 12 - paired;
+        }
+        rec
+    };
+    let mut file = std::io::BufWriter::new(std::fs::File::create(out).unwrap_or_else(|e| fail(&format!("{}: {}", out, e))));
+    for start in (0..count).step_by(1 << 20) {
+        let end = (start + (1 << 20)).min(count);
+        let chunk: Vec<[u8; 52]> = (start..end).into_par_iter().map(&record).collect();
+        for rec in &chunk {
+            file.write_all(rec).unwrap();
+        }
+    }
+    eprintln!("{} records in {:.1} s", count, t0.elapsed().as_secs_f64());
+}
+
+/// Experiment: lightly scrambled cubes. The solved cube gets `--walk` random
+/// moves; the shortest solution is found exactly when it has at most
+/// `--forward` + `--ball` moves (every sequence of up to `--forward` moves is
+/// tried against a table of all cubes within `--ball` moves of solved), and
+/// compared with what the solver finds.
+fn short(args: &[String]) {
+    use cubenxnxn::free::Ball;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count, forward, depth) = (num("--walk", 12), num("--count", 10), num("--forward", 6), num("--ball", 5));
+    let mut seed = num("--seed", 5000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let t0 = Instant::now();
+    let ball = Ball::build_solved(depth as u8);
+    eprintln!("cubes by distance from solved: {:?}, {:.1} s", ball.levels, t0.elapsed().as_secs_f64());
+    let solver = Solver::new();
+    let params = params(args);
+    let (mut sum_exact, mut sum_solver, mut found, mut secs) = (0usize, 0usize, 0usize, 0.0);
+    for i in 0..count {
+        let (_, steps) = known_cube(&mut rnd, walk, true);
+        let cube = Cube::from_moves(&steps);
+        let t = Instant::now();
+        let exact = ball.shortest(&cube, forward).map(|p| {
+            let mut c = cube;
+            c.apply_seq(&p);
+            if !c.is_solved() {
+                fail(&format!("cube {}: the exact solution does not solve the cube", i));
+            }
+            p.len()
+        });
+        let s = t.elapsed().as_secs_f64();
+        let sol = solver.solve(&cube, &params).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        println!("cube {:2}: scrambled with {}, exact {:?} in {:.1} s, solver {}", i, walk, exact, s, sol.moves.len());
+        if let Some(e) = exact {
+            found += 1;
+            sum_exact += e;
+            sum_solver += sol.moves.len();
+            secs += s;
+        }
+    }
+    if found > 0 {
+        println!(
+            "{} cubes scrambled with {} moves: exact solution on {}, mean {:.2} in {:.1} s; solver on the same cubes {:.2}",
+            count,
+            walk,
+            found,
+            sum_exact as f64 / found as f64,
+            secs / found as f64,
+            sum_solver as f64 / found as f64
+        );
+    }
+}
+
+/// Experiment: what a search outside this program needs, as JSON: the 27 moves
+/// as permutations of the centre and wing positions, the centres of the 24
+/// orientations with the parity a reduced cube has in each, and the cubes of a
+/// scramble file (with `--solve`, also the shortest reduction the solver finds).
+fn free_export(args: &[String]) {
+    use cubenxnxn::cube::{perm_parity, MOVE_NAMES};
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let limit = opt(args, "--limit").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let solve = args.iter().any(|a| a == "--solve");
+    let ct = cubenxnxn::cube::tables();
+    let list = |v: &[u8]| format!("[{}]", v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(","));
+    let rows = |v: Vec<String>| format!("[{}]", v.join(","));
+    let dedges = |c: &Cube| -> Vec<u8> { c.ep[..12].iter().map(|&e| e % 12).collect() };
+    println!("{{");
+    println!("\"names\": {},", rows(MOVE_NAMES[..27].iter().map(|n| format!("\"{}\"", n)).collect()));
+    println!("\"ct_src\": {},", rows((0..27).map(|m| list(&ct.ct_src[m])).collect()));
+    println!("\"ep_src\": {},", rows((0..27).map(|m| list(&ct.ep_src[m])).collect()));
+    println!("\"rots\": {},", rows(ct.rots.iter().map(|r| list(&r.state.ct)).collect()));
+    // Parity of the dedge permutation against the corners in each orientation of a solved cube;
+    // face turns change neither, so every reduced, solvable cube in that orientation has it.
+    println!(
+        "\"rot_parity\": {},",
+        list(&ct.rots.iter().map(|r| perm_parity(&dedges(&r.state)) ^ perm_parity(&r.state.cp)).collect::<Vec<_>>())
+    );
+    let solver = solve.then(Solver::new);
+    let params = params(args);
+    let mut cubes = Vec::new();
+    for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
+        let cube = Cube::from_moves(&parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+        let shortest = solver.as_ref().map_or(0, |s| s.solve(&cube, &params).unwrap_or_else(|e| fail(&e)).shortest_reduction);
+        cubes.push(format!(
+            "{{\"scramble\": \"{}\", \"ct\": {}, \"ep\": {}, \"corner_parity\": {}, \"solver\": {}}}",
+            scr,
+            list(&cube.ct),
+            list(&cube.ep),
+            perm_parity(&cube.cp),
+            shortest
+        ));
+    }
+    println!("\"cubes\": {}", rows(cubes));
+    println!("}}");
+}
+
+/// Checks reductions found outside this program: each line of the file is
+/// `scramble<TAB>moves`, and the moves must leave a reduced cube.
+fn free_verify(args: &[String]) {
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let (mut ok, mut total, mut moves) = (0usize, 0usize, 0usize);
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut parts = line.split('\t');
+        let mut cube = Cube::from_moves(&parse_moves(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(&e)));
+        let reduction = parse_moves(parts.next().unwrap_or("")).unwrap_or_else(|e| fail(&e));
+        cube.apply_seq(&reduction);
+        total += 1;
+        moves += reduction.len();
+        if cubenxnxn::free::is_reduced(&cube) {
+            ok += 1;
+        } else {
+            println!("line {}: not reduced", total);
+        }
+    }
+    println!("{} of {} reduced, mean length {:.3}", ok, total, moves as f64 / total.max(1) as f64);
+}
+
+/// Experiment: is the end of the solver's reduction as short as it could be?
+/// The cube is solved, the reduction of the solution is cut `j` moves before
+/// the end of the joint phase, and the rest (j moves of the joint phase plus
+/// phase 3) is compared with the shortest reduction from that point with all
+/// moves, exact up to 12 moves.
+fn free_tail(args: &[String]) {
+    use cubenxnxn::free::{is_reduced, Ball};
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (limit, max_back, forward) = (num("--limit", 20), num("--back", 3), num("--forward", 6));
+    let ball = Ball::build(6);
+    let solver = Solver::new();
+    let params = params(args);
+    // Per j: cubes where the rest is short enough to be decided, where it got shorter, moves saved.
+    let mut decided = vec![0usize; max_back + 1];
+    let mut shorter = vec![0usize; max_back + 1];
+    let mut saved = vec![0usize; max_back + 1];
+    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit).enumerate() {
+        let cube = Cube::from_moves(&parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+        let sol = solver.solve(&cube, &params).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        let (a, k) = (sol.lens[0] + sol.lens[1], sol.lens[2]);
+        let mut line = format!("cube {:2}: joint {} + phase 3 {}:", i, a, k);
+        for j in 0..=max_back.min(a) {
+            let rest = j + k;
+            let mut x = cube;
+            x.apply_seq(&sol.moves[..a - j]);
+            // Exact when the answer is at most forward + 6; the rest is known to be at most `rest`.
+            if rest > forward + 7 {
+                line += &format!("  j={} ?", j);
+                continue;
+            }
+            let free = ball.shortest(&x, forward).map(|p| {
+                let mut c = x;
+                c.apply_seq(&p);
+                if !is_reduced(&c) {
+                    fail("a free reduction does not reduce the cube");
+                }
+                p.len()
+            });
+            // None can only mean rest == forward + 7 and nothing shorter exists.
+            let f = free.unwrap_or(rest);
+            decided[j] += 1;
+            if f < rest {
+                shorter[j] += 1;
+                saved[j] += rest - f;
+            }
+            line += &format!("  j={} {}->{}", j, rest, f);
+        }
+        println!("{}", line);
+    }
+    for j in 0..=max_back {
+        println!(
+            "cut {} moves before the end of the joint phase: decided on {} cubes, shorter on {}, {} moves saved in all",
+            j, decided[j], shorter[j], saved[j]
+        );
+    }
+}
+
+/// A cube for `known`: the moves of its base and of the walk away from it.
+fn known_cube(rnd: &mut impl FnMut(usize) -> usize, walk: usize, from_solved: bool) -> (Vec<u8>, Vec<u8>) {
+    use cubenxnxn::cube::skip_move;
+    // The base: a 3x3x3 state on the 4x4x4, from 40 random face turns.
+    let mut base: Vec<u8> = Vec::new();
+    while !from_solved && base.len() < 40 {
+        let m = rnd(18) as u8;
+        if base.last().is_none_or(|&l| !skip_move(l, m)) {
+            base.push(m);
+        }
+    }
+    // The walk. Undone, it must be a reduction that cannot be shortened at sight:
+    // its last move is wide, and no face turn can be commuted to its end. So face
+    // turns wait until the walk has left the axis of its first move. Two opposite
+    // wide moves in a row are one wide move and a rotation, so they are left out.
+    let mut steps: Vec<u8> = Vec::new();
+    while steps.len() < walk {
+        let m = rnd(36) as u8;
+        let axis = m / 3 % 3;
+        let one_axis = steps.iter().all(|&s| s / 3 % 3 == axis);
+        let wide_before = steps.iter().rev().take_while(|&&s| s / 3 % 3 == axis).any(|&s| s >= 18);
+        if (m < 18 && one_axis && !from_solved)
+            || (m >= 18 && wide_before)
+            || steps.last().is_some_and(|&l| skip_move(l, m))
+        {
+            continue;
+        }
+        steps.push(m);
+    }
+    (base, steps)
+}
+
+/// Experiment: beam search for a reduction with all moves, on the cubes of
+/// `known --walk K` (same seed, same cubes). `--solver file` is the result
+/// file of `known` for the same K, to put the solver's reductions next to it.
+fn free_beam(args: &[String]) {
+    use cubenxnxn::free::{is_reduced, Ball, Beam};
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count) = (num("--walk", 14), num("--count", 10));
+    let mut seed = num("--seed", 4000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let theirs: Option<Vec<usize>> = opt(args, "--solver").map(|p| {
+        std::fs::read_to_string(p)
+            .unwrap_or_else(|e| fail(&format!("{}: {}", p, e)))
+            .lines()
+            .map(|l| l.split('\t').nth(3).and_then(|v| v.parse().ok()).unwrap_or_else(|| fail("bad result file")))
+            .collect()
+    });
+    let t0 = Instant::now();
+    let ball = Ball::build(num("--ball", 6) as u8);
+    let solver = Solver::new();
+    eprintln!("ball {:?} and tables ready in {:.1} s", ball.levels, t0.elapsed().as_secs_f64());
+    let beam = Beam {
+        ball: &ball,
+        solver: &solver,
+        width: num("--width", 300_000),
+        w_stage: num("--w-stage", 2) as i32,
+        w_paired: num("--w-paired", 1) as i32,
+        max_depth: num("--depth", walk.saturating_sub(4)),
+    };
+    let (mut found, mut sum, mut sum_theirs, mut within, mut ms) = (0usize, 0usize, 0usize, 0usize, 0.0);
+    for i in 0..count {
+        let (base, steps) = known_cube(&mut rnd, walk, false);
+        let mut cube = Cube::from_moves(&base);
+        cube.apply_seq(&steps);
+        let t = Instant::now();
+        let (path, looked) = beam.reduce(&cube);
+        let secs = t.elapsed().as_secs_f64();
+        ms += secs * 1e3;
+        let len = path.as_ref().map(|p| {
+            let mut c = cube;
+            c.apply_seq(p);
+            if !is_reduced(&c) {
+                fail(&format!("cube {}: the beam's reduction does not reduce the cube", i));
+            }
+            p.len()
+        });
+        let s = theirs.as_ref().map(|t| t[i]);
+        println!(
+            "cube {:2}: known {}, beam {:?}, solver {:?}, {:.1} M cubes, {:.1} s",
+            i,
+            walk,
+            len,
+            s,
+            looked as f64 / 1e6,
+            secs
+        );
+        if let Some(l) = len {
+            found += 1;
+            sum += l;
+            sum_theirs += s.unwrap_or(0);
+            within += (l <= walk) as usize;
+        }
+    }
+    println!(
+        "{} cubes, {} moves from a reduced cube, width {}: beam found a reduction on {}, at most {} moves on {}",
+        count, walk, beam.width, found, walk, within
+    );
+    if found > 0 {
+        println!(
+            "on those {}: beam {:.2}, solver {:.2}; mean time {:.1} s",
+            found,
+            sum as f64 / found as f64,
+            sum_theirs as f64 / found as f64,
+            ms / 1e3 / count as f64
+        );
+    }
+}
+
+/// 4x4x4 cubes with a known short answer. A random reduced cube (or the solved
+/// cube with `--base solved`) gets `--walk` random moves out of all 36, so a
+/// reduction (or a solution) of at most that many moves exists: the walk
+/// undone. The solver is then run on the cube and its lengths are compared
+/// with the known ones.
+fn known(args: &[String]) {
+    use cubenxnxn::c3::C3;
+    use cubenxnxn::cube::inv_seq;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count) = (num("--walk", 0), num("--count", 50));
+    if walk == 0 {
+        usage();
+    }
+    let from_solved = match opt(args, "--base") {
+        None | Some("reduced") => false,
+        Some("solved") => true,
+        Some(_) => usage(),
+    };
+    let mut seed = num("--seed", 4000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let mut out = opt(args, "--out").map(|p| {
+        std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
+    });
+    let t0 = Instant::now();
+    let solver = Solver::new();
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let params = params(args);
+    eprintln!("{:?}", params);
+
+    // Sums of: 3x3x3 length of the base, shortest reduction found, reduction used,
+    // 3x3x3 used, total.
+    let mut sums = [0usize; 5];
+    let mut gap_hist = std::collections::BTreeMap::new();
+    let mut times = Vec::new();
+    for i in 0..count {
+        let (base, steps) = known_cube(&mut rnd, walk, from_solved);
+        let base_cube = Cube::from_moves(&base);
+        let mut cube = base_cube;
+        cube.apply_seq(&steps);
+        // The known answer, checked: the walk undone, then the 3x3x3 of the base.
+        let c3 = C3::from_cube(&base_cube).unwrap_or_else(|| fail("the base is not a 3x3x3 state"));
+        let base333 = solver.t3.solve(&c3, 100_000, Some(&solver.big));
+        let mut check = cube;
+        check.apply_seq(&inv_seq(&steps));
+        check.apply_seq(&base333);
+        if !check.is_solved() {
+            fail(&format!("cube {}: the known solution does not solve the cube", i));
+        }
+
+        let t = Instant::now();
+        let sol = solver.solve(&cube, &params).unwrap_or_else(|e| fail(&format!("cube {}: {}", i, e)));
+        let ms = t.elapsed().as_secs_f64() * 1e3;
+        times.push(ms);
+        let used = sol.lens[0] + sol.lens[1] + sol.lens[2];
+        for (k, v) in [base333.len(), sol.shortest_reduction, used, sol.lens[3], sol.moves.len()].into_iter().enumerate() {
+            sums[k] += v;
+        }
+        *gap_hist.entry(sol.shortest_reduction as i64 - walk as i64).or_insert(0usize) += 1;
+        if let Some(o) = out.as_mut() {
+            writeln!(
+                o,
+                "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.0}\t{}\t{}\t{}",
+                i,
+                walk,
+                base333.len(),
+                sol.shortest_reduction,
+                used,
+                sol.lens[3],
+                sol.moves.len(),
+                ms,
+                format_moves(&base),
+                format_moves(&steps),
+                format_moves(&sol.moves)
+            )
+            .unwrap();
+        }
+    }
+    let n = count as f64;
+    let mean = |k: usize| sums[k] as f64 / n;
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    println!("{} cubes, {} moves away from {}", count, walk, if from_solved { "the solved cube" } else { "a reduced cube" });
+    if from_solved {
+        println!("known to exist: a solution of {} moves", walk);
+        println!("found: total {:.2}  (reduction {:.2} + 3x3x3 {:.2})", mean(4), mean(2), mean(3));
+    } else {
+        println!("known to exist: reduction {} + 3x3x3 {:.2} = {:.2}", walk, mean(0), walk as f64 + mean(0));
+        println!(
+            "found: shortest reduction {:.2}; solution {:.2}  (reduction {:.2} + 3x3x3 {:.2})",
+            mean(1),
+            mean(4),
+            mean(2),
+            mean(3)
+        );
+        println!("shortest reduction found minus the known one: {:?}", gap_hist);
+    }
+    println!(
+        "time per solve: mean {:.0} ms, median {:.0} ms, max {:.0} ms",
+        times.iter().sum::<f64>() / n,
+        times[times.len() / 2],
+        times[times.len() - 1]
+    );
+}
+
+/// Experiment: is phase 3 longer than it has to be? A reduced cube gets `--walk`
+/// random phase-3 moves; the shortest phase-3 solution is compared with the
+/// shortest reduction that may use any move, found exactly up to
+/// `--forward` + `--ball` moves.
+fn free3(args: &[String]) {
+    use cubenxnxn::cube::skip_move;
+    use cubenxnxn::free::{is_reduced, key, Ball};
+    use cubenxnxn::tables::P3_MOVES;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (walk, count, forward, depth) = (num("--walk", 9), num("--count", 20), num("--forward", 4), num("--ball", 5));
+    let mut seed = num("--seed", 3000 + walk) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+
+    // The key must not change when face turns and rotations are done first, and
+    // must tell a reduced cube from one with a parity the 3x3x3 cannot fix.
+    let ct = cubenxnxn::cube::tables();
+    let reduced_key = key(&Cube::solved());
+    for _ in 0..2000 {
+        let w: Vec<u8> = (0..rnd(12)).map(|_| rnd(36) as u8).collect();
+        let mut h: Vec<u8> = ct.rots[rnd(24)].seq.clone();
+        h.extend((0..rnd(30)).map(|_| rnd(18) as u8));
+        let k = key(&Cube::from_moves(&w));
+        h.extend(&w);
+        if key(&Cube::from_moves(&h)) != k {
+            fail("the class key changed under face turns and rotations done first");
+        }
+        if (k == reduced_key) != is_reduced(&Cube::from_moves(&w)) {
+            fail("the class key and the reduced test disagree");
+        }
+    }
+    let swapped = Cube::from_moves(&parse_moves("Uw2 Rw2 U2 Rw2 R2 U2 Rw2 Uw2").unwrap());
+    if is_reduced(&swapped) || key(&swapped) == reduced_key || swapped.with_home_centres().is_none() {
+        fail("two swapped dedges pass for a reduced cube");
+    }
+
+    let t0 = Instant::now();
+    let ball = Ball::build(depth as u8);
+    eprintln!("classes by distance from a reduced cube: {:?}, {:.1} s", ball.levels, t0.elapsed().as_secs_f64());
+    let solver = Solver::new();
+    let mut table = std::collections::BTreeMap::new();
+    let (mut sum3, mut sum_free, mut both) = (0usize, 0usize, 0usize);
+    let t0 = Instant::now();
+    for i in 0..count {
+        let mut steps: Vec<u8> = Vec::new();
+        while steps.len() < walk {
+            let m = P3_MOVES[rnd(P3_MOVES.len())];
+            if steps.last().is_none_or(|&l| !skip_move(l, m)) {
+                steps.push(m);
+            }
+        }
+        let cube = Cube::from_moves(&steps);
+        let d3 = solver.phase3_length(&cube, walk).unwrap_or_else(|| fail(&format!("cube {}: phase 3 found nothing", i)));
+        let free = ball.shortest(&cube, forward).map(|path| {
+            let mut c = cube;
+            c.apply_seq(&path);
+            if !is_reduced(&c) {
+                fail(&format!("cube {}: the free reduction does not reduce the cube", i));
+            }
+            path.len()
+        });
+        if let Some(f) = free {
+            sum3 += d3;
+            sum_free += f;
+            both += 1;
+        }
+        *table.entry((d3, free)).or_insert(0usize) += 1;
+    }
+    println!("{} cubes, {} phase-3 moves away from a reduced cube; {:.1} s", count, walk, t0.elapsed().as_secs_f64());
+    println!("(phase-3 length, shortest reduction with all moves; None = more than {}): cubes", forward + depth);
+    for (k, v) in &table {
+        println!("  {:?}: {}", k, v);
+    }
+    if both > 0 {
+        println!(
+            "where both are known ({} cubes): phase 3 {:.2}, all moves {:.2}",
+            both,
+            sum3 as f64 / both as f64,
+            sum_free as f64 / both as f64
+        );
+    }
+}
+
+/// A walk of `len` moves out of the 27 that matter, away from a reduced cube:
+/// it starts with a wide move and keeps face turns off the axis of its first moves,
+/// so that undoing it is a reduction that cannot be shortened at sight.
+fn free_walk(rnd: &mut impl FnMut(usize) -> usize, len: usize) -> Vec<u8> {
+    let mut steps: Vec<u8> = Vec::new();
+    while steps.len() < len {
+        let m = rnd(27) as u8;
+        let one_axis = steps.iter().all(|&s| s / 3 % 3 == m / 3 % 3);
+        if (m < 18 && one_axis) || steps.last().is_some_and(|&l| cubenxnxn::cube::skip_move(l, m)) {
+            continue;
+        }
+        steps.push(m);
+    }
+    steps
+}
+
+/// Experiment: what a cube K moves away from a reduced cube looks like, for
+/// several K: staging distance of the centres (best orientation), dedges
+/// already paired, dedges with one wing in each half (best frame).
+fn free_features(args: &[String]) {
+    use cubenxnxn::tables::axis_masks;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let count = num("--count", 200);
+    let mut seed = num("--seed", 77) as u64;
+    let mut rnd = |n: usize| {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 33) as usize % n
+    };
+    let solver = Solver::new();
+    println!("K      stage (mean, share <= 6, <= 8)   paired   split");
+    for k in [4usize, 6, 8, 10, 12, 14, 16, 18, 20, 60] {
+        let (mut stage, mut le6, mut le8, mut paired, mut split) = (0usize, 0usize, 0usize, 0usize, 0usize);
+        for _ in 0..count {
+            let cube = Cube::from_moves(&free_walk(&mut rnd, k));
+            let variants = solver.variant_cubes(&cube);
+            let st = variants
+                .iter()
+                .map(|(v, _)| {
+                    let m = axis_masks(v);
+                    solver.ctab.exact(&solver.tabs.bp, &solver.tabs.ranks, m[2], m[0])
+                })
+                .min()
+                .unwrap() as usize;
+            let sp = variants
+                .iter()
+                .map(|(v, _)| (0..12).fold(0u32, |a, s| a | 1 << (v.ep[s] % 12)).count_ones())
+                .max()
+                .unwrap() as usize;
+            let pr = (0..12).filter(|&s| cube.ep[s + 12] == (cube.ep[s] + 12) % 24).count();
+            stage += st;
+            le6 += (st <= 6) as usize;
+            le8 += (st <= 8) as usize;
+            paired += pr;
+            split += sp;
+        }
+        let n = count as f64;
+        println!(
+            "{:2}     {:5.2}  {:4.2}  {:4.2}                {:5.2}    {:5.2}",
+            k,
+            stage as f64 / n,
+            le6 as f64 / n,
+            le8 as f64 / n,
+            paired as f64 / n,
+            split as f64 / n
+        );
     }
 }
 

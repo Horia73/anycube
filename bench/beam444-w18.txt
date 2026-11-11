@@ -1,0 +1,15 @@
+ball [1, 9, 162, 3168, 61764, 1198247, 23572977] and tables ready in 5.6 s
+cube  0: known 18, beam Some(18), solver Some(18), 74.8 M cubes, 14.0 s
+cube  1: known 18, beam None, solver Some(23), 74.4 M cubes, 18.3 s
+cube  2: known 18, beam Some(18), solver Some(22), 75.4 M cubes, 15.4 s
+cube  3: known 18, beam Some(16), solver Some(23), 61.1 M cubes, 11.0 s
+cube  4: known 18, beam None, solver Some(23), 74.5 M cubes, 13.8 s
+cube  5: known 18, beam None, solver Some(18), 75.4 M cubes, 19.6 s
+cube  6: known 18, beam None, solver Some(19), 77.4 M cubes, 11.1 s
+cube  7: known 18, beam None, solver Some(24), 74.5 M cubes, 17.1 s
+cube  8: known 18, beam Some(22), solver Some(22), 75.6 M cubes, 17.3 s
+cube  9: known 18, beam Some(21), solver Some(22), 75.3 M cubes, 24.9 s
+cube 10: known 18, beam None, solver Some(23), 74.7 M cubes, 16.8 s
+cube 11: known 18, beam None, solver Some(23), 75.4 M cubes, 18.9 s
+12 cubes, 18 moves from a reduced cube, width 300000: beam found a reduction on 5, at most 18 moves on 3
+on those 5: beam 19.00, solver 21.40; mean time 16.5 s

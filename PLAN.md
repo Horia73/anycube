@@ -33,6 +33,11 @@ Am verificat ideea prin numărarea stărilor, înainte să scriu cod. O fază cu
   liberă și totalul ar ieși mai lung, nu mai scurt.
 - Singura cale de a recupera cele 2,4 mutări e ca reducerea să fie o singură
   fază liberă, iar pentru ea nu există un prag de căutare suficient de bun.
+- Corectare (2026-11-11, măsurat cu `free3`): faza 3 nu pierde nimic din
+  stările de la care pornește. Cea mai scurtă reducere cu toate mutările are
+  aceeași lungime ca faza 3 pe toate cele 32 de cuburi cu faza 3 de cel mult
+  12 mutări. Pierderea vine din obligația de a trece printr-o stare cu centrele
+  așezate, nu din mutările restrânse ale fazei 3.
 
 ## Ce am încercat după 40,67
 
@@ -60,6 +65,87 @@ Idei rămase, în ordinea în care le-aș încerca:
 2. Pruning pe muchii în faza unită: un nivel în plus în același timp, ~−0,2.
 3. Tabel de împerechere pentru 4–5 perechi sub toate mutările, ca faza liberă
    să poată cere „k perechi deja făcute": −0,5 estimat, muncă multă.
+
+## Banc cu reduceri de lungime cunoscută (2026-11-10)
+
+`cubenxnxn known --walk K`: un cub redus aleator primește K mutări aleatoare
+din toate cele 36, deci există o reducere de cel mult K mutări. Cifrele sunt
+în `bench/RESULTS.md`; pe scurt, 30 de cuburi pe lungime:
+
+| K | Cea mai scurtă reducere găsită | Peste cea cunoscută |
+|---|---|---|
+| 14 | 18,00 | +4,0 |
+| 16 | 20,90 | +4,9 |
+| 18 | 22,43 | +4,4 |
+| 20 | 22,73 | +2,7 |
+| cuburi aleatoare | 23,10 | necunoscut |
+
+- La K = 20 cubul e aproape aleator pentru solver (22,73 față de 23,10), iar
+  reducerea în trei faze e cu 2,7 mutări mai lungă decât una care există
+  sigur. Asta susține estimarea de ~20,5 pentru o reducere liberă.
+- La K = 14, pe 12 cuburi din 30 solverul găsește reducerea cunoscută sau una
+  mai scurtă, iar pe alte 12 ajunge la 21–24, ca pe un cub aleator:
+  apropierea de un cub redus nu îl ajută decât dacă drumul scurt se
+  potrivește cu fazele.
+- Bancul e măsura pentru orice căutare liberă a reducerii: o idee nouă
+  trebuie să găsească ≤ K aici înainte să fie încercată pe cuburi aleatoare.
+
+## Căutare liberă a reducerii (2026-11-11)
+
+Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
+
+- **Clasa unui cub** (`key`): cuburile care diferă doar prin mutări de față și
+  rotații făcute înainte au aceleași reduceri. Cheia e formată din centre,
+  perechile de poziții care țin aceeași muchie și două parități.
+- **Tabelul din jurul țintei** (`Ball`): toate clasele la cel mult 6 mutări de
+  un cub redus, 24,8 milioane, generat în 5 s. Numărul lor crește de ~19,6 ori
+  pe mutare, nu de 22. Cu asta, cea mai scurtă reducere liberă a unui cub
+  aleator iese ~21 de mutări, nu 20,5; solverul găsește 23,1.
+- **Faza 3 e deja optimă** pentru stările ei (vezi corectarea de mai sus).
+- **Beam search cu toate mutările**, ghidat de distanța exactă de așezare a
+  centrelor și de numărul de muchii împerecheate, lățime 300.000, ~10–17 s pe
+  cub pe o mașină încărcată:
+
+| K | Cuburi | Beam ≤ K | Solver ≤ K | Beam mai scurt decât solverul |
+|---|---|---|---|---|
+| 14 | 30 | 13 | 12 | 6 |
+| 16 | 20 | 2 | 3 | 0 |
+| 18 | 12 | 3 | 2 | 3 |
+| 20 | 12 | 0 | 0 | 1 |
+| aleatoare | 6 | | | 1 |
+
+- La 14 mutări beam-ul găsește reducerea cunoscută pe alte cuburi decât
+  solverul, deci se completează. De la 16 în sus nu mai găsește nimic pe
+  majoritatea cuburilor, iar pe cuburi aleatoare e mai slab decât solverul.
+- Cauza: semnalele se sting. La 14 mutări de un cub redus, distanța de
+  așezare a centrelor e 7,8 față de 9,1 la un cub aleator, iar muchiile
+  împerecheate 1,4 față de 0,5. O căutare liberă are nevoie de un semnal
+  care să vadă la 15 mutări distanță; semnalele făcute de mână nu văd.
+- Coada reducerii e deja optimă (`free-tail`, 24 de cuburi): tăiată cu 0–3
+  mutări înainte de sfârșitul fazei libere și refăcută exact cu toate
+  mutările, iese mai scurtă cu o mutare pe 2 cuburi din 23 și pe niciunul din
+  cele 8 la care s-au putut tăia 3 mutări. Ce pierde reducerea în trei faze
+  pierde în primele ~10 mutări, adică în direcția aleasă la început.
+- Rezolvarea cubului invers NU merge la 4x4x4 (verificat: 0 din 60 de soluții
+  întoarse rezolvă cubul real). Centrele de aceeași culoare nu se deosebesc,
+  iar permutarea lor ascunsă iese, după întoarcere, ca centre pe fețe greșite.
+  Cifrele 40,37 și 39,67 notate inițial aici nu erau rezultate reale.
+- Rețea mică încercată (`ml/`, 4,4 milioane de parametri, 192 de milioane de
+  cuburi, 36 de minute pe GPU-ul Mac-ului): deosebește de ~10 ori mai bine
+  decât scorul de mână, dar beam search-ul ghidat de ea găsește reduceri de
+  27–30 de mutări pe o minoritate de cuburi aleatoare, față de 23 la solver.
+  La scara asta nu merge; o încercare serioasă ar însemna de zeci de ori mai
+  multă antrenare și lățimi de căutare mult mai mari, fără garanție.
+- O mutare W pusă înaintea amestecului NU merge nici ea, din același motiv
+  (verificat: 0 din 3.240 de încercări rezolvă cubul real). Cifra de 39,85
+  notată inițial aici nu era un rezultat real.
+- Regulă de lucru de acum: o lungime contează doar dacă soluția a fost
+  aplicată pe cubul inițial și l-a rezolvat.
+- Cuburi puțin amestecate: 10 mutări → 10, 15 → 28, 20 → 42. De reparat cu un
+  tabel în jurul cubului rezolvat (optim până la ~12–13 mutări).
+- Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
+  cunoscută; bancul și tabelul dau etichete exacte până la 12 mutări). Câștigul
+  maxim pe cuburi aleatoare e ~2 mutări, iar reușita nu e sigură.
 
 ## Viteză
 
@@ -110,7 +196,8 @@ Ce a mai rămas:
   - etapa 3x3x3 se rezolvă o singură dată, după prima reducere găsită;
   - mutările nu se anulează la trecerea dintre faze;
   - fazele 1 și 2 sunt separate, ca la TPR înainte să le unim noi;
-  - nu încearcă scramble-ul invers.
+  - nu încearcă scramble-ul invers (corectat 2026-11-11: nu e o pierdere;
+    inversul nu merge pe cuburi cu centre care nu se deosebesc între ele).
 - Corectare (2026-11-10, după ce am citit `Search.java` și `PhaseSearch.java`):
   scrisesem aici că fazele lui taie lacom și că nu încearcă alte axe. Nu e
   așa. Fiecare fază pornește din 200–500 de soluții ale fazei dinainte,

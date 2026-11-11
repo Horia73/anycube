@@ -1275,3 +1275,257 @@ to be run again on the joined code.
   half turns of three layers move whole blocks. Its length falls steadily
   with the width (16.9, 16.1, 15.3 moves at 30,000, 100,000 and 300,000),
   which says the beam is still far from the shortest.
+
+## 4x4x4: cubes with a known short reduction (2026-11-10)
+
+`cubenxnxn known --walk K --count 30 --time 30000`: a random 3x3x3 state on
+the 4x4x4 (40 random face turns) gets K random moves out of all 36, so a
+reduction of at most K moves exists: the walk undone. The walk starts with a
+wide move, keeps face turns off the axis of its first moves and never has two
+opposite wide moves in a row, so the known reduction cannot be shortened at
+sight. It is still only an upper bound: on a few cubes the solver found a
+shorter one. Every known solution and every solver solution was checked.
+
+"Shortest found" is the shortest reduction the search came across; the
+solution may use a longer one with a shorter 3x3x3. The known total is the
+walk plus a two-phase 3x3x3 solution of the base, which is not optimised.
+Files: `known444-wK.tsv` (cube, K, 3x3x3 of the base, shortest reduction
+found, reduction used, 3x3x3 used, total, ms, base, walk, solution).
+
+| Walk K | Known reduction | Shortest found | Found minus known | Known total | Solver total |
+|---|---|---|---|---|---|
+| 14 | at most 14 | 18.00 | +4.0 | 32.80 | 35.77 |
+| 16 | at most 16 | 20.90 | +4.9 | 34.47 | 38.47 |
+| 18 | at most 18 | 22.43 | +4.4 | 36.70 | 39.80 |
+| 20 | at most 20 | 22.73 | +2.7 | 38.93 | 40.00 |
+| 60 (random cubes) | unknown | 23.10 | | | 40.27 |
+
+Found minus known, cube by cube:
+
+| Walk K | Shorter | Equal | 1 to 3 longer | 4 to 6 longer | 7 to 10 longer |
+|---|---|---|---|---|---|
+| 14 | 3 | 9 | 3 | 3 | 12 |
+| 16 | 2 | 4 | 1 | 10 | 13 |
+| 18 | 0 | 2 | 2 | 26 | 0 |
+| 20 | 0 | 0 | 26 | 4 | 0 |
+
+- A cube 20 moves from a reduced cube is almost a random cube to the solver:
+  22.73 against 23.10. On those the three-phase reduction is 2.7 moves longer
+  than one that is known to exist.
+- At 14 moves the result splits in two: on 12 of the 30 cubes the solver finds
+  the known reduction or a shorter one, on another 12 it lands at 21 to 24, no
+  better than on a random cube. Being close to a reduced cube does not help
+  unless the short path happens to fit the phases.
+
+The machine was busy during these runs (load average 25 to 32 on 8 cores).
+The time limit was raised to 30 s so that the endpoint counts, not the clock,
+end each stage; solves took 3 to 4.5 s on average.
+
+## 4x4x4: reductions with all moves (2026-11-11)
+
+Code in `src/free.rs`. Two cubes have the same reductions when one is the
+other preceded by face turns and whole-cube rotations; `key` names that class
+(centres, which positions hold the halves of the same dedge, two parities).
+The key was checked on 2,000 random cubes: it does not change under face turns
+and rotations done first, and it equals the key of the solved cube exactly
+when the cube is reduced.
+
+Classes by distance from a reduced cube, with the 27 moves that matter (face
+turns, Uw, Rw, Fw), generated in 5 s:
+
+| Moves | 0 | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|---|
+| Classes | 1 | 9 | 162 | 3,168 | 61,764 | 1,198,247 | 23,572,977 |
+
+The count grows about 19.6 times per move. With 4.1×10^27 classes in all, a
+random cube should have its shortest reduction at about 21 moves.
+
+### Phase 3 against the shortest reduction with any move
+
+`cubenxnxn free3 --walk W --forward F --ball 6`: a reduced cube gets W random
+phase-3 moves; the shortest phase-3 solution is compared with the shortest
+reduction with all moves, which is exact up to F + 6 moves (every sequence of
+F moves is tried against the table above).
+
+| Run | Cubes | Phase 3 at most F + 6 | Same length with all moves | Shorter with all moves |
+|---|---|---|---|---|
+| `--walk 16 --forward 4` (exact to 10) | 40 | 25 | 25 | 0 |
+| `--walk 24 --forward 6` (exact to 12) | 24 | 7 | 7 | 0 |
+
+In the second run one cube with a 13-move phase 3 has a 12-move reduction with
+all moves; the other 16 cubes with phase 3 of 13 or 14 moves have none of 12
+or fewer. So phase 3 is as short as any reduction from the states it starts
+from, at least up to 12 moves: what the three-phase reduction loses, it loses
+by having to pass through a state with staged centres.
+
+### What a cube K moves from a reduced cube looks like
+
+`cubenxnxn free-features`, 200 cubes per K: exact staging distance of the
+centres (best of the six ways of giving the colour pairs an axis) and dedges
+already paired.
+
+| K | Staging distance | Share at most 6 | Dedges paired |
+|---|---|---|---|
+| 8 | 5.31 | 0.65 | 2.83 |
+| 10 | 6.33 | 0.44 | 2.38 |
+| 12 | 7.20 | 0.29 | 1.82 |
+| 14 | 7.84 | 0.18 | 1.36 |
+| 16 | 8.12 | 0.15 | 1.17 |
+| 18 | 8.61 | 0.10 | 0.99 |
+| 20 | 8.52 | 0.09 | 1.01 |
+| 60 (random) | 9.09 | 0.00 | 0.48 |
+
+### Beam search with all moves on the known-reduction cubes
+
+`cubenxnxn free-beam --walk K --depth K-2 --solver bench/known444-wK.tsv`:
+each level keeps the 300,000 cubes with the lowest 2 × staging distance −
+dedges paired, and a path ends as soon as it is within 6 moves of a reduced
+cube. It can find reductions of up to K + 4 moves (24 for the random cubes).
+Same cubes as the `known` runs above; "solver" is the shortest reduction the
+three-phase search came across. Every reduction was checked. Logs:
+`beam444-wK.txt`.
+
+| K | Cubes | Beam found any | Beam at most K | Solver at most K | Either at most K | Beam shorter than solver | Solver mean | Best of both | Beam time |
+|---|---|---|---|---|---|---|---|---|---|
+| 14 | 30 | 15 | 13 | 12 | 17 | 6 | 18.00 | 17.10 | 9.9 s |
+| 16 | 20 | 3 | 2 | 3 | 3 | 0 | 21.35 | 21.35 | 13.0 s |
+| 18 | 12 | 5 | 3 | 2 | 4 | 3 | 21.67 | 20.67 | 16.5 s |
+| 20 | 12 | 3 | 0 | 0 | 0 | 1 | 22.83 | 22.75 | 14.2 s |
+| 60 (random) | 6 | 2 | | | | 1 | 22.67 | 22.50 | 17.5 s |
+
+- At 14 moves the beam finds the known reduction about as often as the solver
+  and on different cubes. From 16 on it finds nothing on most cubes, and on
+  random cubes it is worse than the solver at four times the time.
+- The signals fade: 14 moves from a reduced cube the staging distance is 7.8
+  against 9.1 on a random cube. Nothing in this score tells the beam which
+  cubes are 15 moves away rather than 21.
+
+The machine was very busy during these runs (load average 50 to 95 on 8
+cores), so the times are upper estimates.
+
+## 4x4x4: the inverse cube and a wide move in front do NOT work (2026-11-11)
+
+Two ideas were measured by solving other cubes and counting lengths, and
+both were wrong. This section replaces the figures first written here
+(40.37 and 39.67 for "cube and inverse", 39.85 for "a wide move in front"):
+none of those is a real result.
+
+- **Inverse cube**: the solution of the inverse scramble, undone, was taken
+  to solve the scramble.
+- **Wide move in front**: the solution of "w then scramble", followed by one
+  wide move, was taken to solve the scramble.
+
+Applied to the real cubes with `cubenxnxn verify --size 4`:
+
+| Claimed solutions | Solve the cube |
+|---|---|
+| plain solutions of the first 60 cubes (control) | 60 of 60 |
+| undone solutions of the 60 inverse scrambles | 0 of 60 |
+| 180 solutions of cubes with a wide move in front, each tried with all 18 wide moves as the last move | 0 of 3,240 |
+
+The reason is that the four centres of a colour cannot be told apart. A
+solution of the inverse cube leaves every centre on a face of its colour but
+not in its own place; undone on the real cube, that hidden permutation of
+centres is carried through the scramble and comes out as centres on wrong
+faces (the wings and corners do end up solved). The same happens with a move
+in front. It would only work if the solver put every centre back in its own
+place, which is a much longer solve. For the same reason "does not try the
+inverse scramble" is not a loss of cube555 on the 5x5x5.
+
+What remains true from those runs: the default mode on the first 60 cubes
+gives 40.88 in 2.75 s, twice the effort in one direction 40.57 in 4.42 s, and
+`--mode full` 40.10 on the first 30 cubes (18.2 s on a busy machine).
+
+## 4x4x4: is the end of the reduction as short as it could be? (2026-11-11)
+
+`cubenxnxn free-tail bench/scrambles-1000.txt --limit 24 --back 3`: the cube
+is solved with the default flags, the reduction of the solution is cut j moves
+before the end of the joint phase, and what follows (j moves of the joint
+phase plus phase 3) is compared with the shortest reduction from that point
+with all moves, exact up to 12 moves (so decided when the rest is at most 13).
+
+| Cut j moves before the end of the joint phase | Cubes decided | Shorter with all moves | Moves saved |
+|---|---|---|---|
+| 0 | 23 | 2 | 2 |
+| 1 | 19 | 1 | 1 |
+| 2 | 12 | 1 | 1 |
+| 3 | 8 | 0 | 0 |
+
+The one cube that is shorter at j = 1 and j = 2 is one of the two at j = 0.
+So the last 12 to 13 moves of the solver's reduction are almost always as
+short as any reduction from that point: whatever the three-phase reduction
+loses against a free one, it loses in its first ten moves or so.
+
+## 4x4x4: a small network as the estimate of the distance to a reduced cube (2026-11-11)
+
+`ml/reduce_net.py`: a ResMLP with 4.4 million parameters, trained on the GPU
+of the M1 Pro for 36 minutes on 192 million cubes from `free-dump` (a reduced
+cube plus K random moves, K from 1 to 26; the label is K, or the exact
+distance when it is at most 6). Its input is what decides the reductions of a
+cube: which pairs of centres have the same or opposite colours, where the
+other half of each wing's dedge is, and the wing parity.
+
+Share of 300,000 random cubes that look at least as close to a reduced cube
+as the median cube K moves away (3,000 cubes per K, none seen in training);
+the hand score is the one of the beam search above:
+
+| K | Network's estimate | Network | Hand score |
+|---|---|---|---|
+| 8 | 9.20 ± 2.04 | 0.0003% | 0.001% |
+| 10 | 12.01 ± 3.04 | 0.011% | 0.25% |
+| 12 | 14.49 ± 3.44 | 0.26% | 2.7% |
+| 14 | 16.34 ± 3.27 | 1.6% | 19.6% |
+| 16 | 17.56 ± 3.09 | 5.8% | 19.6% |
+| 18 | 18.56 ± 2.72 | 13.1% | 38.4% |
+| 20 | 19.33 ± 2.29 | 22.7% | 38.4% |
+| random | 20.66 ± 1.32 | | |
+
+`ml/reduce_beam.py`: beam search with all moves guided by the network alone
+(no table near the goal), up to 30 moves, on the first cubes of
+`scrambles-1000.txt`; every reduction was checked with `free-verify`. The
+solver's shortest reduction on these 20 cubes averages 23.05.
+
+| Beam width | Cubes | Reduction found | Lengths | Time per cube (Mac GPU) |
+|---|---|---|---|---|
+| 1,024 | 20 | 1 | 29 | 5 s |
+| 4,096 | 20 | 4 | 28, 29, 30, 30 | 42 s |
+| 16,384 | 10 | 2 | 27, 29 | 47 s |
+
+The network is about ten times more selective than the hand score, and a beam
+guided by it is still far behind the solver: 27 to 30 moves on a minority of
+cubes against 23. On cubes close to a reduced cube it works (an 11-move walk
+is found in 11 moves at width 4,096).
+
+## 4x4x4: lightly scrambled cubes (2026-11-11)
+
+`cubenxnxn known --walk N --base solved --count 20`, default flags: the
+solved cube gets N random moves.
+
+| N | Solver, mean length |
+|---|---|
+| 10 | 10.00 |
+| 15 | 28.25 |
+| 20 | 41.75 |
+| 25 | 41.70 |
+
+The machine was running the beam search above on its GPU during these runs.
+
+## 4x4x4: our solutions in single-layer quarter turns (2026-11-11)
+
+CayleyPy (arXiv 2502.13266) reports 4x4x4 results in the metric of the Kaggle
+Santa 2023 challenge: every quarter turn of a single layer is one move, no
+piece is fixed. On 43 scrambles of that challenge: 53.49 for the best
+submissions combined, 48.98 for one network with beam width 2^24, 46.51 for
+29 networks. On its first 20 scrambles, one network gives about 58 at width
+2^18, 55 at 2^20, 52 at 2^22 and 50 at 2^24.
+
+Our 1,000 default solutions (`default-results.tsv`, 40.60 in OBTM) counted in
+that metric: 71.36 move by move (wide quarter turn 2, half turn 2, wide half
+turn 4), 66.50 when each run of turns on one axis is written in the cheapest
+way. The solver does not optimise for this metric, and their solutions are
+not published, so they cannot be counted in OBTM.
+
+Counting bound, the same for both metrics: canonical sequences grow 20.73
+times per move in OBTM and 18.52 times per single-layer quarter turn; their
+number reaches the 7.4×10^45 positions at length 35 in OBTM and 37 in
+single-layer quarter turns.

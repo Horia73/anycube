@@ -113,6 +113,8 @@ pub struct Solution {
     pub moves: Vec<u8>,
     /// Lengths of phase 1, 2, 3 and the 3x3x3 stage.
     pub lens: [usize; 4],
+    /// The shortest reduction the search came across; the solution may use a longer one.
+    pub shortest_reduction: usize,
 }
 
 pub struct Solver {
@@ -540,6 +542,7 @@ impl Solver {
                 (t_start.elapsed() - t_123).as_secs_f64() * 1e3
             );
         }
+        let shortest_reduction = items.iter().map(|it| it.len123).min().unwrap_or(0);
         let (_, item, moves333) = best;
         let (i, moves3) = &reds[items[item].red];
         let c2 = &found[*i];
@@ -558,7 +561,21 @@ impl Solver {
             return Err("internal error: solution does not solve the cube".into());
         }
         let len1 = c2.len1 as usize;
-        Ok(Solution { moves, lens: [len1, c2.moves.len() - len1, moves3.len(), moves333.len()] })
+        Ok(Solution {
+            moves,
+            lens: [len1, c2.moves.len() - len1, moves3.len(), moves333.len()],
+            shortest_reduction,
+        })
+    }
+
+    /// The length of the shortest phase-3 solution of a cube phase 3 can start from.
+    pub fn phase3_length(&self, cube: &Cube, max: usize) -> Option<usize> {
+        let (sg, mask, par) = (sigma_of(cube), ct3_mask(cube), ct3_parity(cube));
+        (0..=max).find(|&d| {
+            let (mut path, mut out) = ([0u8; 64], Vec::new());
+            self.dfs3(&sg, mask, par, d, 255, 0, &mut path, 0, &mut out, 1);
+            !out.is_empty()
+        })
     }
 
     /// Enumerates phase-1 solutions of exactly `rem` more moves. Returns true when `limit` is reached.

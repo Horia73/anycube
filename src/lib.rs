@@ -11,6 +11,7 @@ pub mod ctab;
 pub mod cube;
 pub mod cuben;
 pub mod edges5;
+pub mod free;
 pub mod joint;
 pub mod nnn;
 pub mod opt3;
