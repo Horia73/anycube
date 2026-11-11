@@ -133,7 +133,7 @@ export async function mount(root, options = {}) {
       speed: player.speed,
       scramble: $("scramble").value,
       painted: p
-        ? { facelets: Array.from(p.facelets), palette: p.palette, doubt: p.doubt ? Array.from(p.doubt) : null, second: p.second ? Array.from(p.second) : null, note: $("paint-note").textContent }
+        ? { facelets: Array.from(p.facelets), palette: p.palette, doubt: p.doubt ? Array.from(p.doubt) : null, note: $("paint-note").textContent }
         : null,
       carried: state.carried,
       shows: state.shows,
@@ -504,7 +504,7 @@ export async function mount(root, options = {}) {
     placeCube();
     if (paintable) {
       const p = painted();
-      paint.set(n, p.facelets, p.palette, p.doubt, p.second);
+      paint.set(n, p.facelets, p.palette, p.doubt);
     }
     setTouch();
     readScramble();
@@ -563,7 +563,7 @@ export async function mount(root, options = {}) {
     setTouch();
     if (tab !== "scramble" && paintable) {
       const p = painted();
-      paint.set(state.size, p.facelets, p.palette, p.doubt, p.second);
+      paint.set(state.size, p.facelets, p.palette, p.doubt);
     }
     if (same && !state.scan) stay();
     else show();
@@ -755,7 +755,7 @@ export async function mount(root, options = {}) {
     },
     onface: (face) => view.look(face),
   });
-  view.onpaint = (i, touched) => paint.paint(i, touched);
+  view.onpaint = (i) => paint.paint(i);
 
   function repaint(facelets) {
     state.painted.set(state.size, { facelets, palette: STICKERS.slice(), doubt: null });
@@ -805,11 +805,11 @@ export async function mount(root, options = {}) {
         const lies = placed(n, Int32Array.from(samples, (_, k) => k), made);
         for (const i of made.swapped) doubt[lies.indexOf(i)] = 0.7;
       }
-      const { facelets, palette, second } = named(n, sorted, lying, doubt, placed(n, sorted.second, made));
-      state.painted.set(n, { facelets, palette, doubt, second });
+      const { facelets, palette } = named(n, sorted, lying, doubt);
+      state.painted.set(n, { facelets, palette, doubt });
       const unsure = doubt.filter((d) => d > 0.55).length;
       const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
-      const ringed = unsure > 0 ? ` ${count(unsure, "ringed sticker")} may be the other colour: tap to change.` : " Check it against your cube.";
+      const ringed = unsure > 0 ? ` ${count(unsure, "ringed sticker")} may be another colour: check ${unsure > 1 ? "them" : "it"}.` : " Check it against your cube.";
       // Short enough for the panel to hold everything without a scroll.
       let note = `Read from the camera.${ringed}`;
       if (made.kind === "placed" && made.moved.length === 0) {
@@ -821,7 +821,7 @@ export async function mount(root, options = {}) {
       } else if (made.kind === "several") {
         note = "These pictures fit together as more than one cube. Scan again, or correct it here.";
       } else if (made.kind === "none") {
-        note = `The faces do not fit together as a cube: a colour was misread.${unsure > 0 ? " Tap the ringed stickers." : " Correct it here, or scan again."}`;
+        note = `The faces do not fit together as a cube: a colour was misread.${unsure > 0 ? " Check the ringed stickers." : " Correct it here, or scan again."}`;
       }
       $("paint-note").textContent = note;
       // The cube just read goes to where it can be looked over and corrected.
@@ -850,6 +850,7 @@ export async function mount(root, options = {}) {
     }
     // An empty cube that fills in as faces are captured; the painted cube is left alone until all six are.
     state.scan = new Array(6 * n * n).fill(null);
+    view.setMarks(null);
     placeCube();
     setTouch();
     show();
@@ -1174,8 +1175,8 @@ export async function mount(root, options = {}) {
     setSize(was.size);
     $("scramble").value = String(was.scramble ?? "");
     if (was.painted && was.size <= PAINT_MAX) {
-      const { facelets, palette, doubt, second, note } = was.painted;
-      state.painted.set(was.size, { facelets, palette, doubt: doubt ? Float32Array.from(doubt) : null, second: second ? Int8Array.from(second) : null });
+      const { facelets, palette, doubt, note } = was.painted;
+      state.painted.set(was.size, { facelets, palette, doubt: doubt ? Float32Array.from(doubt) : null });
       if (note) $("paint-note").textContent = note;
     }
     state.carried = typeof was.carried === "string" ? was.carried : null;
@@ -1194,7 +1195,7 @@ export async function mount(root, options = {}) {
     setTouch();
     if (was.input !== "scramble" && was.size <= PAINT_MAX) {
       const p = painted();
-      paint.set(was.size, p.facelets, p.palette, p.doubt, p.second);
+      paint.set(was.size, p.facelets, p.palette, p.doubt);
     }
     readScramble();
     if (was.input !== "scramble") show();

@@ -139,7 +139,7 @@ export class CubeView {
     // What a touch on the cube does: "turn" a layer, "paint" a sticker, or only "look".
     this.mode = "turn";
     this.onturn = () => {}; // (face, layer, quarters) once a dragged layer has settled
-    this.onpaint = () => {}; // (facelet, whether it was touched first or dragged over)
+    this.onpaint = () => {}; // (facelet)
     this.busy = () => false; // whether something else is moving the cube just now
     this.#watch();
   }
@@ -203,7 +203,7 @@ export class CubeView {
       this.glide = null;
       if (hit && this.mode === "paint") {
         drag = { kind: "paint", last: hit.index };
-        this.onpaint(hit.index, true);
+        this.onpaint(hit.index);
       } else if (hit && this.mode === "turn") {
         drag = { kind: "layer", hit, x, y, slab: null };
       } else {
@@ -217,7 +217,7 @@ export class CubeView {
         const hit = this.pick(x, y);
         if (hit && hit.index !== drag.last) {
           drag.last = hit.index;
-          this.onpaint(hit.index, false);
+          this.onpaint(hit.index);
         }
       } else if (drag.kind === "layer") {
         this.#dragLayer(drag, x - drag.x, y - drag.y);
@@ -635,7 +635,8 @@ export class CubeView {
               path.lineTo(p[3][0], p[3][1]);
             }
             path.closePath();
-            if (this.marks && this.marks[i] > 0.55) ringed.push([x0 + cell / 2, y0 + cell / 2]);
+            // A ring is for a colour to look at again: a sticker with no colour yet has none.
+            if (this.marks && this.marks[i] > 0.55 && (this.raw?.[i] || this.facelets[i] !== BLANK)) ringed.push([x0 + cell / 2, y0 + cell / 2]);
           }
         }
         for (const [colour, path] of paths) {
