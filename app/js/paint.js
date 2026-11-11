@@ -49,12 +49,16 @@ export class PaintEditor {
     root.append(this.swatches, this.net);
   }
 
-  /** Shows a cube. `doubt` marks stickers to look at again (0 to 1 each), or is null. */
-  set(n, facelets, palette, doubt = null) {
+  /**
+   * Shows a cube. `doubt` marks stickers to look at again (0 to 1 each), or
+   * is null; `second` is the colour each of those could be instead.
+   */
+  set(n, facelets, palette, doubt = null, second = null) {
     this.n = n;
     this.facelets = facelets;
     this.palette = palette;
     this.doubt = doubt;
+    this.second = second;
     const nn = n * n;
     this.root.style.setProperty("--n", n);
     this.swatches.replaceChildren(
@@ -100,11 +104,19 @@ export class PaintEditor {
     return this.n % 2 === 1 && i % nn === (nn - 1) / 2;
   }
 
-  /** Paints one sticker with the colour picked; the middle of an odd cube's face stays. */
-  paint(i) {
-    if (this.#locked(i) || this.facelets[i] === this.colour) return;
+  /**
+   * Paints one sticker with the colour picked; the middle of an odd cube's
+   * face stays. A sticker marked as doubtful, touched (not dragged over),
+   * becomes the other colour it could be, whatever colour is picked: red
+   * for orange and orange for red, in one tap.
+   */
+  paint(i, touched = false) {
+    if (this.#locked(i)) return;
+    const flip = touched && this.doubt?.[i] > 0.55 && this.second && this.second[i] !== this.facelets[i] && this.second[i] < 6;
+    const colour = flip ? this.second[i] : this.colour;
+    if (this.facelets[i] === colour) return;
     this.facelets = Uint8Array.from(this.facelets);
-    this.facelets[i] = this.colour;
+    this.facelets[i] = colour;
     if (this.doubt) this.doubt[i] = 0;
     this.#colours();
     this.#counts();

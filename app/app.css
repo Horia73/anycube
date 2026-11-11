@@ -431,14 +431,21 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   place-items: center;
   color: transparent;
 }
-/* What was read from each cell, as a dot in its middle. */
+/* What is being read from each cell: a mark in its middle, in the page's
+   own colour for it, the sticker itself showing round it. Where the reading
+   could as well be another colour the mark is a ring. */
 .cam-grid i::after {
   content: "";
-  width: 34%;
+  width: 36%;
   aspect-ratio: 1;
-  border-radius: 50%;
+  border-radius: 28%;
   background: currentColor;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 3px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 0 0 3.5px rgba(0, 0, 0, 0.6);
+}
+.cam-grid i.unsure::after {
+  background: none;
+  border: 4px dashed currentColor;
+  box-sizing: border-box;
 }
 .stage.scanning .stage-tools,
 .stage.scanning .next {
@@ -1158,6 +1165,26 @@ textarea.bad {
   display: grid;
   gap: 8px;
   min-width: 0;
+}
+.cam-say {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+/* The small drawing of what to do with the cube. */
+.cam-sign svg {
+  display: block;
+  width: 40px;
+  height: 40px;
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cam-text.warn {
+  color: var(--danger);
 }
 .cam-heading {
   margin: 0 0 2px;

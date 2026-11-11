@@ -15,22 +15,33 @@
 // the place of sampleGrid, and a session that follows moves in the place
 // of the six steps.
 
-import { cellColour } from "./colour.js";
+import { cellColour, guess, STICKERS, unalike } from "./colour.js";
 
 const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
 
-// The order the faces are shown in, and what to do to get to each. With
-// the top kept on top for the four sides, and the top and bottom tipped
-// towards the camera, every face is seen the way its facelets are written
-// down (URFDLB, row by row), so no picture has to be turned.
+// The order the faces are asked for, and what to do to get to each, said
+// as what the hands do. With the top kept on top for the four sides, and
+// the top and bottom tipped towards the camera, every face is seen the way
+// its facelets are written down (URFDLB, row by row), so no picture has to
+// be turned. Which way the cube goes round does not have to be right, nor
+// the order, nor the way up: the six pictures are put together afterwards
+// the way they make a cube (scan-fit.js). `sign` is the small drawing.
 export const SCAN_STEPS = [
-  { face: 2, text: "Hold one face to the camera, level. Remember which face is on top." },
-  { face: 1, text: "A quarter turn, clockwise seen from above. The top stays on top." },
-  { face: 5, text: "Another quarter turn the same way." },
-  { face: 4, text: "And once more." },
-  { face: 0, text: "Once more, back to the first face; then tip the top towards the camera." },
-  { face: 3, text: "Tip it the other way, past the first face, until the bottom faces the camera." },
+  { face: 2, sign: "hold", text: "Hold any face to the camera, the cube level. Note which face is on top." },
+  { face: 1, sign: "round", text: "Turn the cube a quarter turn sideways. The top stays on top." },
+  { face: 5, sign: "round", text: "Another quarter turn the same way, top still on top." },
+  { face: 4, sign: "round", text: "And once more the same way." },
+  { face: 0, sign: "tip", text: "Now tip the cube so that its top faces the camera." },
+  { face: 3, sign: "tip2", text: "Last, tip it the other way: the bottom faces the camera." },
 ];
+
+// The small drawings: a cube face, and an arrow for how the cube is turned to bring it round.
+const SIGNS = {
+  hold: '<rect x="7" y="7" width="18" height="18" rx="3"/><path d="M11 13h10M11 16h10M11 19h10" opacity=".35"/>',
+  round: '<rect x="9" y="9" width="14" height="14" rx="3"/><path d="M4 27c6 4 18 4 24 0"/><path d="M24.5 29.5 28 27l-3-3"/>',
+  tip: '<rect x="9" y="9" width="14" height="14" rx="3"/><path d="M27 4c4 6 4 18 0 24"/><path d="M29.5 24.5 27 28l-3-3"/>',
+  tip2: '<rect x="9" y="9" width="14" height="14" rx="3"/><path d="M27 28c4-6 4-18 0-24"/><path d="M29.5 7.5 27 4l-3 3"/>',
+};
 
 // The grid takes this much of the picture's shorter side.
 export const GRID_SHARE = 0.7;
@@ -149,6 +160,7 @@ export class CameraScanner {
     this.frame = frame;
     frame.append(this.video, this.grid);
 
+    this.sign = el("span", { class: "cam-sign", "aria-hidden": "true" });
     this.heading = el("p", { class: "cam-heading", "aria-live": "polite" });
     this.text = el("p", { class: "cam-text" });
     this.shots = el("ol", { class: "cam-shots", "aria-label": "Faces captured" });
@@ -158,7 +170,7 @@ export class CameraScanner {
     this.swap = el("button", { type: "button", class: "button quiet", text: "Other camera", hidden: "" });
     this.off = el("button", { type: "button", class: "button quiet", text: "Stop" });
     side.append(
-      el("div", { class: "cam-say" }, [this.heading, this.text]),
+      el("div", { class: "cam-say" }, [this.sign, el("div", {}, [this.heading, this.text])]),
       this.shots,
       el("div", { class: "cam-buttons" }, [this.capture, this.back, this.flip, this.swap, this.off]),
     );
@@ -185,6 +197,7 @@ export class CameraScanner {
     this.n = n;
     this.step = 0;
     this.faces.fill(null);
+    this.again = -1;
     await this.feed.open();
     this.#opened();
     this.#layout();
@@ -228,9 +241,12 @@ export class CameraScanner {
 
   #show() {
     const done = this.step >= SCAN_STEPS.length;
-    const { face, text } = SCAN_STEPS[Math.min(this.step, SCAN_STEPS.length - 1)];
+    const { face, text, sign } = SCAN_STEPS[Math.min(this.step, SCAN_STEPS.length - 1)];
     this.heading.textContent = done ? "All six faces captured" : `Face ${this.step + 1} of 6: ${FACE_NAMES[face].toLowerCase()}`;
     this.text.textContent = done ? "" : text;
+    this.text.classList.remove("warn");
+    this.sign.innerHTML = `<svg viewBox="0 0 32 32">${SIGNS[sign]}</svg>`;
+    this.again = -1;
     this.capture.disabled = done;
     this.back.disabled = this.step === 0;
     [...this.shots.children].forEach((li, k) => {
@@ -246,14 +262,36 @@ export class CameraScanner {
     const colours = sampleGrid(this.video, this.n, this.scratch);
     if (!colours) return;
     this.live = colours;
-    // Each cell of the grid shows what was read from the picture under it;
-    // the grid turns with the picture when that is mirrored.
-    [...this.grid.children].forEach((cell, i) => (cell.style.color = css(colours[i])));
+    // Each cell of the grid carries a mark in the page's own colour for what
+    // is being read under it (the page's red over a sticker read as red),
+    // broken where the reading could as well be another colour; the sticker
+    // itself shows round the mark. The grid turns with the picture when
+    // that is mirrored.
+    [...this.grid.children].forEach((cell, i) => {
+      const read = guess(colours[i]);
+      cell.style.color = STICKERS[read.colour];
+      cell.classList.toggle("unsure", read.doubt > 0.7);
+    });
   }
 
   #capture() {
     this.#sample();
-    if (!this.live || this.step >= SCAN_STEPS.length) return;
+    if (this.live) this.take(this.live);
+  }
+
+  /** Takes a face as read: n*n colours, row by row. What Capture does with the picture of the moment. */
+  take(colours) {
+    if (this.step >= SCAN_STEPS.length) return;
+    this.live = colours;
+    // A face that looks like one already shown is said so at once; a second
+    // press takes it all the same (two faces of a cube nearly solved can be alike).
+    const like = this.#shownBefore(colours);
+    if (like >= 0 && this.again !== this.step) {
+      this.again = this.step;
+      this.text.textContent = `This looks like face ${like + 1} again. Show another face, or press Capture once more to keep it.`;
+      this.text.classList.add("warn");
+      return;
+    }
     const face = SCAN_STEPS[this.step].face;
     this.faces[face] = this.live;
     this.hooks.onface?.(face, this.live);
@@ -264,6 +302,25 @@ export class CameraScanner {
       this.stop();
       this.hooks.ondone?.(samples);
     }
+  }
+
+  // The step at which a face was captured that the one in the picture now is alike:
+  // by its middle sticker on an odd cube (no two faces share one), by all of it otherwise.
+  #shownBefore(colours) {
+    const nn = this.n * this.n;
+    const mid = (nn - 1) / 2;
+    for (let k = 0; k < this.step; k++) {
+      const was = this.faces[SCAN_STEPS[k].face];
+      if (!was) continue;
+      if (this.n % 2 === 1) {
+        if (unalike(colours[mid], was[mid]) < 2.5) return k;
+      } else {
+        let far = 0;
+        for (let i = 0; i < nn; i++) far = Math.max(far, unalike(colours[i], was[i]));
+        if (far < 2.5) return k;
+      }
+    }
+    return -1;
   }
 
   #retake() {

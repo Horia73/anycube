@@ -138,7 +138,7 @@ export class CubeView {
     // What a touch on the cube does: "turn" a layer, "paint" a sticker, or only "look".
     this.mode = "turn";
     this.onturn = () => {}; // (face, layer, quarters) once a dragged layer has settled
-    this.onpaint = () => {}; // (facelet)
+    this.onpaint = () => {}; // (facelet, whether it was touched first or dragged over)
     this.busy = () => false; // whether something else is moving the cube just now
     this.#watch();
   }
@@ -202,7 +202,7 @@ export class CubeView {
       this.glide = null;
       if (hit && this.mode === "paint") {
         drag = { kind: "paint", last: hit.index };
-        this.onpaint(hit.index);
+        this.onpaint(hit.index, true);
       } else if (hit && this.mode === "turn") {
         drag = { kind: "layer", hit, x, y, slab: null };
       } else {
@@ -216,7 +216,7 @@ export class CubeView {
         const hit = this.pick(x, y);
         if (hit && hit.index !== drag.last) {
           drag.last = hit.index;
-          this.onpaint(hit.index);
+          this.onpaint(hit.index, false);
         }
       } else if (drag.kind === "layer") {
         this.#dragLayer(drag, x - drag.x, y - drag.y);
