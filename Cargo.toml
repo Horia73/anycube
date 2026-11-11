@@ -2,8 +2,12 @@
 name = "cubenxnxn"
 version = "0.1.0"
 edition = "2021"
-description = "Rubik's cube solver for 2x2x2 to 5x5x5 (larger sizes planned) aiming for shorter solutions than the existing reduction solvers"
+description = "Rubik's cube solver for any size from 2x2x2 up, aiming for shorter solutions than the existing reduction solvers"
 license = "MIT"
+readme = "README.md"
+keywords = ["rubiks-cube", "solver", "nxnxn", "puzzle", "search"]
+categories = ["algorithms", "command-line-utilities"]
+exclude = ["/bench", "/PLAN.md"]
 
 [dependencies]
 rayon = "1"
