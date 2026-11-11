@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cellColour, classify, STICKERS } from "../js/colour.js";
+import { cellColour, classify, guess, learn, STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 
 function random(seed) {
@@ -193,6 +193,73 @@ test("stickers that could be two colours are marked as doubtful", () => {
   const others = [...doubt].filter((_, k) => k !== i);
   assert.ok(doubt[i] > 0.6, `the odd one: ${doubt[i]}`);
   assert.ok(Math.max(...others) < 0.5, `the rest: ${Math.max(...others)}`);
+});
+
+// The pixels of one sticker's cell on a glossy cube: its colour under the
+// face's light, a sheen over part of it (the light's white mixed in), a
+// little of the dark gap at its edge, noise.
+function glossy(colour, rnd, { gain = 1, sheen = 0, noise = 5 }) {
+  const px = [];
+  const count = 64;
+  for (let i = 0; i < count; i++) {
+    const u = i / count;
+    let c = colour.map((v) => v * gain);
+    if (u < 0.1) c = c.map((v) => v * 0.25);
+    else if (u < 0.1 + sheen) {
+      const s = 0.7 * (0.6 + 0.4 * rnd());
+      c = c.map((v) => v * (1 - s) + 250 * s);
+    }
+    px.push(...c.map((v) => Math.max(0, Math.min(255, v + (rnd() + rnd() + rnd() - 1.5) * 2 * noise))), 255);
+  }
+  return Uint8ClampedArray.from(px);
+}
+
+test("a sheen over half of a sticker does not change its colour", () => {
+  const rnd = random(9);
+  // One cell by itself: blue is not read as white, nor red as orange.
+  for (const sheen of [0.3, 0.45, 0.6]) {
+    for (let k = 0; k < 6; k++) {
+      for (let t = 0; t < 60; t++) {
+        const read = guess(cellColour(glossy(SETS.usual[k], rnd, { gain: 0.6 + rnd() * 0.5, sheen })));
+        assert.equal(read.colour, k, `colour ${k} under a sheen over ${sheen * 100}% of the cell`);
+      }
+    }
+  }
+  // Whole cubes, four stickers in ten with a sheen over a quarter to two thirds of them.
+  // Measured before the cell was read this way: 17 cubes of 60 wrong at either size.
+  for (const n of [3, 4]) {
+    const model = new CubeModel(n);
+    for (let round = 0; round < 30; round++) {
+      const truth = model.applyAll(model.solved(), model.randomScramble(50, rnd));
+      const gains = Array.from({ length: 6 }, () => 0.6 + rnd() * 0.5);
+      const samples = Array.from(truth, (c, i) => cellColour(glossy(SETS.usual[c], rnd, { gain: gains[Math.floor(i / (n * n))], sheen: rnd() < 0.4 ? 0.45 * (0.5 + rnd()) : 0 })));
+      const { facelets } = classify(samples, n);
+      assert.ok(n % 2 === 1 ? facelets.every((c, i) => c === truth[i]) : sameGroups(facelets, truth), `size ${n} round ${round}`);
+    }
+  }
+});
+
+test("the marks over the picture learn the cube's own colours from the faces captured", () => {
+  // A camera with a warm cast and a cube whose orange is deep: by the page's own colours some
+  // reds and oranges are taken for each other; by the colours of two faces already seen, fewer.
+  const rnd = random(31);
+  const cast = [1.15, 0.95, 0.7];
+  const close = [[215, 215, 210], [205, 45, 40], [30, 150, 80], [220, 205, 60], [228, 92, 32], [30, 80, 180]];
+  const shot = (k) => {
+    const light = 0.7 + rnd() * 0.3;
+    return close[k].map((v, d) => Math.max(0, Math.min(255, v * cast[d] * light + (rnd() - 0.5) * 10)));
+  };
+  const seen = learn(Array.from({ length: 18 }, (_, i) => shot(i % 6)));
+  let before = 0;
+  let after = 0;
+  for (let t = 0; t < 600; t++) {
+    const k = t % 6;
+    const rgb = shot(k);
+    if (guess(rgb).colour !== k) before++;
+    if (guess(rgb, seen).colour !== k) after++;
+  }
+  assert.ok(after <= before, `${after} wrong after learning, ${before} before`);
+  assert.ok(after <= 6, `${after} of 600 wrong after learning`);
 });
 
 test("a cell's colour ignores a glint and the gap between stickers", () => {
