@@ -5,7 +5,7 @@
 <h1 align="center">anycube</h1>
 
 <p align="center">
-  <b>The shortest solutions of any Rubik's cube solver we have measured.</b><br>
+  <b>The shortest solutions of any open-source Rubik's cube solver.</b><br>
   An NxNxN solver written in Rust:<br>
   2x2x2, 3x3x3, 4x4x4, 5x5x5, 6x6x6, 7x7x7 and every larger size.
 </p>
@@ -28,12 +28,12 @@
 
 ---
 
-anycube is a Rubik's cube solver that finds **short solutions in seconds**
-for cubes of **any size**. On every size from 4x4x4 to 10x10x10 its solutions
-are shorter than those of the other solvers run on the same scrambles
-([benchmarks](bench/README.md)), and it is measured up to 21x21x21, the
-largest cube that is mass-produced.
+anycube solves a Rubik's cube of **any size**, in **seconds**, in **few
+moves**.
 
+- **Shorter than the other solvers** on every size from 4x4x4 to 10x10x10, on
+  the same scrambles: see the [benchmarks](bench/README.md).
+- **Measured up to 21x21x21**, the largest cube that is mass-produced.
 - **2x2x2 and 3x3x3**: optimal solutions (always for 2x2x2, with `--mode full`
   for 3x3x3), or a two-phase solution in a fraction of a second.
 - **4x4x4 to 7x7x7**: a solver written for each size, tuned for length.
