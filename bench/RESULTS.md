@@ -723,7 +723,7 @@ Tried on the way:
 - A bound stretched by 1.3 or 1.5 in the exact search: 27 to 33 and 33 to
   36 moves.
 
-A fault met once in 61 solves: a staging beam found nothing ("no staging of
+A fault met once, on the 42nd cube of the first run over the three sets: a staging beam found nothing ("no staging of
 a ring of centres found", cube 2 of the 10x10x10 set; it did not happen
 again in six more runs of that cube). The staging beams and the way home
 now try again wider when they come back empty.
