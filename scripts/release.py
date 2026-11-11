@@ -5,11 +5,18 @@
                                                  2 to 21 unless sizes are given), one run after
                                                  another, and record moves, seconds and memory
                                                  under <name> in bench/releases.tsv
+  scripts/release.py measure <name> --minor [size ...]
+                                                 the same for a minor release: it takes the place
+                                                 of the newest release in the tables instead of
+                                                 adding a row
   scripts/release.py readme                      write the tables into README.md from that file:
                                                  the newest release in full, then every release
 
 A release is whatever name is given: a tag or a commit. Measuring it again
-replaces its rows. Run it on a quiet machine: the seconds are wall-clock.
+replaces its rows. Only a major release gets rows of its own; a minor one
+(`--minor`) renames the rows of the newest release to its name and replaces
+them size by size as they are measured. Run it on a quiet machine: the
+seconds are wall-clock.
 """
 import datetime
 import decimal
@@ -57,6 +64,16 @@ def rows():
 def save(all_rows):
     with open(DATA, "w") as f:
         f.write(HEAD + "\n" + "".join("\t".join(r) + "\n" for r in all_rows))
+
+
+def renamed(name):
+    """A minor release: the rows of the newest release now carry this name."""
+    data = rows()
+    if not data or data[-1][0] == name:
+        return
+    newest = data[-1][0]
+    save([[name] + r[1:] if r[0] == newest else r for r in data])
+    print("rows of %s are now %s" % (newest, name), flush=True)
 
 
 def measure(name, sizes):
@@ -146,7 +163,9 @@ def readme():
 
 if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "measure":
-        measure(sys.argv[2], [int(a) for a in sys.argv[3:]] or list(SIZES))
+        if "--minor" in sys.argv[3:]:
+            renamed(sys.argv[2])
+        measure(sys.argv[2], [int(a) for a in sys.argv[3:] if a != "--minor"] or list(SIZES))
     elif sys.argv[1:] == ["readme"]:
         readme()
     else:

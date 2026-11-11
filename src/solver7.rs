@@ -351,29 +351,18 @@ impl<'a> Chain<'a> {
     /// one, then the full effort on the most promising. Returns the partial
     /// that is shortest with its 3x3x3, and the 3x3x3 moves.
     fn finish<'b>(&self, reduced: &'b [Partial], p: &Params5) -> Option<(&'b Partial, Vec<u8>)> {
-        let (t3, big) = (&self.s.s5.edges.t3, &self.s.s5.big);
-        let mut quick: Vec<(usize, &Partial, C3, Vec<u8>)> = reduced
+        let left: Vec<(usize, C3)> = reduced
             .par_iter()
             .map(|x| {
                 let cube = self.start_in(x).cube;
                 debug_assert!(is_reduced(&cube));
-                let c3 = C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo };
-                let sol = t3.solve(&c3, 30, Some(big));
-                (self.total(x) + sol.len(), x, c3, sol)
+                (self.total(x), C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo })
             })
             .collect();
-        quick.sort_by_key(|r| r.0);
-        quick.truncate(p.pool);
-        let best = quick
-            .into_par_iter()
-            .map(|(len, x, c3, sol)| {
-                let better = t3.solve(&c3, p.probes, Some(big));
-                match better.len() < sol.len() {
-                    true => (self.total(x) + better.len(), x, better),
-                    false => (len, x, sol),
-                }
-            })
-            .min_by_key(|r| r.0)?;
+        let s5 = &self.s.s5;
+        let found = s5.two.finish(&s5.edges.t3, &left, crate::solver5::QUICK, &p.steps(), None);
+        let k = (0..reduced.len()).min_by_key(|&k| (left[k].0 + found[k].len(), k))?;
+        let best = (left[k].0 + found[k].len(), &reduced[k], found[k].clone());
         let to_orig = &self.s.frames[best.1.frame].to_orig;
         Some((best.1, best.2.iter().map(|&m| to_orig[m as usize]).collect()))
     }

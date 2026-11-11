@@ -1741,22 +1741,72 @@ Tried and dropped:
   processor time (201 to 214 against 183 to 194 thousand million cycles
   on 30 cubes). The 4 MB table is not what waits.
 
-The larger cubes still solve their 3x3x3 with the old search on each
-reduction. `ANYCUBE_TWO3=a,b` makes the 4x4x4 use the new one, to `a`
-moves of first phase for every reduction and `b` for the best sixteenth.
-First 30 cubes, default mode (it has a clock, and other sessions were
-running):
+## Every size: the 3x3x3 that is left, with the new search (2026-11-12, branch `three-shorter`)
 
-| | Length | 3x3x3 part | Seconds |
+Every larger solver ends with many reduced cubes and wants the shortest
+total of the moves spent on one and its 3x3x3. They did a quick two-phase
+solve of each on one core, then a longer one of the most promising. Now
+they call `Two3::finish`: every reduced cube with a short first phase,
+then, step by step, a longer first phase for fewer of them, each searched
+only for a solution that does not make the best total longer. The 554 MB
+table of the old search (`phase1-exact.bin`) is no longer read by any
+solver.
+
+4x4x4, the stage alone, ways of doing it one after the other on the same
+reductions (60 cubes, 160 distinct reductions a cube on average, 8 of them
+of the shortest length):
+
+| 3x3x3 stage | Shortest total | Time of the stage |
+|---|---:|---:|
+| as it was: 10,000 second phases each, 160,000 for the best sixteenth | 40.733 | 884 ms |
+| first phase to 10, then 12 for a sixteenth | 40.933 | 55 ms |
+| to 11, then 12 for a sixteenth | 40.850 | 88 ms |
+| to 11, then 13 for a sixteenth | 40.633 | 547 ms |
+| to 11, then 13 for the best 48 (the default now) | 40.517 | 813 ms |
+| to 11, 12 for all, 13 for a sixteenth | 40.567 | 780 ms |
+| to 11, 13 for a sixteenth, 14 for 4 | 40.500 | 1840 ms |
+| to 11, 12 for all, 13 for a sixteenth, 14 for 8 | 40.417 | 3184 ms |
+
+On 40 other cubes the exact search of `--mode full` on top (solutions of up
+to 16 moves, 60 million positions) took the total from 41.000 to 40.800 in
+5.3 s more, and nothing with 5 million: for the time, deeper two-phase
+searches of the best reductions give more.
+
+5x5x5, 40 cubes, no clock (`--time 0`), the whole solve:
+
+| 3x3x3 stage (quick solve of all, then) | Length | 3x3x3 part | Seconds |
 |---|---:|---:|---:|
-| as it is, first run | 40.90 | 17.37 | 2.6 |
-| as it is, second run | 40.67 | 17.13 | 2.6 |
-| 11, 13 | 40.53 | 17.10 | 2.6 |
-| 12, 13 | 40.67 | 17.10 | 2.8 |
-| 12, 14 | 40.33 | 16.63 | 8.1 |
+| as it was: 5000 second phases for the best 100 | 67.875 | 17.15 | 0.45 |
+| first phase to 11 for 100 | 67.950 | 17.60 | 0.42 |
+| to 12 for 100 | 67.650 | 17.32 | 0.54 |
+| to 12 for 300 | 67.550 | 17.20 | 0.60 |
+| to 13 for 100 | 67.225 | 16.98 | 2.01 |
+| to 11 for 100, 13 for 12 | 67.375 | 17.12 | 0.68 |
+| to 11 for 100, 12 for 30, 13 for 8 (the default now) | 67.300 | 16.95 | 0.64 |
+| to 12 for 100, 13 for 8 | 67.275 | 17.05 | 0.70 |
+| to 11 for 100, 13 for 24 | 67.250 | 17.10 | 0.89 |
 
-The two runs without it differ by as much as it gains, so this shows no
-more than that it does not hurt. Left off. What should be tried instead:
-the reductions in order of length, each searched only for a solution that
-beats the best total so far (`Two3::solve_within`), measured without a
-clock.
+(The parts before the 3x3x3 differ from row to row because the solution is
+chosen by its total.)
+
+Old and new binaries one after the other on the same cubes, default modes
+unless it says, other sessions running at times:
+
+| Size | Cubes | Before | Now |
+|---|---:|---|---|
+| 4x4x4 | 60 | 40.68 in 2.53 s | 40.45 in 2.61 s |
+| 4x4x4 fast | 60 | 41.48 in 0.31 s | 41.32 in 0.27 s |
+| 5x5x5 | 60 | 67.87 in 0.45 s | 67.23 in 0.62 s |
+| 5x5x5, no clock | 40 | 67.95 in 0.45 s | 67.22 in 0.63 s |
+| 5x5x5 fast, no clock | 40 | 68.83 in 0.24 s | 68.58 in 0.18 s |
+| 6x6x6 | 8 | 108.88 in 6.95 s | 108.25 in 6.93 s |
+| 7x7x7 | 8 | 153.25 in 3.62 s | 152.75 in 3.43 s |
+| 8x8x8 | 5 | 231.20 in 11.9 s | 232.60 in 10.0 s |
+| 9x9x9 | 5 | 314.40 in 2.78 s | 313.80 in 2.65 s |
+
+The 8x8x8 is the one that came out longer; on five cubes that is within
+what two runs of the same even size differ by (see the release measured
+twice above). The full sets are in the table of the release.
+
+Calls with a short first phase run on one core: a search to 10 moves is
+0.2 ms, where waking the other cores for it cost several times that.

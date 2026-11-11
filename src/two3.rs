@@ -23,7 +23,7 @@ use crate::c3::{perm_rank, C3, G1_MOVES, N_PERM, N_SPERM, T3};
 use crate::cube::{inv_seq, skip_move, tables as cube_tables};
 use crate::first3::{First3, NEAR};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
 
 /// How far the first phase goes: every way of fewer than `depth` moves in
@@ -102,6 +102,8 @@ struct Arrival {
 
 /// Arrivals are looked up a lot at a time: see `Job::flush`.
 const LOT: usize = 64;
+/// First phases from this length on are searched on all cores.
+const PARALLEL_FROM: usize = 11;
 
 #[derive(Clone, Copy)]
 struct Start {
@@ -157,6 +159,73 @@ impl Two3 {
         self.search(t, cube, effort, Some(max_len)).0
     }
 
+    /// Smallest exact distance to a domino subgroup over the three axes, or `None` if it is
+    /// above `cap` on every axis.
+    pub fn domino_distance(&self, t: &T3, cube: &C3, cap: u8) -> Option<u8> {
+        let mut best = None;
+        for (_, rinv, rot) in &t.frames {
+            let (tw, fl, sl) = t.coords(&rinv.mul(cube).mul(rot));
+            // The small tables give a lower bound without touching the big one.
+            if t.h1(tw, fl, sl) > cap {
+                continue;
+            }
+            let d = self.first.exact(t, tw, fl, sl);
+            if d <= cap && best.is_none_or(|b| d < b) {
+                best = Some(d);
+            }
+        }
+        best
+    }
+
+    /// The 3x3x3 of many reduced cubes at once, for a solver of a larger cube that wants the
+    /// shortest total of the moves already spent on a cube and the 3x3x3 after them.
+    ///
+    /// Every cube, given with the moves spent on it, is solved with a first phase of up to
+    /// `first` moves. Then, for each step `(depth, count)`, the `count` cubes with the shortest
+    /// totals so far are searched to `depth`, each only for a solution that does not make
+    /// the best total longer. Past `deadline` every cube takes the first solution there is and
+    /// the steps are left out. Returns a solution for every cube, in the order given; the
+    /// shortest total, and the first cube that has it, do not depend on the cores.
+    pub fn finish(
+        &self,
+        t: &T3,
+        cubes: &[(usize, C3)],
+        first: usize,
+        steps: &[(usize, usize)],
+        deadline: Option<std::time::Instant>,
+    ) -> Vec<Vec<u8>> {
+        let late = || deadline.is_some_and(|d| std::time::Instant::now() > d);
+        let mut found: Vec<Vec<u8>> = cubes
+            .par_iter()
+            .map(|(_, c)| self.solve(t, c, Effort { depth: if late() { 0 } else { first }, variants: 6 }))
+            .collect();
+        for &(depth, count) in steps {
+            if late() {
+                break;
+            }
+            let total = |k: usize, found: &[Vec<u8>]| cubes[k].0 + found[k].len();
+            let mut order: Vec<usize> = (0..cubes.len()).collect();
+            order.sort_by_key(|&k| (total(k, &found), k));
+            order.truncate(count);
+            let best = AtomicUsize::new(order.first().map_or(0, |&k| total(k, &found)));
+            let deeper: Vec<(usize, Vec<u8>)> = order
+                .par_iter()
+                .filter_map(|&k| {
+                    let room = best.load(Relaxed).checked_sub(cubes[k].0)?;
+                    let sol = self.solve_within(t, &cubes[k].1, Effort { depth, variants: 6 }, room.min(found[k].len()))?;
+                    best.fetch_min(cubes[k].0 + sol.len(), Relaxed);
+                    Some((k, sol))
+                })
+                .collect();
+            for (k, sol) in deeper {
+                if sol.len() < found[k].len() {
+                    found[k] = sol;
+                }
+            }
+        }
+        found
+    }
+
     /// The solution and the number of ways into the subgroup that were looked at.
     pub fn solve_counted(&self, t: &T3, cube: &C3, effort: Effort) -> (Vec<u8>, u64) {
         let (sol, ways) = self.search(t, cube, effort, None);
@@ -202,37 +271,38 @@ impl Two3 {
             }
             let nv = if d1 == effort.depth { effort.variants.clamp(1, variants.len()) } else { variants.len() };
             let work: &[Start] = if d1 < 4 { &roots } else { &starts };
-            probes += work
-                .par_iter()
-                .enumerate()
-                .filter(|(_, s)| s.variant < nv && s.node.d as usize <= d1 - s.len)
-                .map(|(i, s)| {
-                    let mut job = Job {
-                        e: self,
-                        t,
-                        follow: &follow,
-                        variant: s.variant,
-                        start: variants[s.variant].0,
-                        path: [0; 40],
-                        sol: [0; 40],
-                        stack: Vec::with_capacity(18 * 20),
-                        arrivals: Vec::with_capacity(LOT),
-                        best: &best,
-                        out: &out,
-                        rank: (d1 as u64) << 24 | i as u64,
-                        probes: 0,
-                    };
-                    job.path[..s.len].copy_from_slice(&s.moves[..s.len]);
-                    let (key, sym) = self.first.key(s.node.tw as usize, s.node.fl as usize, s.node.sl as usize);
-                    let node = Node { mv: if s.len == 0 { NO_MOVE } else { s.moves[s.len - 1] }, ..s.node };
-                    job.arrive(node, key, sym, d1 - s.len, s.len);
-                    while let Some(n) = job.stack.pop() {
-                        job.search(&n, d1 - s.len, s.len);
-                    }
-                    job.flush();
-                    job.probes
-                })
-                .sum::<u64>();
+            let wanted = |s: &Start| s.variant < nv && s.node.d as usize <= d1 - s.len;
+            let run = |(i, s): (usize, &Start)| {
+                let mut job = Job {
+                    e: self,
+                    t,
+                    follow: &follow,
+                    variant: s.variant,
+                    start: variants[s.variant].0,
+                    path: [0; 40],
+                    sol: [0; 40],
+                    stack: Vec::with_capacity(18 * 20),
+                    arrivals: Vec::with_capacity(LOT),
+                    best: &best,
+                    out: &out,
+                    rank: (d1 as u64) << 24 | i as u64,
+                    probes: 0,
+                };
+                job.path[..s.len].copy_from_slice(&s.moves[..s.len]);
+                let (key, sym) = self.first.key(s.node.tw as usize, s.node.fl as usize, s.node.sl as usize);
+                let node = Node { mv: if s.len == 0 { NO_MOVE } else { s.moves[s.len - 1] }, ..s.node };
+                job.arrive(node, key, sym, d1 - s.len, s.len);
+                while let Some(n) = job.stack.pop() {
+                    job.search(&n, d1 - s.len, s.len);
+                }
+                job.flush();
+                job.probes
+            };
+            // The short lengths are a few hundred ways at most: not worth waking the other cores for.
+            probes += match d1 < PARALLEL_FROM {
+                true => work.iter().enumerate().filter(|(_, s)| wanted(s)).map(run).sum::<u64>(),
+                false => work.par_iter().enumerate().filter(|(_, s)| wanted(s)).map(run).sum::<u64>(),
+            };
         }
         let Some((_, v, mut sol)) = out.into_inner().unwrap() else { return (None, probes) };
         let (_, r, inverse) = variants[v];
@@ -554,6 +624,35 @@ mod tests {
             assert_eq!(c, Cube::solved(), "scramble {}", scr);
             assert!(two.solve_within(&t, &c3, effort, free.len() - 1).is_none(), "scramble {}", scr);
         }
+    }
+
+    /// Many cubes at once: every answer solves its cube, the deeper steps never make the
+    /// shortest total longer, and the same comes out twice.
+    #[test]
+    fn many_cubes_at_once() {
+        let t = T3::new();
+        let two = Two3::load(&t);
+        let mut seed = 7u64;
+        let mut rnd = |n: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (seed >> 33) as usize % n
+        };
+        let scrambled: Vec<Cube> = (0..40).map(|_| Cube::from_moves(&(0..30).map(|_| rnd(18) as u8).collect::<Vec<u8>>())).collect();
+        let cubes: Vec<(usize, C3)> = scrambled.iter().enumerate().map(|(i, c)| (20 + i % 3, C3::from_cube(c).unwrap())).collect();
+        let total = |found: &[Vec<u8>]| (0..cubes.len()).map(|k| cubes[k].0 + found[k].len()).min().unwrap();
+        let quick = two.finish(&t, &cubes, 10, &[], None);
+        let deeper = two.finish(&t, &cubes, 10, &[(12, 12), (13, 4)], None);
+        for (k, sol) in deeper.iter().enumerate() {
+            let mut c = scrambled[k];
+            c.apply_seq(sol);
+            assert_eq!(c, Cube::solved(), "cube {}", k);
+            assert!(sol.len() <= quick[k].len(), "cube {}", k);
+        }
+        assert!(total(&deeper) <= total(&quick));
+        let again = two.finish(&t, &cubes, 10, &[(12, 12), (13, 4)], None);
+        assert_eq!(total(&again), total(&deeper));
+        let first = |found: &[Vec<u8>]| (0..cubes.len()).find(|&k| cubes[k].0 + found[k].len() == total(found)).map(|k| found[k].clone());
+        assert_eq!(first(&again), first(&deeper));
     }
 
     /// Random cubes, at an effort that reads the listed ways many lots at a time: every answer

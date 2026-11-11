@@ -174,7 +174,8 @@ fn params6(args: &[String]) -> anycube::solver6::Params6 {
         p_keep: num("--p-keep", o.p_keep),
         e_keep: num("--e-keep", o.e_keep),
         pool: num("--pool", o.pool),
-        probes: num("--probes", o.probes as usize) as u64,
+        depth: num("--depth", o.depth),
+        deeper: deeper(args, &o.deeper),
         time_ms: num("--time", o.time_ms as usize) as u64,
         ..o.clone()
     };
@@ -578,7 +579,8 @@ fn params5(args: &[String]) -> anycube::solver5::Params5 {
         p_keep: num("--p-keep", d.p_keep),
         e_keep: num("--e-keep", d.e_keep),
         pool: num("--pool", d.pool),
-        probes: num("--probes", d.probes as usize) as u64,
+        depth: num("--depth", d.depth),
+        deeper: deeper(args, &d.deeper),
         time_ms: num("--time", d.time_ms as usize) as u64,
     }
 }
@@ -715,16 +717,28 @@ fn params(args: &[String]) -> Params {
     if let Some(v) = num("--time") {
         p.time_limit_ms = v as u64;
     }
-    if let Some(v) = num("--refine") {
-        p.refine = v as u64;
-    }
+    p.deeper333 = deeper(args, &p.deeper333);
     if let Some(v) = num("--exact-cap") {
         p.exact_cap = v;
     }
-    if let Some(v) = num("--probes") {
-        p.probes333 = v as u64;
+    if let Some(v) = num("--first") {
+        p.first333 = v;
     }
     p
+}
+
+/// `--deeper 13:48,14:8`: steps of the 3x3x3 stage, each a length of first phase and how many
+/// reduced cubes are searched to it (`all` for every one); `--deeper 0` for none.
+fn deeper(args: &[String], default: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let step = |s: &str| {
+        let (depth, count) = s.split_once(':')?;
+        Some((depth.parse().ok()?, if count == "all" { usize::MAX } else { count.parse().ok()? }))
+    };
+    match opt(args, "--deeper") {
+        None => default.to_vec(),
+        Some("0") => Vec::new(),
+        Some(v) => v.split(',').map(step).collect::<Option<Vec<_>>>().unwrap_or_else(|| usage()),
+    }
 }
 
 fn opt<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
@@ -1244,7 +1258,7 @@ fn known(args: &[String]) {
         cube.apply_seq(&steps);
         // The known answer, checked: the walk undone, then the 3x3x3 of the base.
         let c3 = C3::from_cube(&base_cube).unwrap_or_else(|| fail("the base is not a 3x3x3 state"));
-        let base333 = solver.t3.solve(&c3, 100_000, Some(&solver.big));
+        let base333 = solver.two.solve(&solver.t3, &c3, anycube::two3::Effort { depth: 13, variants: 6 });
         let mut check = cube;
         check.apply_seq(&inv_seq(&steps));
         check.apply_seq(&base333);
@@ -1535,8 +1549,8 @@ fn startup() {
     let t3 = anycube::c3::T3::new();
     lap("3x3x3 tables", t);
     let t = Instant::now();
-    let _b1 = anycube::big1::Big1::load(&t3);
-    lap("domino table (map)", t);
+    let _two = anycube::two3::Two3::load(&t3);
+    lap("3x3x3 search", t);
     let t = Instant::now();
     let _b2 = anycube::big2::Big2::load(&t3);
     lap("slice table (map + small)", t);
@@ -2022,7 +2036,8 @@ fn params7(args: &[String]) -> anycube::solver7::Params7 {
             p_keep: num("--p-keep", d.outer.p_keep),
             e_keep: num("--e-keep", d.outer.e_keep),
             pool: num("--pool", d.outer.pool),
-            probes: num("--probes", d.outer.probes as usize) as u64,
+            depth: num("--depth", d.outer.depth),
+            deeper: deeper(args, &d.outer.deeper),
             time_ms: num("--time", d.outer.time_ms as usize) as u64,
             ..d.outer
         },

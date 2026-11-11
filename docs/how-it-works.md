@@ -83,6 +83,12 @@ those moves alone.
   takes a fraction of the time of finding a solution of that length, so a
   good two-phase solution is most of the work.
 
+Every larger cube ends as a 3x3x3, many times over: its solver keeps
+hundreds of reduced cubes and wants the shortest total. All of them get a
+search with a short first phase, then the ones with the shortest totals a
+longer one, step by step, each only for a solution that would not make the
+best total longer (`Two3::finish`).
+
 On one core in the browser (WebAssembly) the older search of `src/c3.rs`
 runs instead: it stops after a number of second phases.
 

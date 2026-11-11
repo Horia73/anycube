@@ -629,18 +629,25 @@ Ce există acum (`src/two3.rs`, `src/first3.rs`):
   ea. Un cub care are nevoie de 19 mutări ia ~50 s: acolo trebuie arătat că
   nu există 18.
 
-Ce a rămas:
+Cuburile mari (2026-11-12): toate își termină acum reducerile cu noua
+căutare (`Two3::finish`): toate reducerile cu o fază 1 scurtă, apoi, în
+trepte, cele cu totalul cel mai scurt cu una mai lungă, fiecare căutată
+doar pentru o soluție care nu lungește cel mai bun total.
 
-1. Cuburile mari își rezolvă 3x3x3-ul tot cu căutarea veche, pe fiecare
-   reducere. Proba pe 4x4x4 (`ANYCUBE_TWO3=11,13`, primele 30 de cuburi):
-   40,53 față de 40,67 și 40,90 în două rulări fără ea, în același timp;
-   diferența e cât zgomotul dintre rulări (modul implicit are ceas). De
-   făcut cum trebuie: reducerile în ordinea lungimii, fiecare căutată doar
-   pentru soluții care bat cel mai bun total de până atunci
-   (`Two3::solve_within`), și măsurat fără ceas.
-2. Ce nu a mers: clasa de simetrie din tabele mici în doi pași în locul
-   unui tabel de 4 MB (aceleași drumuri, 10% mai mult timp de procesor);
-   filtrarea mutărilor cu tabelele mici twist+felie și flip+felie.
+| Mărime | Înainte | Acum | Cuburi |
+|---|---|---|---|
+| 4x4x4 | 40,68 în 2,53 s | 40,45 în 2,61 s | 60 |
+| 5x5x5 | 67,87 în 0,45 s | 67,23 în 0,62 s | 60 |
+| 6x6x6 | 108,88 în 6,95 s | 108,25 în 6,93 s | 8 |
+| 7x7x7 | 153,25 în 3,62 s | 152,75 în 3,43 s | 8 |
+| 9x9x9 | 314,40 în 2,78 s | 313,80 în 2,65 s | 5 |
+
+Tabelul de 554 MB (`phase1-exact.bin`) nu mai e citit de niciun solver.
+
+Ce nu a mers: clasa de simetrie din tabele mici în doi pași în locul unui
+tabel de 4 MB (aceleași drumuri, 10% mai mult timp de procesor); filtrarea
+mutărilor cu tabelele mici twist+felie și flip+felie; la 4x4x4, căutarea
+exactă peste reduceri (−0,2 pentru 5 s în plus).
 
 ## Despre tabelele lui dwalton76
 

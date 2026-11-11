@@ -5,14 +5,13 @@
 //! axis) pair is a "variant": the same physical cube re-expressed so that the
 //! fixed phase definitions apply. Solutions are mapped back at the end.
 
-use crate::big1::Big1;
 use crate::big2::Big2;
 use crate::ctab::{Ctab, Near};
 use crate::c3::{C3, T3};
-use crate::opt3::{domino_distance, Opt3, Outcome, Root};
+use crate::opt3::{Opt3, Outcome, Root};
 use crate::cube::{skip_move, tables as cube_tables, Cube};
 use crate::tables::*;
-use crate::two3::{Effort, Two3};
+use crate::two3::Two3;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
@@ -27,8 +26,11 @@ pub struct Params {
     pub n2: usize,
     /// Phase-2 endpoints tried in phase 3.
     pub k3: usize,
-    /// Minimum phase-2 probes of the 3x3x3 solver.
-    pub probes333: u64,
+    /// 3x3x3: the longest first phase of the two-phase search tried for every reduction ...
+    pub first333: usize,
+    /// ... and then, step by step, for the reductions with the shortest totals so far: a
+    /// length of first phase and how many of them are searched to it.
+    pub deeper333: Vec<(usize, usize)>,
     /// Reductions to collect; the one with the shortest total wins.
     pub n3: usize,
     /// How many moves past the shortest reduction to keep collecting.
@@ -41,8 +43,6 @@ pub struct Params {
     pub joint: bool,
     /// Node budget of the joint phase once it has found an endpoint.
     pub joint_nodes: i64,
-    /// The best sixteenth of the reductions get this many times the 3x3x3 effort (1 = off).
-    pub refine: u64,
     /// Soft time limit per cube in milliseconds: once a stage has something to
     /// show it stops at its share of the limit. The first results of each
     /// stage are always awaited, so a solve can run somewhat over.
@@ -63,14 +63,14 @@ impl Default for Params {
             k1: 500,
             n2: 10_000,
             k3: 10_000,
-            probes333: 10_000,
+            first333: 11,
+            deeper333: vec![(13, 48)],
             n3: 2000,
             extra3: 1,
             exact_nodes: 0,
             exact_cap: 15,
             joint: true,
             joint_nodes: 1_000_000_000,
-            refine: 16,
             time_limit_ms: 4000,
             far_g: 0,
             far_k: 300,
@@ -86,8 +86,8 @@ impl Params {
             n2: 300,
             k3: 300,
             joint_nodes: 20_000_000,
-            probes333: 3000,
-            refine: 4,
+            first333: 10,
+            deeper333: vec![(12, 24)],
             n3: 200,
             time_limit_ms: 1000,
             ..Params::default()
@@ -103,6 +103,7 @@ impl Params {
             joint_nodes: 20_000_000_000,
             exact_nodes: 60_000_000,
             exact_cap: 16,
+            deeper333: vec![(12, usize::MAX), (13, 128), (14, 8)],
             time_limit_ms: 20_000,
             ..Params::default()
         }
@@ -121,7 +122,6 @@ pub struct Solution {
 pub struct Solver {
     pub tabs: Tabs,
     pub t3: T3,
-    pub big: Big1,
     pub big2: Big2,
     pub two: Two3,
     pub ctab: Ctab,
@@ -160,17 +160,6 @@ pub(crate) struct P2Cand {
     pub value: u8,
 }
 
-/// A trial: `ANYCUBE_TWO3=12,13` solves the reductions with the search of `two3.rs`, to these
-/// lengths of its first phase for all of them and for the best ones.
-fn two3_trial() -> Option<(usize, usize)> {
-    static T: std::sync::OnceLock<Option<(usize, usize)>> = std::sync::OnceLock::new();
-    *T.get_or_init(|| {
-        let v = std::env::var("ANYCUBE_TWO3").ok()?;
-        let (a, b) = v.split_once(',')?;
-        Some((a.parse().ok()?, b.parse().ok()?))
-    })
-}
-
 impl Solver {
     pub fn new() -> Solver {
         let ct = cube_tables();
@@ -187,7 +176,6 @@ impl Solver {
             ct.rot_index(&c2),
         ];
         let t3 = T3::new();
-        let big = Big1::load(&t3);
         let big2 = Big2::load(&t3);
         let two = Two3::load(&t3);
         let tabs = Tabs::load();
@@ -197,7 +185,7 @@ impl Solver {
             *ok = pat.count_ones() == 4 && tabs.p2[tabs.p2_index(0x00FF | (pat as u32) << 16, 0)] == 0;
         }
         let near = Near::new(&tabs.bp);
-        Solver { tabs, t3, big, big2, two, ctab, near, rl_ok, frames, classes }
+        Solver { tabs, t3, big2, two, ctab, near, rl_ok, frames, classes }
     }
 
     /// The 18 variants of a cube: (re-expressed cube, frame rotation).
@@ -406,7 +394,7 @@ impl Solver {
                         reduced
                             .with_home_centres()
                             .and_then(|h| C3::from_cube(&h))
-                            .is_some_and(|c3| domino_distance(&self.t3, &self.big, &c3, p.far_g).is_some())
+                            .is_some_and(|c3| self.two.domino_distance(&self.t3, &c3, p.far_g).is_some())
                     });
                     out
                 })
@@ -450,38 +438,10 @@ impl Solver {
                 ends.len()
             );
         }
-        // Pass 1: two-phase search on every reduction.
-        // Past its share of the time limit it only takes the first solution it finds.
-        let pass1_end = t_start + limit.mul_f64(0.8);
-        let mut two: Vec<Vec<u8>> = items
-            .par_iter()
-            .map(|it| {
-                if let Some((depth, _)) = two3_trial() {
-                    let depth = if std::time::Instant::now() > pass1_end { 0 } else { depth };
-                    return self.two.solve(&self.t3, &it.c3, Effort { depth, variants: 6 });
-                }
-                let probes = if std::time::Instant::now() > pass1_end { 1 } else { p.probes333 };
-                self.t3.solve(&it.c3, probes, Some(&self.big))
-            })
-            .collect();
-        // Then a much deeper search on the reductions that came out best.
-        if p.refine > 1 && t_start.elapsed() < limit.mul_f64(0.8) {
-            let mut order: Vec<usize> = (0..items.len()).collect();
-            order.sort_by_key(|&k| (items[k].len123 + two[k].len(), k));
-            order.truncate((items.len() / 16).max(24).min(items.len()));
-            let deeper: Vec<(usize, Vec<u8>)> = order
-                .par_iter()
-                .map(|&k| match two3_trial() {
-                    Some((_, depth)) => (k, self.two.solve(&self.t3, &items[k].c3, Effort { depth, variants: 6 })),
-                    None => (k, self.t3.solve(&items[k].c3, p.probes333 * p.refine, Some(&self.big))),
-                })
-                .collect();
-            for (k, sol) in deeper {
-                if sol.len() < two[k].len() {
-                    two[k] = sol;
-                }
-            }
-        }
+        // Pass 1: two-phase search on every reduction, then deeper on the ones that came out
+        // best. Past its share of the time limit each takes the first solution it finds.
+        let reduced: Vec<(usize, C3)> = items.iter().map(|it| (it.len123, it.c3)).collect();
+        let two = self.two.finish(&self.t3, &reduced, p.first333, &p.deeper333, Some(t_start + limit.mul_f64(0.8)));
         let mut best = (usize::MAX, 0usize, Vec::new());
         for (k, sol) in two.iter().enumerate() {
             let total = items[k].len123 + sol.len();

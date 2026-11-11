@@ -3,7 +3,6 @@
 //! the exact distance, along each of the three axes, to the subgroup with
 //! untwisted corners, unflipped edges and the four slice edges in place.
 
-use crate::big1::Big1;
 use crate::big2::Big2;
 use crate::c3::{C3, T3};
 use crate::cube::{skip_move, tables as cube_tables};
@@ -180,24 +179,6 @@ impl<'a> Opt3<'a> {
         }
         Outcome::None
     }
-}
-
-/// Smallest exact distance to a domino subgroup over the three axes, or
-/// `None` if it is above `cap` on every axis.
-pub fn domino_distance(t: &T3, big: &Big1, cube: &C3, cap: u8) -> Option<u8> {
-    let mut best = None;
-    for (_, rinv, rot) in &t.frames {
-        let (tw, fl, sl) = t.coords(&rinv.mul(cube).mul(rot));
-        // The small tables give a lower bound without touching the big one.
-        if t.h1(tw, fl, sl) > cap {
-            continue;
-        }
-        let d = big.exact(t, tw, fl, sl);
-        if d <= cap && best.is_none_or(|b| d < b) {
-            best = Some(d);
-        }
-    }
-    best
 }
 
 /// Result of `Opt3::solve_optimal`.

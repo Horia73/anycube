@@ -35,7 +35,8 @@ only for a solution of 18 or fewer.
 | `--c-keep` | 2000 | 6000 | 20000 | results phase C aims for |
 | `--p-keep` | 300 | 700 | 2000 | results phase P aims for |
 | `--e-keep` | 50 | 100 | 400 | reduced cubes aimed for |
-| `--pool`, `--probes` | 30, 1500 | 100, 5000 | 400, 20000 | reduced cubes given the full 3x3x3 effort, and that effort |
+| `--pool`, `--depth` | 30, 11 | 100, 11 | 400, 11 | reduced cubes whose 3x3x3 is searched past a quick solve, and the longest first phase of that search |
+| `--deeper` | none | 12:30,13:8 | 12:100,13:24,14:4 | then a longer first phase for fewer of them: `length:count` steps; `0` for none |
 | `--joint N` | off | off | off | also stage the centres in one step, exactly, N lengths past the shortest; minutes per cube |
 
 
@@ -50,8 +51,8 @@ only for a solution of 18 or fewer.
 | `--k3` | endpoints tried in phase 3 | 10000 |
 | `--n3` | reductions compared by total length | 2000 |
 | `--extra3` | moves past the shortest reduction to keep collecting | 1 |
-| `--probes` | 3x3x3 two-phase effort per reduction | 10000 |
-| `--refine` | effort multiplier for the best sixteenth of the reductions | 16 |
+| `--first` | longest first phase of the 3x3x3 search tried for every reduction | 11 |
+| `--deeper` | then a longer first phase for the reductions with the shortest totals: `length:count` steps (`all` for every one, `--deeper 0` for none) | 13:48 |
 | `--split` | search phases 1 and 2 separately, as TPR does | off |
 | `--n1`, `--k1` | with `--split`: phase-1 solutions enumerated and kept | 10000, 500 |
 | `--exact` | node budget (millions) of the exact 3x3x3 search | 0 (off) |

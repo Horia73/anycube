@@ -123,8 +123,8 @@ paint, show to a camera or turn by hand, then solve and follow move by move.
 [`app/README.md`](app/README.md) shows the other modes.
 
 The first solve of a size builds its lookup tables, once: a moment for
-2x2x2, five seconds for 3x3x3, about four minutes and 4.9 GB for 4x4x4,
-about 8.5 GB for every size together.
+2x2x2, five seconds for 3x3x3, about three minutes and 4.6 GB for 4x4x4,
+about 8.1 GB for every size together.
 
 On the command line, a cube is given as it looks: its stickers face by face
 in the order U R F D L B, each face row by row, each sticker named by the

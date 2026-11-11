@@ -18,7 +18,6 @@ pub mod ctab;
 pub mod cube;
 pub mod cuben;
 pub mod edges5;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod first3;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod free;
@@ -43,5 +42,4 @@ pub mod stage7;
 pub mod staging;
 pub mod sym;
 pub mod tables;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod two3;

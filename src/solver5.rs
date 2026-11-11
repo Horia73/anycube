@@ -10,7 +10,7 @@
 //! and either of the other two can be the one whose faces turn freely while
 //! the first four edges are built.
 
-use crate::big1::Big1;
+use crate::two3::Two3;
 use crate::c3::C3;
 use crate::c5::{tables5, Cube5};
 use crate::centres5::{Budget, Centres5};
@@ -19,6 +19,9 @@ use crate::stage5::{Stage5, Staged};
 use rayon::prelude::*;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+
+/// The longest first phase of the quick 3x3x3 solve that every reduced cube gets.
+pub(crate) const QUICK: usize = 10;
 
 /// How wide the search goes.
 #[derive(Clone, Debug)]
@@ -41,9 +44,12 @@ pub struct Params5 {
     pub p_keep: usize,
     pub e_keep: usize,
     /// Reduced cubes whose 3x3x3 gets the full effort, after a quick solve
-    /// of all of them, and that effort.
+    /// of all of them, and that effort: the longest first phase of the
+    /// two-phase search that is tried. Then, step by step, a longer first
+    /// phase for fewer of them: (length, how many).
     pub pool: usize,
-    pub probes: u64,
+    pub depth: usize,
+    pub deeper: Vec<(usize, usize)>,
     /// Time the solve aims at, in milliseconds; 0 for no limit. Each step
     /// stops widening when its share is used up, but always finishes.
     pub time_ms: u64,
@@ -62,7 +68,8 @@ impl Params5 {
             p_keep: 300,
             e_keep: 50,
             pool: 30,
-            probes: 1500,
+            depth: 11,
+            deeper: Vec::new(),
             time_ms: 800,
         }
     }
@@ -79,7 +86,8 @@ impl Params5 {
             p_keep: 700,
             e_keep: 100,
             pool: 100,
-            probes: 5000,
+            depth: 11,
+            deeper: vec![(12, 30), (13, 8)],
             time_ms: 4000,
         }
     }
@@ -96,9 +104,17 @@ impl Params5 {
             p_keep: 2000,
             e_keep: 400,
             pool: 400,
-            probes: 20000,
+            depth: 11,
+            deeper: vec![(12, 100), (13, 24), (14, 4)],
             time_ms: 0,
         }
+    }
+}
+
+impl Params5 {
+    /// The steps of the 3x3x3 after the quick solve: (length of first phase, how many cubes).
+    pub fn steps(&self) -> Vec<(usize, usize)> {
+        std::iter::once((self.depth, self.pool)).chain(self.deeper.iter().copied()).collect()
     }
 }
 
@@ -137,7 +153,8 @@ pub struct Solver5 {
     pub stage: Stage5,
     centres: OnceLock<Centres5>,
     pub edges: Edges5,
-    pub big: Big1,
+    /// The 3x3x3 search that finishes a reduced cube.
+    pub two: Two3,
     frames: Vec<Frame>,
 }
 
@@ -145,7 +162,7 @@ impl Solver5 {
     pub fn load() -> Solver5 {
         let stage = Stage5::load();
         let edges = Edges5::load();
-        let big = Big1::load(&edges.t3);
+        let two = Two3::load(&edges.t3);
         let g = &tables5().geometry;
         // Three choices of the axis the wings are split along, each with the
         // cube as it is or turned a quarter about that axis.
@@ -164,7 +181,7 @@ impl Solver5 {
                 frames.push(Frame { turns, to_orig, from_orig });
             }
         }
-        Solver5 { stage, centres: OnceLock::new(), edges, big, frames }
+        Solver5 { stage, centres: OnceLock::new(), edges, two, frames }
     }
 
     /// Solves a cube given as 150 facelets (faces U R F D L B, row by row).
@@ -326,36 +343,26 @@ impl Solver5 {
         }
         // The 3x3x3 that is left.
         // A quick solve of every one, then the full effort on the most promising.
-        let mut quick: Vec<(usize, &Partial, C3, Vec<u8>)> = reduced
+        let left: Vec<(usize, C3)> = reduced
             .par_iter()
             .map(|x| {
                 let cube = start_in(x.root, x.frame, &x.moves).cube;
                 debug_assert!(is_reduced(&cube));
-                let c3 = C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo };
-                let sol = self.edges.t3.solve(&c3, 30, Some(&self.big));
-                (cubes[x.root].1 + x.moves.len() + sol.len(), x, c3, sol)
+                (cubes[x.root].1 + x.moves.len(), C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo })
             })
             .collect();
-        quick.sort_by_key(|r| r.0);
+        let found = self.two.finish(&self.edges.t3, &left, QUICK, &p.steps(), None);
         if trace {
             let mut by: std::collections::BTreeMap<(usize, usize), usize> = std::collections::BTreeMap::new();
-            for r in &quick {
-                *by.entry((r.0 - r.3.len(), r.3.len())).or_insert(0) += 1;
+            for (k, sol) in found.iter().enumerate() {
+                *by.entry((left[k].0, sol.len())).or_insert(0) += 1;
             }
-            let roots: std::collections::BTreeSet<usize> = quick.iter().map(|r| r.1.root).collect();
-            eprintln!("  reductions from {} cubes; (moves before the 3x3x3, quick 3x3x3) -> count: {:?}", roots.len(), by);
+            let roots: std::collections::BTreeSet<usize> = reduced.iter().map(|x| x.root).collect();
+            eprintln!("  reductions from {} cubes; (moves before the 3x3x3, 3x3x3) -> count: {:?}", roots.len(), by);
         }
-        quick.truncate(p.pool);
-        let best = quick
-            .into_par_iter()
-            .map(|(len, x, c3, sol)| {
-                let better = self.edges.t3.solve(&c3, p.probes, Some(&self.big));
-                match better.len() < sol.len() {
-                    true => (cubes[x.root].1 + x.moves.len() + better.len(), x, better),
-                    false => (len, x, sol),
-                }
-            })
-            .min_by_key(|r| r.0);
+        let best = (0..reduced.len())
+            .min_by_key(|&k| (left[k].0 + found[k].len(), k))
+            .map(|k| (left[k].0 + found[k].len(), &reduced[k], found[k].clone()));
         let Some((_, x, sol3)) = best else {
             // A step cut short by the clock left the next one nothing to work with.
             return match p.time_ms {
