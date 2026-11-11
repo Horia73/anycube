@@ -1541,3 +1541,45 @@ Counting bound, the same for both metrics: canonical sequences grow 20.73
 times per move in OBTM and 18.52 times per single-layer quarter turn; their
 number reaches the 7.4×10^45 positions at length 35 in OBTM and 37 in
 single-layer quarter turns.
+
+## 6x6x6 on the merged code (2026-11-11, evening, branch `together`)
+
+All branches of the day together. First 20 cubes of `scrambles666-100.txt`,
+every solution checked on the sticker model, one run at a time; one other
+search was still running on the machine (load 15 to 20 on 10 cores), so
+the times are upper estimates.
+
+| Mode | 5x5x5 end | Mean length | Staging | Wing split | Inner reduction | Outer 5x5x5 | Mean time | Max time | Processor time |
+|---|---|---|---|---|---|---|---|---|---|
+| default | `p_keep` 4000, `e_keep` 800 (as before the merge) | 108.85 | 34.45 | 5.90 | 16.60 | 51.90 | 8.2 s | 11.8 s | 40.5 s |
+| default | `e_keep` 2400 | 108.60 | 34.50 | 5.75 | 16.55 | 51.80 | 7.1 s | 10.5 s | 52.1 s |
+| **default, as it is now** | `p_keep` 12000, `e_keep` 2400 | **108.35** | 34.50 | 5.90 | 16.40 | 51.55 | 9.4 s | 15.9 s | 61.5 s |
+| fast | `p_keep` 300, `e_keep` 200, clock of 1.5 s (as before the merge) | 110.70 | 34.85 | 5.95 | 17.00 | 52.90 | 2.2 s | 7.4 s | 14.2 s |
+| fast | `p_keep` 1000, `e_keep` 600, clock of 1.5 s | 110.80 | 34.75 | 6.05 | 17.45 | 52.55 | 2.6 s | 4.9 s | 18.4 s |
+| **fast, as it is now** | `p_keep` 1000, `e_keep` 600, no clock | **110.65** | 34.75 | 6.15 | 17.40 | 52.35 | 2.4 s | 3.7 s | 17.5 s |
+
+Against this morning (109.20 in 9.7 s by default, 112.00 in 4.1 s fast, on
+an idle machine): 0.85 moves shorter by default in about the same time,
+1.35 moves shorter and nearly twice as quick in the fast mode. dwalton76:
+136.10; the target of 20% fewer moves (108.9) is now met by default.
+
+- The edge phases of the 5x5x5 branch return about as many results as they
+  are asked for, where they returned several times as many. With the
+  numbers the 6x6x6 solver had, the 5x5x5 end got a third of the
+  reductions and the solutions were half a move longer; with three times
+  the numbers the length of the 6x6x6 branch (108.35) is back.
+- The fast mode has no clock any more: the same cube gives the same
+  solution however busy the machine is, and the slowest solve is shorter.
+- `--mode full` has its numbers scaled the same way and has not been run
+  on the merged code.
+
+A fault of the merge, found by the first runs and put right: on an even
+cube the staging of the 7x7x7 branch leaves any pair of colours on any
+pair of faces, and the 6x6x6 steps for the innermost ring took each pair
+to be on its own. With two pairs exchanged they brought the centres home
+as a mirror image of the cube's colours; no way of holding the cube fits
+that, and the cube went the long way (5 of the first 8 of the 8x8x8 set,
+and the 10x10x10 cubes that were seen to take it). The frame is now turned
+onto the colours' own axes first: 8 of 8 matched, 236.75 moves on those 8
+cubes (247.0 this morning).
+

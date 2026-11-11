@@ -946,17 +946,22 @@ impl Params6 {
     /// A few seconds per cube. The 5x5x5 is the quick part, so it keeps
     /// more reductions than its own fast mode does.
     pub fn fast() -> Params6 {
-        let outer = Params5 { e_keep: 200, pool: 60, time_ms: 1500, ..Params5::fast() };
+        // No clock: the same cube gives the same solution however busy the machine is.
+        let outer = Params5 { p_keep: 1000, e_keep: 600, pool: 60, time_ms: 0, ..Params5::fast() };
         Params6 { width: 4, first: 4, fan: 16, tries: 3, splits: 2, holds: 1, finals: 24, budget: 0, beam: 50_000, outer }
     }
 
     /// Wider, and the 5x5x5 with more reductions and more 3x3x3 searches
     /// than it takes for a 5x5x5 of its own: its choice of reductions is
     /// narrower here (they come from a few of the cubes it is given), and
-    /// the 3x3x3 left over is where the candidates differ most.
+    /// the 3x3x3 left over is where the candidates differ most. The edge
+    /// phases return about as many results as they are asked for (they
+    /// used to return several times as many), so `p_keep` and `e_keep`
+    /// are three times what they were, for the same reductions: 108.35
+    /// moves on 20 cubes against 108.85 with the old numbers.
     pub fn normal() -> Params6 {
         let outer =
-            Params5 { c_keep: 4000, p_keep: 4000, e_keep: 800, pool: 240, probes: 10_000, time_ms: 0, ..Params5::normal() };
+            Params5 { c_keep: 4000, p_keep: 12_000, e_keep: 2400, pool: 240, probes: 10_000, time_ms: 0, ..Params5::normal() };
         Params6 { width: 8, first: 8, fan: 32, tries: 6, splits: 2, holds: 1, finals: 64, budget: 0, beam: 100_000, outer }
     }
 
@@ -965,7 +970,7 @@ impl Params6 {
     /// The exact step 3 (`budget`) stays off: it takes minutes on some
     /// cubes for less than a move.
     pub fn full() -> Params6 {
-        let outer = Params5 { c_keep: 6000, p_keep: 6000, e_keep: 3000, pool: 800, probes: 10_000, time_ms: 0, ..Params5::normal() };
+        let outer = Params5 { c_keep: 6000, p_keep: 18_000, e_keep: 9000, pool: 800, probes: 10_000, time_ms: 0, ..Params5::normal() };
         Params6 { width: 16, first: 16, fan: 64, tries: 12, splits: 2, holds: 1, finals: 128, budget: 0, beam: 300_000, outer }
     }
 }
