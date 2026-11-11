@@ -253,7 +253,6 @@ fn staging(args: &[String], d: &cubenxnxn::staging::Staging) -> cubenxnxn::stagi
         fan: num("--fan", d.fan),
         beam: num("--beam", d.beam),
         axes: num("--axes", d.axes as usize) == 1,
-        merged: num("--merged", d.merged as usize) == 1,
     }
 }
 
@@ -1087,11 +1086,8 @@ fn stage7(args: &[String]) {
             frames: num("--frames", 1) == 1,
             joint: num("--joint", 1) == 1,
             merged: num("--merged", 1) == 1,
-            inner_weight: num("--inner-weight", 2) as u32,
-            strict: num("--strict", 0) == 1,
             rest: num("--rest", 1) == 1,
-            outer_weight: num("--outer-weight", 1) as u32,
-            first: num("--first", 0) == 1,
+            keep: num("--keep", width),
         };
         let found = s7.stage(&s5, &f, &wide);
         let took = t.elapsed().as_secs_f64() * 1e3;
@@ -1138,11 +1134,7 @@ fn params7(args: &[String]) -> cubenxnxn::solver7::Params7 {
         frames: num("--frames", d.frames as usize) == 1,
         joint: num("--joint", d.joint as usize) == 1,
         merged: num("--merged", d.merged as usize) == 1,
-        inner_weight: num("--inner-weight", d.inner_weight as usize) as u32,
-        strict: num("--strict", d.strict as usize) == 1,
         rest: num("--rest", d.rest as usize) == 1,
-        outer_weight: num("--outer-weight", d.outer_weight as usize) as u32,
-        first: num("--first", d.first as usize) == 1,
         tries: num("--tries", d.tries),
         matchings: num("--matchings", d.matchings),
         inner: cubenxnxn::solver5::Params5 {

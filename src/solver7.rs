@@ -404,18 +404,11 @@ pub struct Params7 {
     /// Whether each beam search step is one search from everything carried
     /// into it, or one search for each.
     pub joint: bool,
-    /// Whether the first two staging steps are one search, and what the
-    /// inner centres count for in its score.
+    /// Whether the first two staging steps are one search, and the last two.
     pub merged: bool,
-    pub inner_weight: u32,
-    pub strict: bool,
-    /// Whether the last two staging steps are one search, and what the
-    /// outer centres count for in its score.
     pub rest: bool,
-    pub outer_weight: u32,
-    /// Whether the first three staging steps are one search.
-    pub first: bool,
-    /// Stagings taken on to the matching step, and matchings kept of each.
+    /// Stagings taken on to the matching step, and matchings kept of each
+    /// length (they all come out of one search).
     pub tries: usize,
     pub matchings: usize,
     /// The edge phases of the inner cube, and how many of its reductions go on.
@@ -440,13 +433,9 @@ impl Params7 {
             frames: true,
             joint: true,
             merged: true,
-            inner_weight: 2,
-            strict: false,
             rest: true,
-            outer_weight: 1,
-            first: false,
-            tries: 8,
-            matchings: 4,
+            tries: 256,
+            matchings: 32,
             inner: Params5 { c_keep: 500, p_keep: 500, e_keep: 100, time_ms: 0, ..Params5::normal() },
             reductions: 16,
             // No clock: a phase cut short can leave the next one nothing to work with.
@@ -562,7 +551,7 @@ impl Solver7 {
         // Step 1.
         // Beam searches whose ties are broken differently give stagings a
         // move or two apart: a few runs, and the shortest of all go on.
-        let wide = |salt: u32| Wide { width: p.width, fan: p.fan, beam: p.beam, salt, many: p.many, more: p.more, frames: p.frames, joint: p.joint, merged: p.merged, inner_weight: p.inner_weight, strict: p.strict, rest: p.rest, outer_weight: p.outer_weight, first: p.first };
+        let wide = |salt: u32| Wide { width: p.width, fan: p.fan, beam: p.beam, salt, many: p.many, more: p.more, frames: p.frames, joint: p.joint, merged: p.merged, rest: p.rest, keep: p.tries };
         let mut staged: Vec<_> = (0..p.restarts as u32).flat_map(|salt| self.s7.stage(&self.s5.stage, facelets, &wide(salt))).collect();
         staged.sort_by(|x, y| (x.moves.len(), &x.moves).cmp(&(y.moves.len(), &y.moves)));
         staged.dedup_by(|x, y| x.moves == y.moves);
@@ -575,14 +564,14 @@ impl Solver7 {
             // One search from all the stagings.
             true => {
                 let roots: Vec<(&[u8], usize)> = cubes.iter().zip(tried).map(|(f, st)| (&f[..], st.moves.len() - least)).collect();
-                (0..p.restarts as u32).flat_map(|salt| self.match_all(&roots, p.match_beam, p.matchings * tried.len(), salt, p.match_more)).collect()
+                (0..p.restarts as u32).flat_map(|salt| self.match_all(&roots, p.match_beam, p.matchings, salt, p.match_more)).collect()
             }
             // One search for each.
             false => (0..tried.len())
                 .into_par_iter()
                 .flat_map_iter(|i| {
                     (0..p.restarts as u32)
-                        .flat_map(|salt| self.match_blocks(&cubes[i], p.match_beam, p.matchings, salt))
+                        .flat_map(|salt| self.match_blocks(&cubes[i], p.match_beam, 4, salt))
                         .map(|sol| (i, sol))
                         .collect::<Vec<_>>()
                 })

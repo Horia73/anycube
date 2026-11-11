@@ -217,12 +217,7 @@ impl SolverN {
         // An even cube with nothing solved yet has no faces of its own: its
         // centres may end on any faces, an axis to a pair.
         let none = |what: &str, layers: &[usize]| format!("no {} found for the centres of layers {:?}", what, layers);
-        let named = match (odd, matched) {
-            (true, _) => Some((half, half)),
-            (false, false) => Some((half - 1, half - 1)),
-            (false, true) => None,
-        };
-        let staged = self.stage_centres(g, &w.f, named, &self.staging)?;
+        let staged = self.stage_centres(g, &w.f, odd || !matched, &self.staging)?;
         for &m in &staged {
             g.apply(&mut w.f, m);
             w.moves.push(w.to_given[m]);

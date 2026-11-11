@@ -26,6 +26,25 @@
 //!
 //! Steps 2 and 4 are beam searches (`search`): their lower bounds are 5 to
 //! 6 and about 10 where the shortest solutions have 11 and 14 moves.
+//!
+//! That is how the larger cubes use the steps, one at a time (`staging`).
+//! A whole 7x7x7 is staged in three searches instead:
+//!
+//! - steps 1 and 2 in one beam search with every move (`MERGED`). Step 2 by
+//!   itself may only use the turns that keep the inner centres where step 1
+//!   put them, and takes as long as step 1;
+//! - step 3 as it is, exact;
+//! - steps 4 and 5 in one beam search (`REST`), ranked by what step 4
+//!   needs plus what step 5 would then take.
+//!
+//! "R/L" and "U/D" above are whichever axes come out shortest: the first
+//! search starts from the cube seen along each of its three axes at once,
+//! and the last one from every candidate with either of the other two axes
+//! next. A beam search from several starts (`search::beam_roots`) keeps the
+//! best states of all of them, so the choice is made by the search itself.
+//! On ten cubes the five steps one after another take 52.9 moves; with
+//! steps 1 and 2 in one and the order of the axes chosen, 51.5; with steps
+//! 4 and 5 in one as well, 50.7.
 
 use crate::cube::Cube;
 use crate::cuben::Geometry;
@@ -160,20 +179,12 @@ pub struct Wide {
     /// Whether a beam search step is one search from all the stagings
     /// carried (`search::beam_roots`) or one search for each.
     pub joint: bool,
-    /// Whether steps 1 and 2 are one search (`MERGED`).
+    /// Whether steps 1 and 2 are one search (`MERGED`), and steps 4 and 5 (`REST`).
     pub merged: bool,
-    /// What the inner centres count for in the score of that search, and
-    /// whether the triples are scored with the bounds of step 2 (which
-    /// suppose the inner centres stay put) instead of its own weaker ones.
-    pub inner_weight: u32,
-    pub strict: bool,
-    /// Whether steps 4 and 5 are one search (`REST`), and what the outer
-    /// centres count for in its score.
     pub rest: bool,
-    pub outer_weight: u32,
-    /// Whether steps 1 to 3 are one search (`FIRST`; `outer_weight` is
-    /// what the outer centres count for in its score too).
-    pub first: bool,
+    /// Stagings returned: the last step keeps this many of its results
+    /// (at least `width`), for whatever comes next to choose among.
+    pub keep: usize,
 }
 
 /// Steps 1 and 2 in one: R/L inner centres onto R and L and R/L triples
@@ -183,13 +194,10 @@ const MERGED: usize = 5;
 /// Steps 4 and 5 in one: everything U/D onto U and D, with the moves of step 4.
 const REST: usize = 6;
 
-/// Steps 1 to 3 in one: everything R/L onto R and L, with every move.
-const FIRST: usize = 7;
-
 /// Where the length of a step is kept in `Staged7::lens`.
 fn slot(step: usize) -> usize {
     match step {
-        MERGED | FIRST => 0,
+        MERGED => 0,
         REST => 3,
         step => step,
     }
@@ -402,11 +410,7 @@ impl Stage7 {
     pub fn stage(&self, s5: &Stage5, facelets: &[u8], w: &Wide) -> Vec<Staged7> {
         let start = |frame: usize| Cand { st: Staged7 { moves: Vec::new(), lens: [0; 5] }, f: self.g.reframe(facelets, &self.frames[frame].0), frame };
         let cands = if w.frames { vec![start(0), start(2), start(4)] } else { vec![start(0)] };
-        let mut steps: Vec<usize> = match (w.first, w.merged) {
-            (true, _) => vec![FIRST],
-            (_, true) => vec![MERGED, 2],
-            _ => vec![0, 1, 2],
-        };
+        let mut steps: Vec<usize> = if w.merged { vec![MERGED, 2] } else { vec![0, 1, 2] };
         steps.extend(if w.rest { vec![REST] } else { vec![3, 4] });
         self.run(s5, cands, w, &steps, true)
     }
@@ -425,7 +429,7 @@ impl Stage7 {
         salt: u32,
         steps: std::ops::Range<usize>,
     ) -> Vec<Staged7> {
-        let w = Wide { width, fan, beam, salt, many: fan, more: 0, frames: false, joint: false, merged: false, inner_weight: 2, strict: false, rest: false, outer_weight: 1, first: false };
+        let w = Wide { width, fan, beam, salt, many: fan, more: 0, frames: false, joint: false, merged: false, rest: false, keep: width };
         let start = Cand { st: Staged7 { moves: Vec::new(), lens: [0; 5] }, f: facelets.to_vec(), frame: 0 };
         let whole = steps.end == 5;
         self.run(s5, vec![start], &w, &steps.collect::<Vec<_>>(), whole)
@@ -437,6 +441,11 @@ impl Stage7 {
         let trace = std::env::var_os("CUBE7_TRACE").is_some();
         for (at, &step) in steps.iter().enumerate() {
             let after = steps.get(at + 1).copied();
+            // What the last step finds is all handed on, up to `keep`.
+            let (fan, width) = match after {
+                Some(_) => (w.fan, if w.frames && step == 2 { 2 * w.width } else { w.width }),
+                None => (w.keep.max(w.fan), w.keep.max(w.width)),
+            };
             // Solutions of the step, each with the number of the staging it continues.
             let sols: Vec<(usize, Vec<u8>)> = if w.joint && (step == 1 || step == 3 || step >= MERGED) {
                 self.beam_step(s5, step, &cands, w)
@@ -457,7 +466,7 @@ impl Stage7 {
                     let ahead = |f: &[u8]| after.map_or(0, |next| self.ahead(s5, next, f));
                     let mut out = Vec::with_capacity(2);
                     // With the first axis done, either of the other two may come next.
-                    if w.frames && (step == 2 || step == FIRST) {
+                    if w.frames && step == 2 {
                         let turned = self.g.reframe(&f2, &[0]);
                         let est = ahead(&turned);
                         out.push((st.clone(), turned, c.frame + 1, est, *i));
@@ -475,12 +484,12 @@ impl Stage7 {
                     run = (x.4, 0);
                 }
                 run.1 += 1;
-                run.1 <= w.fan
+                run.1 <= fan
             });
             next.sort_by(|x, y| (x.0.moves.len() + x.3, &x.1, x.2).cmp(&(y.0.moves.len() + y.3, &y.1, y.2)));
             next.dedup_by(|x, y| x.1 == y.1 && x.2 == y.2);
-            // Where the second axis is chosen, each staging is there twice.
-            next.truncate(if w.frames && (step == 2 || step == FIRST) { 2 * w.width } else { w.width });
+            // (Where the second axis is chosen, each staging is there twice.)
+            next.truncate(width);
             if trace {
                 let lens: Vec<String> = next.iter().map(|x| format!("{}+{}/{}", x.0.moves.len(), x.3, x.2)).collect();
                 eprintln!("    staging step {} at {:.0} ms: {}", step + 1, clock.elapsed().as_secs_f64() * 1e3, lens.join(" "));
@@ -501,13 +510,10 @@ impl Stage7 {
             let salt = w.salt + 1000 * again;
             let found = if step == MERGED {
                 let roots: Vec<([u32; 5], usize)> = cands.iter().map(|c| (self.node12(&c.f), late(c))).collect();
-                beam_roots(&Step12 { s: self, s5 }, &roots, |n| self.score12(s5, n, w), w.beam, w.many, 60, salt, &|_| true, w.more)
-            } else if step == FIRST {
-                let roots: Vec<([u32; 6], usize)> = cands.iter().map(|c| (self.node123(&c.f), late(c))).collect();
-                beam_roots(&Step123 { s: self, s5 }, &roots, |n| self.score123(s5, n, w), w.beam, w.many, 70, salt, &|_| true, w.more)
+                beam_roots(&Step12 { s: self, s5 }, &roots, |n| self.score12(s5, n), w.beam, w.many, 60, salt, &|_| true, w.more)
             } else if step == REST {
                 let roots: Vec<(Node45, usize)> = cands.iter().map(|c| (self.node45(&c.f), late(c))).collect();
-                beam_roots(&Step45 { s: self, s5 }, &roots, |n| self.score45(s5, n, w.outer_weight), w.beam, w.many, 60, salt, &|_| true, 0)
+                beam_roots(&Step45 { s: self, s5 }, &roots, |n| self.score45(s5, n), w.beam, w.many, 60, salt, &|_| true, w.more)
             } else if step == 1 {
                 let roots: Vec<([u32; 3], usize)> =
                     cands.iter().map(|c| ([self.mask(OBL_A, &c.f, 1), self.mask(T_OUT, &c.f, 1), self.mask(OBL_B, &c.f, 1)], late(c))).collect();
@@ -528,26 +534,12 @@ impl Stage7 {
     }
 
     /// How the search for steps 4 and 5 in one ranks states: as step 4
-    /// does, plus what step 5 would take if the triples were formed,
-    /// `weight` times. Once step 4's part is done that is exactly what is left.
+    /// does, plus what step 5 would take if the triples were formed. Once
+    /// step 4's part is done that is exactly what is left. (Counted twice,
+    /// it draws the beam to the outer centres too early: two moves more.)
     #[inline(always)]
-    fn score45(&self, s5: &Stage5, n: &Node45, weight: u32) -> u32 {
-        self.score4(s5, &n.n, false) + weight * s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as u32
-    }
-
-    fn node123(&self, f: &[u8]) -> [u32; 6] {
-        [X_IN, T_IN, OBL_A, T_OUT, OBL_B, X_OUT].map(|o| self.mask(o, f, 1))
-    }
-
-    /// How the search for steps 1 to 3 in one ranks states: as the one for
-    /// steps 1 and 2, plus what step 3 would take if the triples were formed.
-    #[inline(always)]
-    fn score123(&self, s5: &Stage5, n: &[u32; 6], w: &Wide) -> u32 {
-        let d = &self.diff1;
-        let (x, y) = (n[2] ^ n[3], n[3] ^ n[4]);
-        let rows = d[1][x as usize] as u32 + d[2][y as usize] as u32;
-        let (inner, outer) = (s5.a_close(n[0], n[1]) as u32, s5.a_close(n[5], n[3]) as u32);
-        (w.inner_weight * inner + rows + w.outer_weight * outer) * 64 + x.count_ones() + y.count_ones()
+    fn score45(&self, s5: &Stage5, n: &Node45) -> u32 {
+        self.score4(s5, &n.n, false) + s5.b_dist(n.xo as usize, n.n.o as usize, n.odd) as u32
     }
 
     fn node12(&self, f: &[u8]) -> [u32; 5] {
@@ -555,12 +547,15 @@ impl Stage7 {
     }
 
     /// How the search for steps 1 and 2 in one ranks states: as step 2
-    /// does, with what the inner centres still need added `weight` times.
+    /// does, with what the inner centres still need added twice. (Once,
+    /// the beam leaves them for last and takes 25 moves where this takes
+    /// 20; three times, half a move more. With the bounds of step 2 for
+    /// the triples, which suppose the inner centres stay put: no better.)
     #[inline(always)]
-    fn score12(&self, s5: &Stage5, n: &[u32; 5], w: &Wide) -> u32 {
-        let d = if w.strict { &self.diff2 } else { &self.diff1 };
+    fn score12(&self, s5: &Stage5, n: &[u32; 5]) -> u32 {
+        let d = &self.diff1;
         let (x, y) = (n[2] ^ n[3], n[3] ^ n[4]);
-        (w.inner_weight * s5.a_close(n[0], n[1]) as u32 + d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
+        (2 * s5.a_close(n[0], n[1]) as u32 + d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
     }
 
     /// How the beam search of step 2 ranks states: by the two bounds for the
@@ -591,27 +586,21 @@ impl Stage7 {
     /// in total, each with the number of its cube.
     ///
     /// `pass` 0: the R/L triples formed, from cubes whose inner R/L centres
-    /// are on R and L (step 2, or with `merged` the search of steps 1 and 2
-    /// in one, which may move the inner centres away and bring them back).
-    /// `pass` 1: the U/D inner centres on U and D and the U/D triples formed
-    /// (step 4), the parity of the inner wings left as it comes.
+    /// are on R and L (step 2). `pass` 1: the U/D inner centres on U and D
+    /// and the U/D triples formed (step 4); with `free` the parity of the
+    /// inner wings is left as it comes, otherwise it is made even.
     #[allow(clippy::too_many_arguments)]
-    pub fn rows(&self, s5: &Stage5, pass: usize, cubes: &[(Vec<u8>, usize)], beam: usize, cap: usize, salt: u32, merged: bool) -> Vec<(usize, Vec<u8>)> {
+    pub fn rows(&self, s5: &Stage5, pass: usize, cubes: &[(Vec<u8>, usize)], beam: usize, cap: usize, salt: u32, free: bool) -> Vec<(usize, Vec<u8>)> {
         let all = &|_: &[u8]| true;
-        match (pass, merged) {
-            (0, true) => {
-                let w = Wide { width: 1, fan: cap, beam, salt, many: cap, more: 0, frames: false, joint: true, merged, inner_weight: 2, strict: false, rest: false, outer_weight: 1, first: false };
-                let roots: Vec<([u32; 5], usize)> = cubes.iter().map(|(f, late)| (self.node12(f), *late)).collect();
-                beam_roots(&Step12 { s: self, s5 }, &roots, |n| self.score12(s5, n, &w), beam, cap, 60, salt, all, 0)
-            }
-            (0, false) => {
+        match pass {
+            0 => {
                 let roots: Vec<([u32; 3], usize)> =
                     cubes.iter().map(|(f, late)| ([self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], *late)).collect();
                 beam_roots(&Step2 { s: self }, &roots, |n| self.score2(n), beam, cap, 40, salt, all, 0)
             }
             _ => {
                 let roots: Vec<(Node4, usize)> = cubes.iter().map(|(f, late)| (self.node4(f), *late)).collect();
-                beam_roots(&Step4 { s: self, s5, free: true }, &roots, |n| self.score4(s5, n, true), beam, cap, 40, salt, all, 0)
+                beam_roots(&Step4 { s: self, s5, free }, &roots, |n| self.score4(s5, n, free), beam, cap, 40, salt, all, 0)
             }
         }
     }
@@ -672,17 +661,13 @@ impl Stage7 {
             sols
         };
         match step {
-            FIRST => {
-                let p = Step123 { s: self, s5 };
-                beam_again_longer(&p, &self.node123(f), |n| self.score123(s5, n, w), w.beam, w.many, 70, w.salt, w.more)
-            }
             REST => {
                 let p = Step45 { s: self, s5 };
-                beam_again_longer(&p, &self.node45(f), |n| self.score45(s5, n, w.outer_weight), w.beam, w.many, 60, w.salt, 0)
+                beam_again_longer(&p, &self.node45(f), |n| self.score45(s5, n), w.beam, w.many, 60, w.salt, 0)
             }
             MERGED => {
                 let p = Step12 { s: self, s5 };
-                beam_again_longer(&p, &self.node12(f), |n| self.score12(s5, n, w), w.beam, w.many, 60, w.salt, w.more)
+                beam_again_longer(&p, &self.node12(f), |n| self.score12(s5, n), w.beam, w.many, 60, w.salt, w.more)
             }
             0 => thin(
                 s5.phase_a(self.mask(X_IN, f, 1), self.mask(T_IN, f, 1), extra, cap, None)
@@ -794,54 +779,6 @@ impl Problem for Step45<'_> {
     }
 }
 
-/// Steps 1 to 3 in one: the R/L masks of the inner x and inner t centres,
-/// of the three orbits of the triples and of the outer x centres.
-struct Step123<'a> {
-    s: &'a Stage7,
-    s5: &'a Stage5,
-}
-
-impl Problem for Step123<'_> {
-    type Node = [u32; 6];
-
-    fn moves(&self) -> &[u8] {
-        &self.s.m1
-    }
-
-    #[inline(always)]
-    fn next(&self, n: &[u32; 6], k: usize) -> [u32; 6] {
-        let (m, p) = (k as u8, &self.s.perms);
-        [
-            p[X_IN].apply(m, n[0]),
-            p[T_IN].apply(m, n[1]),
-            p[OBL_A].apply(m, n[2]),
-            p[T_OUT].apply(m, n[3]),
-            p[OBL_B].apply(m, n[4]),
-            p[X_OUT].apply(m, n[5]),
-        ]
-    }
-
-    #[inline(always)]
-    fn bound(&self, n: &[u32; 6]) -> usize {
-        let d = &self.s.diff1;
-        let triples = d[0][(n[2] ^ n[4]) as usize].max(d[1][(n[2] ^ n[3]) as usize]).max(d[2][(n[3] ^ n[4]) as usize]);
-        triples.max(self.s5.a_close(n[0], n[1])).max(self.s5.a_close(n[5], n[3])) as usize
-    }
-
-    fn done(&self, n: &[u32; 6]) -> bool {
-        n[0] == GOAL_RL && n[1] == GOAL_RL && n[2] == GOAL_RL && n[3] == GOAL_RL && n[4] == GOAL_RL && n[5] == GOAL_RL
-    }
-
-    #[inline(always)]
-    fn prefetch(&self, n: &[u32; 6]) {
-        let d = &self.s.diff1;
-        self.s5.a_fetch(n[0], n[1]);
-        self.s5.a_fetch(n[5], n[3]);
-        fetch(&d[1], (n[2] ^ n[3]) as usize);
-        fetch(&d[2], (n[3] ^ n[4]) as usize);
-    }
-}
-
 /// Steps 1 and 2 in one: the R/L masks of the inner x and inner t centres
 /// and of the three orbits of the triples.
 struct Step12<'a> {
@@ -898,8 +835,8 @@ struct Node4 {
 struct Step4<'a> {
     s: &'a Stage7,
     s5: &'a Stage5,
-    /// The parity of the inner wings is left as it comes (larger cubes:
-    /// the turns of their later steps change it again anyway).
+    /// The parity of the inner wings is left as it comes (larger cubes,
+    /// where a later step changes it again).
     free: bool,
 }
 

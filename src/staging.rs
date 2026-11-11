@@ -35,20 +35,16 @@ pub struct Staging {
     pub beam: usize,
     /// Whether the order of the axes is chosen.
     pub axes: bool,
-    /// Whether the rows of the first axis are formed with every move (the
-    /// 7x7x7 solver's steps 1 and 2 in one) or only with the turns that
-    /// keep the centres inside them on their faces.
-    pub merged: bool,
 }
 
 impl Staging {
     pub fn normal() -> Staging {
-        Staging { width: 8, fan: 4, beam: 20_000, axes: true, merged: false }
+        Staging { width: 16, fan: 8, beam: 100_000, axes: true }
     }
 
     /// One cube, one axis order: the staging as it was before candidates.
     pub fn single() -> Staging {
-        Staging { width: 1, fan: 1, beam: 20_000, axes: false, merged: false }
+        Staging { width: 1, fan: 1, beam: 20_000, axes: false }
     }
 }
 
@@ -72,16 +68,21 @@ enum Step {
     Rows7([usize; 7], [usize; 3]),
 }
 
-/// The cube turned as a whole (0 = x, 1 = y, 2 = z). Where a cell of each
-/// face is known to show that face's colour, the colours are renamed so
-/// that it does again.
-fn seen(g: &Geometry, f: &[u8], turns: &[usize], named: Option<(usize, usize)>) -> Vec<u8> {
+/// The cube turned as a whole (0 = x, 1 = y, 2 = z). With `own`, the
+/// colours get the names of the faces the turn takes them to, so that a
+/// centre that belonged on a face of its own colour's axis before still
+/// does: the same puzzle seen from another side. (The names come from the
+/// turn, not from the cube: part of the way through a staging no cell of a
+/// face can be relied on to show that face's colour.)
+fn seen(g: &Geometry, f: &[u8], turns: &[usize], own: bool) -> Vec<u8> {
     let turned = g.turned(f, turns);
-    let Some((row, col)) = named else { return turned };
-    let n = g.n;
+    if !own {
+        return turned;
+    }
+    let (nn, key) = (g.n * g.n, g.turned(&g.solved(), turns));
     let mut name = [0u8; 6];
     for face in 0..6 {
-        name[turned[face * n * n + row * n + col] as usize] = face as u8;
+        name[key[face * nn] as usize] = face as u8;
     }
     turned.iter().map(|&c| name[c as usize]).collect()
 }
@@ -105,22 +106,22 @@ pub fn is_staged(g: &Geometry, f: &[u8]) -> bool {
 }
 
 impl SolverN {
-    /// The staging of a whole cube as given (`stage_centres`): for an odd
-    /// cube onto the faces of the centres' own colours.
+    /// The staging of a whole cube as given (`stage_centres`): an odd cube
+    /// onto the faces of the centres' own colours.
     pub fn stage(&self, g: &Geometry, f: &[u8]) -> Result<Vec<usize>, String> {
-        let named = (g.n % 2 == 1).then_some((g.n / 2, g.n / 2));
-        self.stage_centres(g, f, named, &self.staging)
+        self.stage_centres(g, f, g.n % 2 == 1, &self.staging)
     }
 
     /// Moves that bring every centre of the cube onto a face of its own
     /// axis, in the moves of the cube as given here.
     ///
-    /// `named`: a cell that shows its face's colour on every face (the
-    /// middle of an odd cube, a solved innermost centre of an even one). The
-    /// centres then go onto the faces of their own colours' axes. Without
-    /// one (an even cube with nothing solved yet) any colour axis may end
-    /// on any pair of faces, and the cube is held accordingly afterwards.
-    pub(crate) fn stage_centres(&self, g: &Geometry, f: &[u8], named: Option<(usize, usize)>, p: &Staging) -> Result<Vec<usize>, String> {
+    /// `own`: the centres go onto the faces of their own colours' axes, as
+    /// they must where the cube says which colour belongs on which face
+    /// (the middle of an odd cube, the solved innermost centres of an even
+    /// one). Otherwise (an even cube with nothing solved yet) any colour
+    /// axis may end on any pair of faces, and the cube is held accordingly
+    /// afterwards.
+    pub(crate) fn stage_centres(&self, g: &Geometry, f: &[u8], own: bool, p: &Staging) -> Result<Vec<usize>, String> {
         let n = g.n;
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let (odd, half, last) = (n % 2 == 1, n / 2, n - 1);
@@ -139,7 +140,7 @@ impl SolverN {
             }
             steps.push(Step::Faces([0, a, mid, last - a, last], [1, a + 1]));
         }
-        let start = |turns: &[usize]| Cand { f: seen(g, f, turns, named), moves: Vec::new(), to_start: g.frame_moves(turns) };
+        let start = |turns: &[usize]| Cand { f: seen(g, f, turns, own), moves: Vec::new(), to_start: g.frame_moves(turns) };
         let mut cands = match p.axes {
             true => vec![start(&[]), start(&[1]), start(&[2])],
             false => vec![start(&[])],
@@ -150,7 +151,7 @@ impl SolverN {
                 let quarter = g.frame_moves(&[0]);
                 let other: Vec<Cand> = cands
                     .iter()
-                    .map(|c| Cand { f: seen(g, &c.f, &[0], named), moves: c.moves.clone(), to_start: quarter.iter().map(|&m| c.to_start[m]).collect() })
+                    .map(|c| Cand { f: seen(g, &c.f, &[0], own), moves: c.moves.clone(), to_start: quarter.iter().map(|&m| c.to_start[m]).collect() })
                     .collect();
                 cands.extend(other);
             }
@@ -213,10 +214,17 @@ impl SolverN {
             }
             Step::Rows7(layers, depths) => {
                 let subs: Vec<(Vec<u8>, usize)> = cands.iter().map(|c| (g.sub_facelets(&c.f, layers), c.moves.len() - least)).collect();
+                // The wings of the third layer of the small cube end in an
+                // even permutation, which the edge steps need: fixing it
+                // there costs about ten moves an orbit, here one or two.
+                // Only the step of the outermost ring has to see to it: the
+                // quarter turns of any step that comes later for a ring
+                // further in change it again.
+                let free = depths[1] > 2;
                 // A beam that finds nothing is rare; a wider one then does.
                 let found = [(1, 0), (10, 1), (50, 2)]
                     .iter()
-                    .map(|&(times, salt)| self.s7.rows(stage5, pass, &subs, p.beam * times, p.fan * cands.len(), salt, p.merged))
+                    .map(|&(times, salt)| self.s7.rows(stage5, pass, &subs, p.beam * times, p.fan * cands.len(), salt, free))
                     .find(|found| !found.is_empty())
                     .unwrap_or_default();
                 (found, &depths[..])
