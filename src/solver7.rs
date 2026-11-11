@@ -512,6 +512,14 @@ impl Solver7 {
         // The bound is far below the true length, so: beam search, states
         // ranked by the half moves the three axes need.
         let score = |n: &[u32; 5]| p.axis(n, 0) as u32 + p.axis(n, 1) as u32 + p.axis(n, 2) as u32;
+        if std::env::var_os("CUBE7_TRACE").is_some() {
+            // Half moves each start is from matched by the bound, with the moves it is behind.
+            let mut far: Vec<(u32, usize)> = roots.iter().map(|(n, late)| (score(n), *late)).collect();
+            far.sort();
+            far.dedup();
+            let text: Vec<String> = far.iter().take(24).map(|(h, late)| format!("{}+{}", h, late)).collect();
+            eprintln!("    matching from {} cubes, {} different bounds: {}", roots.len(), far.len(), text.join(" "));
+        }
         (0..4)
             .map(|again| beam_roots(&p, &roots, score, width, cap, 40, salt + 1000 * again, &|_| true, more))
             .find(|found| !found.is_empty())
