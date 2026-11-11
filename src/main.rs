@@ -845,6 +845,14 @@ fn bench5(args: &[String]) {
         times[times.len() - 1]
     );
     println!("length histogram: {:?}", hist);
+    let work = |k: usize| cubenxnxn::edges5::POSITIONS[k].load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6;
+    println!(
+        "positions per cube, millions: centres {:.2}, phase C {:.2}, P {:.2}, E {:.2}",
+        cubenxnxn::stage5::POSITIONS.load(std::sync::atomic::Ordering::Relaxed) as f64 / nf / 1e6,
+        work(0),
+        work(1),
+        work(2)
+    );
 }
 
 /// 5x5x5 centres in one step, on a scramble file: lengths, bounds and times.
