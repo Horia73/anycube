@@ -88,7 +88,14 @@ on the same scrambles: [`bench/README.md`](bench/README.md).
 
 ## Install
 
-Rust is all it needs ([rustup.rs](https://rustup.rs)):
+It is built with Rust. If `cargo --version` answers, skip this; if not, this
+is Rust's own installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+Then one line fetches cubenxnxn and builds it:
 
 ```bash
 git clone https://github.com/Horia73/cubenxnxn.git && cd cubenxnxn && cargo build --release
@@ -128,17 +135,23 @@ is read from the number of stickers.
 Or as the moves that scrambled it, with the size of the cube:
 
 ```bash
-./target/release/cubenxnxn solve --size 4 "Rw U2 F' Uw L2 D Bw' R"
+# 3x3x3, 25 random moves
+./target/release/cubenxnxn solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
+
+# the same cube in the fewest moves there are: 18, after about 25 seconds
+./target/release/cubenxnxn solve --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'" --mode full
+
+# 5x5x5, 60 random moves, the quick way
+./target/release/cubenxnxn solve --size 5 "Bw2 D2 L' F Dw R B U L2 F2 Dw L Dw2 Fw Lw' B' R' Dw Bw' D2 F Lw2 Dw R' B' Rw2 U2 Bw Uw Bw' R2 Dw Fw Dw L' Fw' Lw' Uw2 Bw Dw2 B' Dw2 Bw' L2 Dw' Bw' Lw2 Bw Lw2 U' L2 B2 Lw2 U2 R2 Uw Rw Fw' L2 Uw" --mode fast
+
+# 7x7x7, 100 random moves
+./target/release/cubenxnxn solve --size 7 "Rw2 3Uw 3Rw Uw' B2 3Uw2 3Fw2 R Fw' 3Uw' F2 D2 3Fw 3Dw2 Lw2 3Uw 3Bw' Lw2 3Uw' Rw' 3Uw2 3Lw' 3Bw' Uw' F2 Lw2 B' 3Rw Uw Fw' R' B' Lw2 U F' Dw 3Lw2 Uw2 Bw' Rw2 U R' F Uw2 B2 3Lw' Uw' Lw 3Uw' Bw2 U2 3Rw2 3Dw 3Bw' D2 3Bw Uw2 Bw2 Uw' 3Rw2 Bw U' Rw2 Fw2 3Rw Fw L2 3Fw U 3Bw L2 F Uw Rw2 Dw2 R2 3Bw Uw F 3Dw2 Fw2 3Rw Uw 3Bw Dw2 3Fw' 3Lw 3Bw Rw Uw B Rw Uw' F2 Lw' Dw B' 3Lw 3Bw U"
 
 # the first 21x21x21 of the benchmark, 1,050 random moves
 ./target/release/cubenxnxn solve --size 21 "$(sed -n 1p bench/scrambles212121-5.txt)"
 
-# quicker, or shorter, on sizes 3 to 7
-./target/release/cubenxnxn solve --size 5 "Rw U2 F' Uw L2 D Bw' R" --mode fast
-./target/release/cubenxnxn solve --size 3 "R U R' F2 D L B' U2" --mode full
-
 # the stickers of a scrambled cube, to pass to --state
-./target/release/cubenxnxn facelets --size 3 "R U R' F2 D L B' U2"
+./target/release/cubenxnxn facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 ```
 
 It prints the solution and, on a second line, what it took. The 4x4x4 state
@@ -171,30 +184,20 @@ a sequence of small ones: groups of its layers behave like a 5x5x5, 6x6x6 or
 
 ## Thanks
 
-All code here is written for this project. The ideas it stands on are other
-people's, and it would not exist without them.
+All code here is written for this project, but the ideas it stands on are
+other people's. Thank you to:
 
-**[dwalton76](https://github.com/dwalton76/rubiks-cube-NxNxN-solver)** wrote
-the NxNxN solver that showed one program can solve a cube of any size, so
-that his LEGO robots could go past 5x5x5. The first version of the general
-solver here started from how his works, and his was the solver to measure
-against on every size from 4x4x4 to 10x10x10: each number in
-[`bench/README.md`](bench/README.md) has one of his beside it. The shape of
-this page is his too: a table of move counts that grows with every release,
-and examples that take a cube as it looks.
-
-**Chen Shuang** wrote [TPR](https://github.com/cs0x7f/TPR-4x4x4-Solver)
-(itself based on Tsai's 8-step method), where the 4x4x4's piece numbering,
-move definitions and third phase come from, and
-[cube555](https://github.com/cs0x7f/cube555), whose split into phases the
-5x5x5 follows. They were the solvers to beat on those two sizes.
-
-**Herbert Kociemba** gave the [two-phase algorithm](https://kociemba.org/cube.htm)
-and the exact search bounded by distances to a subgroup. They solve the
-3x3x3 here and finish every larger cube.
-
-Their solvers were run on the same scrambles while this one was built; the
-results are in `bench/`.
+- **[Herbert Kociemba](https://kociemba.org)**, for the
+  [two-phase algorithm](https://kociemba.org/cube.htm). It solves the 3x3x3
+  here and finishes every larger cube.
+- **[Chen Shuang](https://github.com/cs0x7f)**, for
+  [TPR](https://github.com/cs0x7f/TPR-4x4x4-Solver) (itself based on Tsai's
+  8-step method) and [cube555](https://github.com/cs0x7f/cube555). The 4x4x4
+  and 5x5x5 solvers here follow the way his are built.
+- **[dwalton76](https://github.com/dwalton76)**, for the
+  [NxNxN solver](https://github.com/dwalton76/rubiks-cube-NxNxN-solver), which
+  showed that one program can solve a cube of any size. The general solver
+  here began from how his works.
 
 ## Licence
 

@@ -32,7 +32,7 @@ To make new scrambles or look at a cube:
 ```
 
 ```bash
-./target/release/cubenxnxn facelets --size 5 "Uw R' F2"
+./target/release/cubenxnxn facelets --size 3 "U2 R' F2 L2 U2 R F L2 B' U' L' B2 R2 D2 R2 B D R D' F2 L U2 F' L2 D'"
 ```
 
 The flags behind `--mode` are in [search-flags.md](search-flags.md).
