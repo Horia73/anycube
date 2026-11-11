@@ -186,11 +186,33 @@ struct Ctx<'a> {
     out: &'a mut Vec<Vec<u8>>,
     limit: usize,
     nodes: u64,
+    /// Of these, the positions below the depth at which a level is sampled:
+    /// only they grow and shrink with the part that is searched.
+    deep: u64,
     stop: &'a AtomicBool,
     deadline: Option<Instant>,
     /// With this, a phase-A solution is kept only if phase B after it is short enough.
     score: Option<Score<'a>>,
+    /// Of the ways to make the first `SAMPLE_AT` moves, the part that is
+    /// followed, as a range of 65536ths, and what tells one level's choice
+    /// from another's.
+    part: (u32, u32),
+    salt: u64,
+    /// Positions this level has visited, in all its jobs, and how many it may:
+    /// a level that turns out much larger than it was taken for ends there.
+    spent: &'a AtomicU64,
+    cap: u64,
 }
+
+/// A level of phase A that is too large to search whole is searched in
+/// part: after this many moves a branch is followed or dropped, by a hash
+/// of those moves, so that what is searched is spread over the whole level.
+const SAMPLE_AT: usize = 3;
+/// How much larger than the one before a level of phase A may be. The
+/// first part of a level is sized as if it were this much larger; what
+/// that part took tells how large the level is, and the second part is
+/// sized by that.
+const GROWTH: f64 = 400.0;
 
 /// What it takes to know the length of phase B at the end of a phase-A
 /// solution without making its moves on the whole cube: where the U/D
@@ -314,6 +336,11 @@ impl Stage5 {
     /// phase-A solution, from the positions of the U/D centres alone; only
     /// the solutions that give a short staging are worked out on the cube.
     ///
+    /// The optimal length of phase A and the next are searched whole. The
+    /// lengths after them hold about thirty times as many solutions each;
+    /// with a `budget` (positions per length, 0 for no limit) each is
+    /// searched only in the part that fits it, spread evenly over the level.
+    ///
     /// Past `deadline` the search stops as soon as it has a result: the optimal
     /// phase-A length is always completed, the extra lengths may be cut short.
     pub fn stage(
@@ -322,6 +349,7 @@ impl Stage5 {
         extra: usize,
         limit: usize,
         keep: usize,
+        budget: u64,
         deadline: Option<Instant>,
     ) -> Result<Vec<Staged>, String> {
         let g = &tables5().geometry;
@@ -337,6 +365,7 @@ impl Stage5 {
         let mut optimum = None;
         let stop = AtomicBool::new(false);
         let best = AtomicUsize::new(usize::MAX);
+        let mut level_size = 1.0f64;
         for depth in first..=first + 12 {
             if optimum.is_some_and(|o| depth > o + extra) || stop.load(Relaxed) {
                 break;
@@ -347,40 +376,80 @@ impl Stage5 {
             // One job per frame and first move.
             let jobs: Vec<(usize, u8)> =
                 (0..roots.len()).flat_map(|f| (0..36u8).map(move |m| (f, m))).collect();
-            let found: Vec<(usize, usize, Vec<u8>)> = jobs
-                .par_iter()
-                .flat_map_iter(|&(f, m)| {
-                    let cube = &roots[f].0;
-                    let mut out = Vec::new();
-                    let score = || Score {
-                        ud_x: ud_mask_all(&cube.c4.ct),
-                        ud_t: ud_mask_all(&cube.t),
-                        odd: cube.c4.wing_parity() != 0,
-                        best: &best,
-                        seen: &seen,
-                    };
-                    let mut ctx = Ctx { out: &mut out, limit, nodes: 0, stop: &stop, deadline: cut, score: Some(score()) };
-                    if depth == 0 {
-                        if m == 0 && h(cube) == 0 {
-                            self.leaf(&[], &mut ctx);
+            let whole = optimum.is_none_or(|o| depth <= o + 1) || budget == 0;
+            let spent = AtomicU64::new(0);
+            let cap = if whole { u64::MAX } else { budget * 2 };
+            // Searches one part of the level; returns what it kept and the
+            // positions it visited below the depth at which the level is sampled.
+            let search = |part: (u32, u32)| -> (Vec<(usize, usize, Vec<u8>)>, u64) {
+                let visited = AtomicU64::new(0);
+                let found = jobs
+                    .par_iter()
+                    .flat_map_iter(|&(f, m)| {
+                        let cube = &roots[f].0;
+                        let mut out = Vec::new();
+                        let score = || Score {
+                            ud_x: ud_mask_all(&cube.c4.ct),
+                            ud_t: ud_mask_all(&cube.t),
+                            odd: cube.c4.wing_parity() != 0,
+                            best: &best,
+                            seen: &seen,
+                        };
+                        let mut ctx = Ctx {
+                            out: &mut out,
+                            limit,
+                            nodes: 0,
+                            deep: 0,
+                            stop: &stop,
+                            deadline: cut,
+                            score: Some(score()),
+                            part,
+                            salt: (depth * 3 + f) as u64,
+                            spent: &spent,
+                            cap,
+                        };
+                        if depth == 0 {
+                            if m == 0 && h(cube) == 0 {
+                                self.leaf(&[], &mut ctx);
+                            }
+                        } else {
+                            let (x, t) = (self.bx.apply(m, rl_mask(&cube.c4.ct)), self.bt.apply(m, rl_mask(&cube.t)));
+                            if self.a_bound(x, t) as usize <= depth - 1 {
+                                let mut path = [0u8; 32];
+                                path[0] = m;
+                                self.dfs_a(x, t, depth - 1, m, 1, &mut path, &mut ctx);
+                            }
                         }
-                    } else {
-                        let (x, t) = (self.bx.apply(m, rl_mask(&cube.c4.ct)), self.bt.apply(m, rl_mask(&cube.t)));
-                        if self.a_bound(x, t) as usize <= depth - 1 {
-                            let mut path = [0u8; 32];
-                            path[0] = m;
-                            self.dfs_a(x, t, depth - 1, m, 1, &mut path, &mut ctx);
-                        }
-                    }
-                    POSITIONS.fetch_add(ctx.nodes, Relaxed);
-                    let score = score();
-                    out.into_iter().map(|a| (a.len() + self.b_after(&score, &a), f, a)).collect::<Vec<_>>()
-                })
-                .collect();
+                        POSITIONS.fetch_add(ctx.nodes, Relaxed);
+                        visited.fetch_add(ctx.deep, Relaxed);
+                        let score = score();
+                        out.into_iter().map(|a| (a.len() + self.b_after(&score, &a), f, a)).collect::<Vec<_>>()
+                    })
+                    .collect();
+                (found, visited.load(Relaxed))
+            };
+            if whole {
+                let (found, visited) = search((0, 65536));
+                level_size = visited.max(1) as f64;
+                all.extend(found);
+            } else {
+                // A first part small enough for the largest level there could be, then the rest of the budget.
+                let first = ((budget as f64 / 8.0 / (level_size * GROWTH) * 65536.0) as u32).clamp(1, 65536);
+                let (found, visited) = search((0, first));
+                all.extend(found);
+                let per_part = visited.max(1) as f64 / first as f64;
+                let upto = ((budget as f64 / per_part) as u32).clamp(first, 65536);
+                let mut total = visited;
+                if upto > first && !stop.load(Relaxed) {
+                    let (found, visited) = search((first, upto));
+                    all.extend(found);
+                    total += visited;
+                }
+                level_size = (total.max(1) as f64 / (upto as f64 / 65536.0)).max(1.0);
+            }
             if seen.load(Relaxed) > 0 && optimum.is_none() {
                 optimum = Some(depth);
             }
-            all.extend(found);
         }
         // Among stagings of one length, no frame or first move comes first.
         let mix = |a: &[u8]| a.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, &m| (h ^ m as u64).wrapping_mul(0x100_0000_01B3));
@@ -446,6 +515,7 @@ impl Stage5 {
                 continue;
             }
             let cut = if optimum.is_some() { deadline } else { None };
+            let spent = AtomicU64::new(0);
             let found: Vec<Vec<u8>> = (0..36u8)
                 .into_par_iter()
                 .flat_map_iter(|m| {
@@ -454,7 +524,8 @@ impl Stage5 {
                     if self.a_bound(a, b) as usize <= depth - 1 {
                         let mut path = [0u8; 32];
                         path[0] = m;
-                        let mut ctx = Ctx { out: &mut out, limit, nodes: 0, stop: &stop, deadline: cut, score: None };
+                        let mut ctx =
+                            Ctx { out: &mut out, limit, nodes: 0, deep: 0, stop: &stop, deadline: cut, score: None, part: (0, 65536), salt: 0, spent: &spent, cap: u64::MAX };
                         self.dfs_a(a, b, depth - 1, m, 1, &mut path, &mut ctx);
                         POSITIONS.fetch_add(ctx.nodes, Relaxed);
                     }
@@ -511,9 +582,19 @@ impl Stage5 {
             // The last move was checked to reach the goal.
             return self.leaf(&path[..depth], ctx);
         }
+        if depth == SAMPLE_AT && ctx.part != (0, 65536) {
+            let mix = path[..SAMPLE_AT]
+                .iter()
+                .fold(ctx.salt ^ 0xCBF2_9CE4_8422_2325, |h, &m| (h ^ m as u64).wrapping_mul(0x100_0000_01B3));
+            let at = ((mix >> 24) & 0xFFFF) as u32;
+            if at < ctx.part.0 || at >= ctx.part.1 {
+                return false;
+            }
+        }
         ctx.nodes += 1;
+        ctx.deep += (depth >= SAMPLE_AT) as u64;
         if ctx.nodes % 4096 == 0 {
-            if ctx.deadline.is_some_and(|d| Instant::now() > d) {
+            if ctx.deadline.is_some_and(|d| Instant::now() > d) || ctx.spent.fetch_add(4096, Relaxed) >= ctx.cap {
                 ctx.stop.store(true, Relaxed);
             }
             if ctx.stop.load(Relaxed) {
