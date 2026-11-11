@@ -141,8 +141,10 @@ Cod în `src/free.rs`, cifre în `bench/RESULTS.md`.
   notată inițial aici nu era un rezultat real.
 - Regulă de lucru de acum: o lungime contează doar dacă soluția a fost
   aplicată pe cubul inițial și l-a rezolvat.
-- Cuburi puțin amestecate: 10 mutări → 10, 15 → 28, 20 → 42. De reparat cu un
-  tabel în jurul cubului rezolvat (optim până la ~12–13 mutări).
+- Cuburi puțin amestecate: 10 mutări → 10, 15 → 28, 20 → 42. Solverul fie
+  găsește soluția scurtă, fie cade la 30–42; începe să rateze de la 12
+  mutări (2 din 6 cuburi). Căutarea exactă cu tabel în jurul cubului rezolvat
+  (`short`) dă optimul până la 12 mutări, dar e lentă și nu ajunge la 14–20.
 - Ce rămâne: un prag învățat (rețea antrenată pe cuburi cu distanță
   cunoscută; bancul și tabelul dau etichete exacte până la 12 mutări). Câștigul
   maxim pe cuburi aleatoare e ~2 mutări, iar reușita nu e sigură.

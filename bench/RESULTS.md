@@ -547,6 +547,31 @@ solved cube gets N random moves.
 
 The machine was running the beam search above on its GPU during these runs.
 
+`cubenxnxn short --walk N --forward F --ball 5`: the shortest solution found
+exactly (every sequence of up to F moves against a table of the 5.3 million
+cubes within 5 moves of solved), next to the solver's default solution. Every
+exact solution was applied to the cube and solves it.
+
+| N | Cubes | Exact | Solver, cube by cube |
+|---|---|---|---|
+| 11 (`--forward 6`) | 6 | 11 on all | 11 on all |
+| 12 (`--forward 7`) | 6 | 12 on all | 12, 12, 12, 12, 30, 42 |
+| 13 (`--forward 7`, exact only up to 12) | 4 | nothing up to 12 | 13, 13, 13, 42 |
+
+The solver either finds the short solution or falls back to a normal one of
+30 to 42 moves; from 12 moves on it starts to miss. The exact search took
+about 30 s per cube at 11 moves and 3 to 20 minutes at 12 on a machine under
+very heavy load (load average 100 to 150), so the times say little; it is not
+pruned at all.
+
+## 4x4x4: four times the effort of full mode (2026-11-11, not conclusive)
+
+`bench --limit 12 --mode full --n2 600000 --k3 600000 --joint-nodes 80000
+--time 120000 --exact 240`: 40.42 against 40.08 for `--mode full` on the same
+12 cubes, at 202 s per cube. The machine was under very heavy load (load
+average 90 to 140) and the stages were cut by the clock, so this says nothing
+about what more effort is worth; it has to be repeated on a quiet machine.
+
 ## 4x4x4: our solutions in single-layer quarter turns (2026-11-11)
 
 CayleyPy (arXiv 2502.13266) reports 4x4x4 results in the metric of the Kaggle
