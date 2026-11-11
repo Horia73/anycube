@@ -1,0 +1,1313 @@
+/* anycube: the application. One stylesheet, no dependencies, system
+   fonts. Dark by default, light where the system asks for it.
+
+   The application is exactly one viewport tall, on a laptop and on a
+   phone, and everything in it has one place and one size: the cube and its
+   playback on one side; the input, the solution and Solve on the other.
+   Nothing moves when a solution arrives, the mode changes or the size
+   does. A page that hosts it adds its own stylesheet for whatever it puts
+   around it. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0e1014;
+  --bg-2: #14171d;
+  --panel: #171a21;
+  --line: #262b36;
+  --line-2: #343a48;
+  --ink: #ecebe6;
+  --ink-2: #b4b8c4;
+  --ink-3: #8a8fa0;
+  --accent: #f7d038;
+  --accent-ink: #15130a;
+  --danger: #ff7a70;
+  --danger-bg: #2a1614;
+  --ok: #5fd08e;
+  --stage-a: #232936;
+  --stage-b: #0f1217;
+  --cube-body: #0b0c0f;
+  --cube-inside: #1b1e25;
+  --cube-blank: #3a3f4b;
+  --u: #f4f4ef;
+  --r: #d92b3a;
+  --f: #1faa59;
+  --d: #f7d038;
+  --l: #f58220;
+  --b: #2f6fde;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --radius: 14px;
+  --gutter: 16px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg: #f4f1ea;
+    --bg-2: #ece8de;
+    --panel: #fffdf8;
+    --line: #dcd7ca;
+    --line-2: #c4beae;
+    --ink: #17191d;
+    --ink-2: #4a4e58;
+    --ink-3: #6c707b;
+    --accent: #17191d;
+    --accent-ink: #fffdf8;
+    --danger: #b3261e;
+    --danger-bg: #fbe9e6;
+    --ok: #1c7a44;
+    --stage-a: #ffffff;
+    --stage-b: #e4dfd2;
+    --cube-body: #15171b;
+    --cube-inside: #2a2d35;
+    --cube-blank: #b9b5aa;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--b);
+  outline-offset: 2px;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+kbd {
+  font: 0.85em var(--mono);
+  padding: 1px 5px;
+  border: 1px solid var(--line-2);
+  border-radius: 5px;
+}
+
+/* ------------------------------------------------- the one-viewport app */
+
+.app {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 480px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+/* The six colours, across the top. */
+.stripe {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  height: 4px;
+}
+.stripe i:nth-child(1) { background: var(--u); }
+.stripe i:nth-child(2) { background: var(--d); }
+.stripe i:nth-child(3) { background: var(--l); }
+.stripe i:nth-child(4) { background: var(--r); }
+.stripe i:nth-child(5) { background: var(--f); }
+.stripe i:nth-child(6) { background: var(--b); }
+
+.top,
+.bench {
+  width: min(1320px, 100% - 2 * var(--gutter));
+  margin-inline: auto;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 8px 0;
+  min-height: 44px;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  text-decoration: none;
+  font: 600 1rem/1 var(--mono);
+  letter-spacing: -0.01em;
+  flex: none;
+}
+.brand b {
+  font-weight: 600;
+  color: var(--ink-3);
+}
+.brand .m0 { fill: var(--u); }
+.brand .m1 { fill: var(--r); }
+.brand .m2 { fill: var(--f); }
+.brand .m3 { fill: var(--d); }
+.brand .m4 { fill: var(--l); }
+.brand .m5 { fill: var(--b); }
+
+/* What the hosting page puts in the bar. */
+.top-extra {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+
+.bench {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(340px, 410px);
+  gap: 16px;
+  padding-bottom: 12px;
+}
+
+/* The cube, its playback, the solution. */
+.stage-col {
+  min-height: 0;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+/* Wherever the cube is drawn: as large a square as fits. */
+.cube-host {
+  container-type: size;
+  display: grid;
+  place-items: center;
+}
+.cube-host canvas {
+  display: block;
+  width: min(100cqw, 100cqh);
+  aspect-ratio: 1;
+  touch-action: none;
+  cursor: grab;
+}
+.cube-host canvas:active {
+  cursor: grabbing;
+}
+
+.stage {
+  position: relative;
+  min-height: 120px;
+  border-radius: calc(var(--radius) + 4px);
+  border: 1px solid var(--line);
+  background: radial-gradient(120% 90% at 50% 28%, var(--stage-a), var(--stage-b) 72%);
+  overflow: hidden;
+}
+.stage-size,
+.stage-tools,
+.next,
+.status {
+  position: absolute;
+  margin: 0;
+  z-index: 3;
+}
+.stage-size {
+  top: 10px;
+  left: 12px;
+  font: 600 0.8rem/1 var(--mono);
+  color: var(--ink-2);
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  pointer-events: none;
+}
+.stage-tools {
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+}
+.tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.tool svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tool:hover {
+  color: var(--ink);
+}
+.tool[aria-pressed="true"] {
+  color: var(--ink);
+  border-color: var(--ink-3);
+  background: var(--panel);
+}
+/* The move that comes next, in letters, beside its arrows. */
+.next {
+  left: 12px;
+  top: 46px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  pointer-events: none;
+}
+.next span {
+  font: 600 0.66rem/1 var(--sans);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.next b {
+  font: 700 clamp(1.5rem, 7cqmin, 2.6rem) / 1 var(--mono);
+  letter-spacing: -0.03em;
+}
+
+/* Where a solve stands, and what is wrong with a cube: over the foot of the stage. */
+.status {
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 20px);
+  padding: 8px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  font-size: 0.88rem;
+  line-height: 1.35;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 10px;
+  align-items: center;
+}
+.status .text {
+  margin: 0;
+}
+.status .text b {
+  font-weight: 650;
+}
+.status .more-line {
+  grid-column: 2;
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-3);
+}
+.status small {
+  display: block;
+  margin-top: 3px;
+  opacity: 0.85;
+  font: 0.82em/1.35 var(--mono);
+}
+.status.bad {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.status.bad .more-line {
+  color: inherit;
+  opacity: 0.85;
+}
+.status.good .mark {
+  color: var(--ok);
+}
+.mark {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+}
+/* Four stickers taking turns: the page is busy. */
+.busy {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+.busy i {
+  border-radius: 2.5px;
+  animation: pulse 1.2s infinite ease-in-out;
+}
+.busy i:nth-child(1) { background: var(--d); }
+.busy i:nth-child(2) { background: var(--r); animation-delay: 0.15s; }
+.busy i:nth-child(4) { background: var(--b); animation-delay: 0.3s; }
+.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
+@keyframes pulse {
+  0%, 100% { opacity: 0.25; }
+  40% { opacity: 1; }
+}
+.line {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+}
+.line i {
+  flex: 1;
+  max-width: 34px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line-2);
+}
+.line i.ahead {
+  background: var(--ink-3);
+}
+.line i.you {
+  background: var(--accent);
+}
+
+/* The camera's picture takes the stage; the cube steps aside into a corner. */
+.cam-frame {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: min(100cqw, 100cqh);
+  aspect-ratio: 1;
+  overflow: hidden;
+  background: #000;
+  z-index: 1;
+}
+.cam-frame video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.cam-frame.mirrored video,
+.cam-frame.mirrored .cam-grid {
+  transform: scaleX(-1);
+}
+.cam-grid {
+  position: absolute;
+  inset: 15%;
+  display: grid;
+  grid-template-columns: repeat(var(--n), 1fr);
+  border: 2px solid rgba(255, 255, 255, 0.95);
+  border-radius: 8px;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.42);
+}
+.cam-grid i {
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  display: grid;
+  place-items: center;
+  color: transparent;
+}
+/* What was read from each cell, as a dot in its middle. */
+.cam-grid i::after {
+  content: "";
+  width: 34%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9), 0 0 0 3px rgba(0, 0, 0, 0.5);
+}
+.stage.scanning .stage-tools,
+.stage.scanning .next {
+  display: none;
+}
+
+/* Playback. */
+.transport {
+  display: grid;
+  grid-template-columns: auto auto minmax(60px, 1fr) auto;
+  grid-template-areas: "keys counter scrub speed";
+  align-items: center;
+  gap: 4px 12px;
+}
+.keys {
+  grid-area: keys;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.key {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+.key svg {
+  width: 19px;
+  height: 19px;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.key:hover:not(:disabled) {
+  background: var(--bg-2);
+  border-color: var(--line);
+}
+.key:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.key.play {
+  width: 46px;
+  height: 46px;
+  margin-inline: 3px;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.key.play:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.key.play svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 0;
+}
+.key.play .icon-pause,
+.key.play.playing .icon-play {
+  display: none;
+}
+.key.play.playing .icon-pause {
+  display: block;
+}
+.counter {
+  grid-area: counter;
+  margin: 0;
+  font: 600 1.3rem/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+.counter .of {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--ink-3);
+  letter-spacing: 0;
+}
+#scrub {
+  grid-area: scrub;
+  width: 100%;
+  margin: 0;
+  accent-color: var(--accent);
+  height: 20px;
+}
+.speed {
+  grid-area: speed;
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px;
+  background: var(--bg-2);
+}
+.speed button {
+  border: 0;
+  background: none;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font: 500 0.78rem/1.2 var(--mono);
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.speed button[aria-checked="true"] {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+
+/* The lower part of the panel: the solution, or the cube the camera is reading. */
+.lower {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.solution {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+  padding: 8px 10px 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+}
+.summary {
+  margin: 0;
+  color: var(--ink-3);
+  font: 600 0.72rem/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.summary b {
+  color: var(--ink);
+  font: 650 0.9rem/1 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  margin-right: 4px;
+}
+.moves,
+.placeholder {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  align-self: stretch;
+  min-height: 0;
+}
+.moves {
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+  gap: 4px 4px;
+  position: relative;
+}
+.moves:empty {
+  display: none;
+}
+.placeholder {
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.scan-slot {
+  flex: 1;
+  min-width: 0;
+  display: none;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: radial-gradient(120% 90% at 50% 28%, var(--stage-a), var(--stage-b) 72%);
+}
+.lower.scanning .solution {
+  display: none;
+}
+.lower.scanning .scan-slot {
+  display: grid;
+}
+.scan-slot-narrow {
+  display: none;
+}
+
+.part {
+  display: contents;
+}
+.part h4 {
+  margin: 0 2px 0 6px;
+  font: 600 0.66rem/1 var(--sans);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+.part:first-child h4 {
+  margin-left: 0;
+}
+.part h4 span {
+  font-family: var(--mono);
+  letter-spacing: 0;
+  margin-left: 4px;
+}
+.part ol {
+  display: contents;
+}
+.part li {
+  list-style: none;
+}
+.move {
+  min-width: 2.2em;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: none;
+  font: 500 0.88rem/1.1 var(--mono);
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--ink);
+}
+.move:hover {
+  border-color: var(--line-2);
+  background: var(--bg-2);
+}
+.move.done {
+  color: var(--ink-3);
+  border-color: transparent;
+  background: var(--bg-2);
+}
+.move.now {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+/* Controls. */
+.panel {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) + 4px);
+  background: var(--panel);
+  padding: 12px;
+}
+/* The input keeps one height whatever tab is open, so what is under it stays where it is. */
+.panels {
+  flex: none;
+  height: 196px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.note {
+  margin: 8px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--ink-3);
+}
+.note code {
+  font: 0.92em var(--mono);
+  color: var(--ink-2);
+}
+.tabpanel > .note:first-child {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+.size-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sizes {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px;
+  margin: -2px;
+}
+.sizes::-webkit-scrollbar {
+  display: none;
+}
+.sizes button {
+  flex: none;
+  min-width: 38px;
+  height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  font: 600 0.95rem/1 var(--mono);
+  cursor: pointer;
+}
+.sizes button:hover {
+  border-color: var(--line-2);
+}
+.sizes button[aria-checked="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+.custom input {
+  width: 58px;
+  height: 38px;
+  padding: 0 6px;
+  border: 1px dashed var(--line-2);
+  border-radius: 10px;
+  background: none;
+  font: 600 0.95rem/1 var(--mono);
+  text-align: center;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.custom input::-webkit-outer-spin-button,
+.custom input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.custom input.on {
+  border-style: solid;
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-2);
+}
+.tabs button {
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  padding: 7px 4px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.tabs button[aria-selected="true"] {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+.narrow-only {
+  display: none;
+}
+
+textarea {
+  display: block;
+  width: 100%;
+  resize: none;
+  height: 4.4em;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--bg);
+  font: 500 0.95rem/1.45 var(--mono);
+}
+textarea::placeholder {
+  color: var(--ink-3);
+  opacity: 0.7;
+}
+textarea.bad {
+  border-color: var(--danger);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: none;
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.button:hover:not(:disabled) {
+  background: var(--bg-2);
+}
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.button.small {
+  min-height: 28px;
+  padding: 2px 10px;
+  font-size: 0.8rem;
+}
+.button.quiet {
+  min-height: 32px;
+  padding: 4px 10px;
+  font-weight: 500;
+  font-size: 0.82rem;
+  color: var(--ink-2);
+}
+.button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.button.primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.button.large {
+  flex: 1;
+  min-height: 46px;
+  font-size: 1.02rem;
+  border-radius: 12px;
+}
+.button[aria-pressed="true"] {
+  background: var(--bg-2);
+  border-color: var(--ink-3);
+  color: var(--ink);
+}
+
+/* Whether the cube as it stands can be solved: one line, always there. */
+.valid {
+  margin: 0;
+  height: 1.35em;
+  font-size: 0.84rem;
+  line-height: 1.35;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.valid::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--line-2);
+}
+.valid.ok::before {
+  background: var(--ok);
+}
+.valid.bad::before {
+  background: var(--danger);
+}
+.valid.bad {
+  color: var(--danger);
+}
+.valid a {
+  color: var(--ink);
+}
+.valid b {
+  font-weight: 650;
+  color: var(--ink-2);
+}
+
+.go {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.modes {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 3px;
+  background: var(--bg-2);
+}
+.modes button {
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  padding: 0 11px;
+  font-weight: 600;
+  font-size: 0.86rem;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+.modes button[aria-checked="true"] {
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--line-2);
+}
+.modes button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Painting: the colours, and the cube unfolded to choose a face from. */
+.paint {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, 0.5fr);
+  gap: 12px;
+  align-items: center;
+}
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+.swatch {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  min-width: 0;
+}
+.swatch .chip {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+.swatch .count {
+  font: 500 0.72rem/1 var(--mono);
+  color: var(--ink-3);
+  text-align: left;
+}
+.swatch[aria-checked="true"] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+  background: var(--bg-2);
+}
+.swatch.full .count {
+  color: var(--ok);
+}
+.swatch.over .count {
+  color: var(--danger);
+  font-weight: 700;
+}
+.net {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(3, auto);
+  gap: 3px;
+}
+.net-face {
+  aspect-ratio: 1;
+  display: grid;
+  grid-template-columns: repeat(var(--cells), 1fr);
+  gap: 1px;
+  padding: 2px;
+  border: 0;
+  border-radius: 5px;
+  background: var(--cube-body);
+  cursor: pointer;
+  opacity: 0.75;
+}
+.net-face i {
+  border-radius: 1.5px;
+  background: var(--cube-blank);
+}
+.net-face.current {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--ink);
+}
+.net-face.doubt:not(.current) {
+  box-shadow: 0 0 0 1.5px var(--danger);
+}
+
+/* The camera's side of the panel. */
+.private {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  align-items: start;
+  margin: 10px 0 12px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line));
+  border-radius: 11px;
+  font-size: 0.84rem;
+  color: var(--ink-2);
+}
+.private svg {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 1.8;
+  stroke-linejoin: round;
+}
+.cam-scan {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+.cam-side {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.cam-heading {
+  margin: 0 0 2px;
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+.cam-text {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 0.86rem;
+  line-height: 1.35;
+  min-height: 2.7em;
+}
+.cam-shots {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 330px;
+}
+.cam-shots li {
+  aspect-ratio: 1;
+  display: grid;
+  grid-template-columns: repeat(var(--n), 1fr);
+  gap: 1px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--cube-body);
+  opacity: 0.55;
+}
+.cam-shots li i {
+  border-radius: 1px;
+  background: var(--cube-blank);
+}
+.cam-shots li.taken {
+  opacity: 1;
+}
+.cam-shots li.current {
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.cam-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.cam-buttons .primary {
+  flex: 1 1 110px;
+  min-height: 42px;
+}
+
+/* ------------------------------------------------------ narrow screens */
+
+@media (max-width: 759px) {
+  :root {
+    --gutter: 10px;
+  }
+  body {
+    font-size: 14px;
+  }
+  .top {
+    gap: 8px;
+    padding: 5px 0;
+  }
+  /* The header holds the sizes (app.js moves them there); the words make room. */
+  .brand span,
+  .top-extra,
+  .stage-size,
+  .wide-only,
+  .tool span {
+    display: none;
+  }
+  .top .size-row {
+    flex: 1;
+  }
+  .sizes button,
+  .custom input {
+    height: 34px;
+    min-width: 34px;
+  }
+  .custom input {
+    width: 46px;
+  }
+  .bench {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-bottom: 8px;
+  }
+  .stage-col {
+    gap: 6px;
+  }
+  /* The solution is a tab here, and the cube the camera reads sits beside its buttons. */
+  .lower {
+    display: none;
+  }
+  .cam-scan {
+    grid-template-columns: minmax(0, 1fr) 86px;
+    align-items: center;
+  }
+  .scan-slot-narrow {
+    display: grid;
+    aspect-ratio: 1;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: radial-gradient(120% 90% at 50% 28%, var(--stage-a), var(--stage-b) 72%);
+  }
+  .transport {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-areas: "keys counter speed" "scrub scrub scrub";
+    gap: 0 8px;
+  }
+  .speed {
+    justify-self: end;
+  }
+  .speed button {
+    padding: 4px 6px;
+  }
+  .speed button[data-speed="0.5"],
+  .speed button[data-speed="12"],
+  #to-start,
+  #to-end {
+    display: none;
+  }
+  .next {
+    top: 8px;
+    left: 10px;
+  }
+  .panel {
+    padding: 8px;
+    gap: 7px;
+    border-radius: var(--radius);
+  }
+  .narrow-only {
+    display: block;
+  }
+  .panels {
+    height: 150px;
+  }
+  textarea {
+    height: 4.2em;
+    padding: 7px 9px;
+  }
+  .row {
+    margin-top: 6px;
+  }
+  .note {
+    margin-top: 5px;
+    font-size: 0.78rem;
+  }
+  .tabpanel > .note:first-child {
+    margin-bottom: 6px;
+  }
+  .private {
+    margin: 4px 0 6px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+  }
+  /* The solution as a tab: its moves in the tab's own height. */
+  .solution {
+    border: 0;
+    padding: 0;
+    background: none;
+    height: 150px;
+  }
+  .valid {
+    font-size: 0.8rem;
+  }
+  .paint {
+    grid-template-columns: minmax(0, 1fr) 92px;
+    gap: 8px;
+  }
+  .swatch {
+    padding: 4px 5px;
+  }
+  .swatch .chip {
+    width: 22px;
+    height: 22px;
+  }
+  .cam-heading {
+    font-size: 0.9rem;
+    margin: 0;
+  }
+  .cam-text {
+    min-height: 0;
+    font-size: 0.78rem;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .cam-shots {
+    max-width: 190px;
+    gap: 4px;
+  }
+  .cam-buttons {
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+  .cam-buttons .button {
+    min-height: 32px;
+    padding: 2px 7px;
+    font-size: 0.78rem;
+  }
+  .cam-buttons .primary {
+    flex: 1 1 60px;
+    min-height: 34px;
+  }
+  .cam-side {
+    gap: 5px;
+  }
+  .cam-buttons .primary {
+    min-height: 36px;
+  }
+  .button.large {
+    min-height: 42px;
+  }
+}
+
+/* A screen that is short as well as wide (a small laptop): tighter rows. */
+@media (min-width: 760px) and (max-height: 640px) {
+  .panels {
+    height: 176px;
+  }
+  .panel {
+    gap: 8px;
+    padding: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .busy i {
+    animation: none;
+    opacity: 0.8;
+  }
+}

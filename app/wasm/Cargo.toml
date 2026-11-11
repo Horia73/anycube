@@ -1,0 +1,13 @@
+[package]
+name = "anycube-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "The 2x2x2 and 3x3x3 solvers of anycube for the browser"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anycube = { path = "../..", default-features = false }
