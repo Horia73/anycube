@@ -19,7 +19,7 @@ Or hold it up to a camera, a face at a time (the picture never leaves the
 computer; this one is a drawing of a face, not a camera's):
 
 <p align="center">
-  <img src="../docs/interface-camera.png" width="800" alt="Camera: the first face of a 3x3x3 read, the second to come">
+  <img src="../docs/interface-camera.png" width="800" alt="Camera: a face of a 3x3x3 found in the picture, off to one side and tilted, with the colours read marked on it">
 </p>
 
 | Path | What it is |
