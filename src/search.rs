@@ -79,6 +79,23 @@ pub trait Problem: Sync {
     /// ahead, the entries are there when they are read.
     #[inline(always)]
     fn prefetch(&self, _: &Self::Node) {}
+    /// Whether the state is a solution. A problem with a cheap sign of
+    /// "certainly not" can give it here and spare the bound, which the
+    /// beam asks of every state and almost always in vain.
+    #[inline(always)]
+    fn solved(&self, n: &Self::Node) -> bool {
+        self.bound(n) == 0 && self.done(n)
+    }
+    /// Levels on which every state kept may have one and the same score
+    /// before the beam gives up. Most problems cross such plateaus on their
+    /// way (the matching of a long row of centres does for many levels) and
+    /// say nothing here. A problem that is known to fill up with states
+    /// that look close and are not, and does not leave them, says how soon
+    /// to stop: its caller does better with another start.
+    #[inline(always)]
+    fn patience(&self) -> usize {
+        usize::MAX
+    }
 }
 
 /// Tells the processor that `table[index]` will be read soon.
@@ -193,7 +210,7 @@ where
     P::Node: Ord + Hash,
 {
     let ready: Vec<(usize, Vec<u8>)> =
-        (0..roots.len()).filter(|&i| p.bound(&roots[i].0) == 0 && p.done(&roots[i].0)).map(|i| (i, Vec::new())).collect();
+        (0..roots.len()).filter(|&i| p.solved(&roots[i].0)).map(|i| (i, Vec::new())).collect();
     if !ready.is_empty() && accept(&[]) {
         return ready;
     }
@@ -205,6 +222,9 @@ where
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
     let mut level: Vec<(P::Node, u8)> = Vec::new();
     let mut kept: Vec<(u32, u8)> = Vec::new();
+    // The score every state kept had on the last level, if they all had the
+    // same one, and for how many levels running that has been so.
+    let (mut flat, mut flat_for) = (u32::MAX, 0);
     for depth in 0..max_len + last_root {
         for (i, root) in roots.iter().enumerate() {
             if root.1 == depth {
@@ -238,7 +258,7 @@ where
                             k += 1;
                         }
                         for (k, c) in &kids {
-                            out[i * count + k] = match p.bound(c) == 0 && p.done(c) {
+                            out[i * count + k] = match p.solved(c) {
                                 true => 0,
                                 false => (1 + score(c)).min(u16::MAX as u32 - 1) as u16,
                             };
@@ -329,6 +349,25 @@ where
             left -= 1;
         }
         next.truncate(width);
+        if std::env::var_os("CUBE_BEAM_TRACE").is_some() {
+            eprintln!(
+                "      level {:2}: {} kept, scores {} to {}, cut {}",
+                depth + 1,
+                next.len(),
+                next.first().map_or(0, |x| x.0),
+                next.last().map_or(0, |x| x.0),
+                cut
+            );
+        }
+        // See `Problem::patience`.
+        match (next.first(), next.last()) {
+            (Some(a), Some(b)) if a.0 == b.0 && a.0 == flat => flat_for += 1,
+            (Some(a), Some(b)) if a.0 == b.0 => (flat, flat_for) = (a.0, 1),
+            _ => (flat, flat_for) = (u32::MAX, 0),
+        }
+        if flat_for >= p.patience() {
+            return all;
+        }
         kept = next.iter().map(|x| (x.3, x.4)).collect();
         level = next.iter().map(|x| (x.2, x.4)).collect();
     }

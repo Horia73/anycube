@@ -1011,3 +1011,115 @@ For the other sizes:
   better. In these steps the centres arrive solved or nearly so (an inner
   5x5x5 step of an 8x8x8 takes 35 moves before and after), so what the
   5x5x5 gained in its centres does not reach them.
+
+
+## 6x6x6: faster searches, no copies among the candidates (2026-11-11, afternoon)
+
+Branch `six-faster`. Four other benchmarks ran on the machine the whole
+afternoon (load 30 to 300 on 10 cores), so the time on the wall says
+nothing; the figures below are processor time, all threads together
+(`src/clock.rs`, printed by `bench6` and `stage6`). On an idle machine the
+time on the wall was about an eighth of it before these changes. First 20
+cubes of `scrambles666-100.txt`, every solution checked on the sticker model.
+
+| Version | Mode | Mean length | Staging | Wing split | Inner reduction | Outer 5x5x5 | Processor time per cube |
+|---|---|---|---|---|---|---|---|
+| before (3 cubes timed) | fast | 112.00 | 35.80 | 5.95 | 17.35 | 52.90 | about 30 s |
+| before (3 cubes timed) | default | 109.20 | 35.00 | 5.65 | 16.80 | 51.75 | about 72 s |
+| searches that wait less for memory | fast | 111.65 | 35.45 | 6.05 | 17.15 | 53.00 | 15.0 s |
+| the same | default | 109.35 | 35.10 | 5.70 | 16.95 | 51.60 | 51.7 s |
+| no copies, wider last staging step | fast | 110.60 | 34.95 | 5.75 | 17.00 | 52.90 | 16.8 s |
+| the same | default | 108.35 | 34.55 | 5.55 | 16.90 | 51.35 | 70.8 s (at a load of 200; the two rows above at 30) |
+
+What made it faster, with the same solutions cube for cube (the lengths
+differ from the published ones only where the staging searches, which stop
+at the first few results of many threads, returned other results):
+
+- **Beam searches** (`search.rs`). Half of a beam's time was one read of a
+  table of 240 MB per state (a sample of the running program: 33,000 of
+  67,000 samples in the bound). Now the children of eight states are made
+  first and their table entries asked for (`Problem::prefetch`,
+  `search::fetch`), then rated. The last staging step went from 0.9 s of
+  processor time per beam to 0.3 s, the inner reduction from 1.2 s to
+  0.8 s. `Problem::solved` lets a problem say "certainly not" before its
+  bound is read (for the reduction: the two oblique orbits differ).
+- **A beam of the inner reduction that fails** used to run all 40 levels
+  four times over: 8 to 9.5 s of processor time, on one beam in six to
+  twelve. What it runs onto is a plateau: the inner cube one 3-layer half
+  turn short of reduced, every pair of obliques made, and that turn would
+  unmake the pairs. The score says three half moves; every state kept has
+  it, level after level. Such a beam now gives up after four levels of one
+  score (`Problem::patience`) and is not run again: about 1 s.
+  The rule is the reduction's own. Applied to every beam it cut the
+  matching of long rows short: 3 cubes of 20 on the 8x8x8 went the long
+  way that had been matched before.
+- The pairing rank is kept in the state of the reduction (it was computed
+  three times per state), and the pairing move is two 16-byte table
+  lookups on ARM (`tables::sigma_move`).
+- The first staging step asks for its two tables for all 54 moves at once.
+
+**Copies.** The candidates carried from step to step were often the same
+cube reached by other moves. Counted on six cubes: of the results of the
+first staging step 4 to 8 of 8 were different cubes, of the second 32 of
+64, 40 of 56, 16 of 32; of the eight stagings handed on, 3, 8, 7, 8, 6 and
+8 were different. Each copy took the place of another cube and ran the
+same searches again. Now only different cubes are carried on (in the
+staging, among the wing splits, among the cubes given to the 5x5x5), and
+the last staging step, which sees only the pattern of the centres, is
+searched once per pattern. That step also takes four times as many
+candidates (`--fan`), which costs little now:
+
+| Staging, 20 cubes, 8 kept | Best | Second | Third | Fourth | Fifth | Sixth | Processor time |
+|---|---|---|---|---|---|---|---|
+| copies removed, 8 candidates into the last step | 34.55 | 34.95 | 35.40 | 35.68 | 36.22 | 36.33 | 6.9 s |
+| copies removed, 32 candidates | 34.20 | 34.55 | 34.95 | 35.11 | 35.47 | 35.63 | 11.5 s |
+| copies removed, 64 candidates, 16 results of the first step | 34.25 | 34.55 | 34.90 | 34.89 | 35.37 | 35.53 | 14.6 s |
+
+Tried, no gain:
+
+- **Narrow beams for many candidates** in the last staging step (before
+  the copies were found): 64 candidates at 5,000 states 34.50, 32 at 2,000
+  34.85, against 34.40 for 8 at 20,000. The beam of that step needs its
+  width.
+- **The cube held another way** (`--holds`; `Geometry::held`). A 6x6x6 has
+  no fixed centres, so any pair of colours may lie on any axis, and the
+  steps treat the axes differently: six holds are six problems with the
+  same answer. The best staging of six holds is 34.0 against 34.5 for one
+  (12 cubes). With the same number of beams, three holds with two
+  stagings each give 109.10 against 109.35 for one hold with six: nothing.
+  As extra work it pays about as widening does: the shorter of the two
+  runs, cube by cube, is 108.8 on the first 11 cubes against 109.45 for
+  either. The flag stays, off by default.
+- **More solutions per start in phase E of the 5x5x5** (to give the 3x3x3
+  more reductions of the shortest length): 68.650, 68.625 and 68.550 on
+  40 cubes of the 5x5x5 set for 2, 8 and 32. Not kept.
+- **More results of the first staging step** (24 for a width of 8): 34.60
+  against 34.55.
+
+## Any size: what the 6x6x6 solver gives the larger cubes (2026-11-11, afternoon)
+
+20 cubes each, every solution applied on the sticker model.
+
+| Size | Before | Now | What changed |
+|---|---|---|---|
+| 8x8x8 | 246.50 | 243.15 | the innermost ring as a 6x6x6 |
+| 10x10x10 | 482.75 | 467.00 | the innermost centres home after the staging |
+
+- **Even cubes, when the centres are matched** (8x8x8): the layers of the
+  innermost ring and the four middle ones are a 6x6x6 with staged centres.
+  The inner steps of the 6x6x6 solver (wing split, then the reduction of
+  the inner 4x4x4 that also makes each pair of obliques one colour) take
+  the place of the matching of that ring and of the 4x4x4 solver on the
+  innermost wings: about 26 moves where the two took about 30. All 20
+  cubes were matched. The gain is smaller than on the 6x6x6 itself, where
+  the reduction is chosen among a dozen stagings; here there is one.
+- **Even cubes, the long way** (every 10x10x10): the solve began with a
+  whole reduction of the innermost 4x4x4, about 24 moves, only to learn
+  which colour belongs on which face; the staging then took its edges
+  apart again. The staging does not need to know (any frame will do), so
+  the innermost centres are now brought home after it, by a table of the
+  343,000 patterns of staged centres under face turns and wide half
+  turns: 7 moves on the cubes looked at.
+- Everything in `search.rs` and in the staging searches serves every size.
+
+Not measured again here: 9x9x9 (odd, nothing but the speed changes).

@@ -433,11 +433,34 @@ pub fn sigma_unrank(mut idx: usize) -> [u8; 12] {
 
 #[inline(always)]
 pub fn sigma_move(pl: &[u8; 12], phinv: &[u8; 12], s: &[u8; 12]) -> [u8; 12] {
-    let mut out = [0u8; 12];
-    for i in 0..12 {
-        out[i] = phinv[s[pl[i] as usize] as usize];
+    // Two table lookups of sixteen bytes at once where the processor has them.
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::{vld1q_u8, vqtbl1q_u8, vst1q_u8};
+        let wide = |x: &[u8; 12]| {
+            let mut w = [0u8; 16];
+            w[..12].copy_from_slice(x);
+            w
+        };
+        let (p, h, v) = (wide(pl), wide(phinv), wide(s));
+        let mut w = [0u8; 16];
+        // NEON is part of every 64-bit ARM target; the last four bytes are not used.
+        unsafe {
+            let inner = vqtbl1q_u8(vld1q_u8(v.as_ptr()), vld1q_u8(p.as_ptr()));
+            vst1q_u8(w.as_mut_ptr(), vqtbl1q_u8(vld1q_u8(h.as_ptr()), inner));
+        }
+        let mut out = [0u8; 12];
+        out.copy_from_slice(&w[..12]);
+        out
     }
-    out
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        let mut out = [0u8; 12];
+        for i in 0..12 {
+            out[i] = phinv[s[pl[i] as usize] as usize];
+        }
+        out
+    }
 }
 
 fn sigma_perms() -> ([[u8; 12]; 17], [[u8; 12]; 17]) {

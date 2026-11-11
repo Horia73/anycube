@@ -168,7 +168,7 @@ impl SolverN {
 
     /// One step for all the cubes carried: the continuations shortest in total.
     fn advance(&self, g: &Geometry, cands: Vec<Cand>, step: &Step, pass: usize, p: &Staging) -> Result<Vec<Cand>, String> {
-        let stage5 = &self.s5.stage;
+        let stage5 = &self.six.outer.stage;
         let least = cands.iter().map(|c| c.moves.len()).min().unwrap_or(0);
         // Evenly from all the solutions of an exact search, so that they differ from the first move on.
         let thin = |mut sols: Vec<Vec<u8>>| {
@@ -204,8 +204,8 @@ impl SolverN {
                     .flat_map_iter(|(i, c)| {
                         let sub = g.sub_facelets(&c.f, layers);
                         let sols: Vec<Vec<u8>> = match pass {
-                            0 => self.s6.stage_steps(stage5, &sub, p.fan.max(4), 0..1).into_iter().map(|x| x.moves).collect(),
-                            _ => self.s6.pair_ud(&sub, p.fan),
+                            0 => self.six.s6.stage_steps(stage5, &sub, p.fan.max(4), 0..1).into_iter().map(|x| x.moves).collect(),
+                            _ => self.six.s6.pair_ud(&sub, p.fan),
                         };
                         sols.into_iter().take(p.fan).map(move |sol| (i, sol))
                     })
