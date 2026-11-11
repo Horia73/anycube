@@ -546,8 +546,38 @@ export async function mount(root, options = {}) {
     if (state.input === "scramble") {
       if (state.scramble.problem) return;
       // What led to the cube shown: the scramble and, of a solution, the part played.
-      const played = state.solution ? state.solution.moves.slice(0, player.position) : [];
-      const before = state.solution && model.isSolved(player.facelets) ? [] : [...state.scramble.moves, ...played];
+      const solution = state.solution;
+      const at = player.position;
+      const played = solution ? solution.moves.slice(0, at) : [];
+      const done = solution && model.isSolved(player.facelets);
+      if (solution && solution.moves.length && !done) {
+        // A turn in the middle of a solution does not lose it. What is left,
+        // with the turn undone in front of it, solves the cube as it now is;
+        // where the two meet, moves of the same layers become one or none.
+        const rest = solution.moves.slice(at);
+        const { moves: merged, kept } = model.rejoin(rest, moves);
+        const extra = merged.length - kept;
+        if (extra === 0) {
+          // The turn was what the solution asked for next: it steps on.
+          player.seek(at + rest.length - kept);
+          return;
+        }
+        const scramble = model.simplify([...state.scramble.moves, ...played, ...moves]);
+        if (scramble.length <= solver.config.max_scramble_moves) {
+          const BACK = "Back to the solution";
+          const base = solution.parts?.length ? solution.parts : [{ name: "Solution", moves: solution.moves.length }];
+          const tail = [];
+          for (let i = base.length - 1, need = kept; i >= 0 && need > 0; i--) {
+            const take = Math.min(need, base[i].moves);
+            tail.unshift({ name: base[i].name, moves: take });
+            need -= take;
+          }
+          const parts = tail[0]?.name === BACK ? [{ name: BACK, moves: extra + tail[0].moves }, ...tail.slice(1)] : [{ name: BACK, moves: extra }, ...tail];
+          follow(scramble, { ...solution, moves: merged, parts, label: "your turns undone first" });
+          return;
+        }
+      }
+      const before = done ? [] : [...state.scramble.moves, ...played];
       setScramble(model.simplify([...before, ...moves]));
     } else {
       const facelets = model.applyAll(player.facelets, moves);
@@ -557,6 +587,27 @@ export async function mount(root, options = {}) {
     }
   }
   view.onturn = turned;
+
+  // A scramble and a solution of its cube put in place together, the
+  // solution at its start: no solver is asked.
+  function follow(scramble, solution) {
+    state.job?.abort();
+    state.job = null;
+    setBusy(false);
+    $("scramble").value = state.model.names(scramble);
+    $("scramble").classList.remove("bad");
+    $("undo").disabled = scramble.length === 0;
+    state.scramble = { moves: scramble, problem: null };
+    state.solution = solution;
+    state.result = null;
+    state.detail = null;
+    const cube = entered();
+    player.load(state.model, cube.start, solution.moves);
+    renderSolution(solution);
+    player.onchange();
+    restStatus();
+    judge(cube);
+  }
   view.busy = () => player.moving;
 
   // U R F D L B turn the faces; with Shift, the other way.
@@ -740,7 +791,7 @@ export async function mount(root, options = {}) {
       restStatus();
       return;
     }
-    state.solution = { ...result, moves };
+    state.solution = { ...result, moves, label: size === 2 ? "the fewest there are" : `${mode} search` };
     player.load(state.model, cube.start, moves);
     renderSolution(state.solution);
     player.onchange();
@@ -795,7 +846,7 @@ export async function mount(root, options = {}) {
         return el("div", { class: "part" }, groups.length > 1 ? [head, ol] : [ol]);
       }),
     );
-    $("summary").replaceChildren(el("b", { text: count(moves.length, "move") }), state.size === 2 ? "the fewest there are" : `${state.mode} search`);
+    $("summary").replaceChildren(el("b", { text: count(moves.length, "move") }), solution.label ?? "");
     copy.textContent = "Copy";
   }
 

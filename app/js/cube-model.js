@@ -197,6 +197,19 @@ export class CubeModel {
     return out;
   }
 
+  // What is left of a solution after moves it did not ask for: those moves
+  // undone, then the rest, with moves of the same layers that meet made one
+  // or none. `kept` says how many moves at the end are the rest's own, as
+  // they were; when all of the result is that, the moves made were the ones
+  // the solution asked for next.
+  rejoin(rest, made) {
+    const undo = made.map((m) => this.inverse(m)).reverse();
+    const moves = this.simplify([...undo, ...rest]);
+    let kept = 0;
+    while (kept < rest.length && kept < moves.length && moves[moves.length - 1 - kept] === rest[rest.length - 1 - kept]) kept++;
+    return { moves, kept };
+  }
+
   applyAll(facelets, moves) {
     let f = facelets;
     for (const m of moves) f = this.apply(f, m);

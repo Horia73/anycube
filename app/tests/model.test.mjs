@@ -227,3 +227,35 @@ test("the middles of an odd cube's faces are set, however the stickers came", ()
   const empty = new Uint8Array(even.count).fill(blank);
   assert.equal(even.withCentres(empty), empty);
 });
+
+test("a solution survives turns it did not ask for", () => {
+  let seed = 7;
+  const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  for (const n of [3, 4, 5]) {
+    const model = new CubeModel(n);
+    const scramble = model.randomScramble(30, random);
+    // A solution of the scrambled cube: the scramble backwards.
+    const solution = scramble.map((m) => model.inverse(m)).reverse();
+    const start = model.applyAll(model.solved(), scramble);
+    for (let at = 0; at < solution.length; at += 3) {
+      const here = model.applyAll(start, solution.slice(0, at));
+      const rest = solution.slice(at);
+      // The move the solution asks for next, made by hand: the solution steps on.
+      const next = model.rejoin(rest, [rest[0]]);
+      assert.deepEqual(next.moves, rest.slice(1));
+      assert.equal(next.kept, next.moves.length);
+      // Any layer turned by hand: what is left still solves the cube as it now is.
+      for (let layer = 0; layer < n; layer++) {
+        for (const quarters of [1, 2, -1]) {
+          const face = Math.floor(random() * 6);
+          const { moves } = model.handTurn(face, layer, quarters);
+          const after = model.applyAll(here, moves);
+          const left = model.rejoin(rest, moves);
+          assert.ok(model.isSolved(model.applyAll(after, left.moves)), `${n}x${n}x${n}, after ${at} moves, layer ${layer} of face ${face}`);
+          assert.ok(left.moves.length <= rest.length + moves.length);
+          assert.deepEqual(left.moves.slice(left.moves.length - left.kept), rest.slice(rest.length - left.kept));
+        }
+      }
+    }
+  }
+});
