@@ -23,7 +23,7 @@
 // picture (README, "Not done") would keep the feed and the detector and
 // put a session that follows moves in the place of the six steps.
 
-import { cellColour, guess, STICKERS, unalike } from "./colour.js";
+import { cellColour, guess, learn, STICKERS, unalike } from "./colour.js";
 import { findFace, FACE_SCORE } from "./detect.js";
 
 const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
@@ -366,7 +366,7 @@ export class CameraScanner {
     const part = 0.18; // half the mark, as a share of a sticker
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
-        const read = guess(found.cells[r * n + c]);
+        const read = guess(found.cells[r * n + c], found.seen);
         const [u, v] = [(c + 0.5) / n, (r + 0.5) / n];
         ctx.beginPath();
         [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([du, dv], i) => {
@@ -403,6 +403,8 @@ export class CameraScanner {
     }
     // A face lost for a moment (a blur, a hand in the way) is kept for that moment.
     this.found = face ?? (this.found && performance.now() - this.found.at < 350 ? this.found : null);
+    // The colours as this cube has them: from the faces captured and the one in the picture now.
+    if (face) face.seen = this.#colours(face.cells);
     this.#mark();
     this.frame.classList.toggle("found", !!this.found);
     const say = this.found ? "Cube found" : "Looking for the cube. Or hold a face inside the grid.";
@@ -410,16 +412,22 @@ export class CameraScanner {
     const colours = sampleGrid(this.video, this.n, this.scratch);
     if (!colours) return;
     this.live = colours;
+    const seen = this.#colours(colours);
     // Each cell of the grid carries a mark in the page's own colour for what
     // is being read under it (the page's red over a sticker read as red),
     // broken where the reading could as well be another colour; the sticker
     // itself shows round the mark. The grid turns with the picture when
     // that is mirrored.
     [...this.grid.children].forEach((cell, i) => {
-      const read = guess(colours[i]);
+      const read = guess(colours[i], seen);
       cell.style.color = STICKERS[read.colour];
       cell.classList.toggle("unsure", read.doubt > 0.7);
     });
+  }
+
+  // What `guess` is to go by: the stickers captured so far and those in the picture now.
+  #colours(now) {
+    return learn([...this.faces.filter(Boolean).flat(), ...now]);
   }
 
   #capture() {
