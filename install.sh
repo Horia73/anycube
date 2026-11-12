@@ -26,9 +26,16 @@ set -eu
 REPO="Horia73/anycube"
 # Where the source is cloned from, if not from there (a git address or a directory).
 SOURCE="${ANYCUBE_SOURCE:-https://github.com/$REPO}"
+
+shell_quote() {
+    # The dot keeps command substitution from dropping newlines in the path.
+    quoted=$(printf '%s.' "$1" | sed "s/'/'\\\\''/g")
+    printf "'%s'" "${quoted%.}"
+}
+
 # How this script was started, for the lines that say how to run it again.
 case "$0" in
-    *install.sh) piped=no; again="$0" ;;
+    *install.sh) piped=no; again="sh $(shell_quote "$0")" ;;
     *) piped=yes; again="curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | sh -s --" ;;
 esac
 
@@ -47,6 +54,19 @@ esac
 
 say() { printf '%s\n' "$*"; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+bold='' accent='' success='' reset='' stickers=''
+if [ -t 1 ] && [ "${TERM:-dumb}" != dumb ] && [ -z "${NO_COLOR:-}" ]; then
+    bold=$(printf '\033[1m')
+    accent=$(printf '\033[36m')
+    success=$(printf '\033[1;32m')
+    reset=$(printf '\033[0m')
+    stickers=$(printf '\033[41m  \033[0m \033[48;5;208m  \033[0m \033[43m  \033[0m \033[42m  \033[0m \033[44m  \033[0m \033[47m  \033[0m  ')
+fi
+
+progress() { printf '  %s>%s %s\n' "$accent" "$reset" "$*"; }
+detail() { printf '    %-15s %s\n' "$1" "$2"; }
+command_hint() { detail "$1" "$accent$2$reset"; }
 
 app=ask
 source_only=no
@@ -67,7 +87,7 @@ for arg in "$@"; do
 done
 
 if [ "$uninstall" = yes ]; then
-    say "Removing anycube:"
+    printf '\n  %s%sRemoving anycube%s\n\n' "$stickers" "$bold" "$reset"
     if [ -x "$BIN" ]; then
         "$BIN" app --uninstall | sed 's/^/  /'
         rm -f "$BIN"
@@ -89,13 +109,18 @@ if [ "$uninstall" = yes ]; then
         fi
     fi
     rmdir "$DATA" 2>/dev/null && say "  removed $DATA" || true
-    say "Done."
+    printf '\n  %sUninstall complete%s\n\n' "$success" "$reset"
     exit 0
 fi
 
+printf '\n  %s%sanycube installer%s\n\n' "$stickers" "$bold" "$reset"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-here=$(cd "$(dirname "$0")" 2>/dev/null && pwd || pwd)
+here=$(
+    cd "$(dirname "$0")" 2>/dev/null || :
+    pwd
+)
 got=""
 
 # A ready-made program from the releases, if there is one for this system.
@@ -104,9 +129,9 @@ if [ "$source_only" = no ] && command -v curl >/dev/null 2>&1; then
     if curl -fsSL "https://github.com/$REPO/releases/latest/download/$asset" -o "$work/$asset" 2>/dev/null \
         && tar -xzf "$work/$asset" -C "$work" 2>/dev/null && [ -f "$work/anycube" ]; then
         got="$work/anycube"
-        say "Fetched the ready-made program for $OS on $ARCH."
+        progress "Downloaded the prebuilt binary for $OS / $ARCH."
     else
-        say "No ready-made program for $OS on $ARCH in the releases: building from source."
+        progress "No prebuilt binary for $OS / $ARCH."
     fi
 fi
 
@@ -138,12 +163,12 @@ if [ -z "$got" ]; then
     if [ "$piped" = no ] && [ -f "$here/Cargo.toml" ] && grep -q '^name = "anycube"' "$here/Cargo.toml"; then
         src="$here"
     elif command -v git >/dev/null 2>&1; then
-        say "Fetching the source..."
+        progress "Fetching source..."
         git clone --quiet --depth 1 "$SOURCE" "$work/src" || fail "could not clone $SOURCE"
         src="$work/src"
     elif command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
         # No git: the same source as an archive.
-        say "Fetching the source..."
+        progress "Fetching source..."
         mkdir "$work/src"
         curl -fsSL "https://github.com/$REPO/archive/refs/heads/main.tar.gz" | tar -xz -C "$work/src" --strip-components 1 \
             || fail "could not download the source from https://github.com/$REPO"
@@ -151,7 +176,7 @@ if [ -z "$got" ]; then
     else
         fail "fetching the source needs git, or curl and tar; none of them is installed"
     fi
-    say "Building (a minute or two)..."
+    progress "Building anycube (a minute or two)..."
     (cd "$src" && cargo build --release --quiet) || fail "the build failed; what cargo said is above"
     got="$src/target/release/anycube"
     [ -f "$got" ] || fail "the build did not produce the program"
@@ -162,34 +187,49 @@ mkdir -p "$BIN_DIR"
 cp "$got" "$BIN.new"
 chmod 755 "$BIN.new"
 mv -f "$BIN.new" "$BIN"
-say "Installed:"
-say "  $BIN"
 case ":$PATH:" in
-    *":$BIN_DIR:"*) ;;
-    *) say "  ($BIN_DIR is not on your PATH: add it, or start the program by that full path)" ;;
+    *":$BIN_DIR:"*) run=anycube ;;
+    *) run=$(shell_quote "$BIN") ;;
 esac
 
+launcher=
+offer_launcher=no
 if [ "$OS" = other ]; then
     app=no
-    say "An entry among the applications is made on macOS and Linux only, for now."
+    launcher="Available on macOS and Linux"
 fi
 if [ "$app" = ask ]; then
     # Asked on the terminal even when the script itself comes down a pipe.
     if [ -r /dev/tty ] && [ -w /dev/tty ] && (exec </dev/tty) 2>/dev/null; then
-        printf 'Add anycube to your applications, with its icon? [Y/n] ' >/dev/tty
+        printf '\n  %sAdd anycube to your apps?%s [Y/n] ' "$bold" "$reset" >/dev/tty
         read -r answer </dev/tty || answer=n
         case "$answer" in n* | N*) app=no ;; *) app=yes ;; esac
     else
         app=no
-        say "To add it to your applications later: anycube app --install"
+        offer_launcher=yes
     fi
 fi
 if [ "$app" = yes ]; then
-    "$BIN" app --install | sed 's/^/  /'
+    if "$BIN" app --install >/dev/null; then
+        launcher="Added to your apps"
+    else
+        launcher="Could not be added"
+        offer_launcher=yes
+    fi
 fi
 
-say ""
-say "Run it:        anycube app"
-say "Lookup tables: built on first use, in $DATA/tables"
-say "Remove it:     $again --uninstall"
-say "               (or: anycube app --uninstall for the entry among the applications alone)"
+printf '\n  %sanycube installed%s\n' "$success" "$reset"
+detail "Binary" "$BIN"
+[ -z "$launcher" ] || detail "Launcher" "$launcher"
+detail "Lookup tables" "Built on first use"
+detail "" "$DATA/tables"
+
+printf '\n'
+command_hint "Open" "$run app"
+if [ "$app" = yes ] && [ "$offer_launcher" = no ]; then
+    command_hint "Remove launcher" "$run app --uninstall"
+elif [ "$offer_launcher" = yes ]; then
+    command_hint "Add launcher" "$run app --install"
+fi
+command_hint "Uninstall" "$again --uninstall"
+printf '\n'
