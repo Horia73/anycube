@@ -38,6 +38,10 @@ export class ViewCube {
     });
   }
 
+  setPalette(palette) {
+    this.faces.forEach((face, index) => face.style.setProperty("--face-colour", palette[index]));
+  }
+
   update(rot) {
     const screenX = rot.slice(0, 3);
     const screenY = rot.slice(3, 6).map((v) => -v);

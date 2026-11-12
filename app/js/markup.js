@@ -23,6 +23,17 @@ export const APP_HTML = `
   <div class="top-extra" id="top-extra"></div>
 </header>
 
+<dialog class="app-dialog" id="settings" aria-labelledby="settings-title">
+  <h2 id="settings-title">Settings</h2>
+  <fieldset class="settings-options" id="settings-options" disabled>
+    <legend>Default cube orientation</legend>
+    <label><input type="radio" name="top-colour" value="white" checked><i class="orientation-white" aria-hidden="true"></i> White on top</label>
+    <label><input type="radio" name="top-colour" value="yellow"><i class="orientation-yellow" aria-hidden="true"></i> Yellow on top</label>
+  </fieldset>
+  <p id="settings-status" role="status" hidden></p>
+  <form method="dialog"><button class="button" autofocus>Close</button></form>
+</dialog>
+
 <main class="bench" aria-label="Solver">
   <section class="stage-col" aria-label="The cube">
     <div class="stage cube-host" id="stage">
@@ -35,6 +46,9 @@ export const APP_HTML = `
         </button>
         <button type="button" class="tool" id="reset-view" title="Back to the usual view of the cube" aria-label="Reset view">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v5h5"/></svg><span>Reset view</span>
+        </button>
+        <button type="button" class="tool" id="open-settings" title="Settings" aria-label="Settings" aria-haspopup="dialog" aria-controls="settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4l.6 2.6 1.8 1 2.5-.7 2 3.5-1.9 1.9v2l1.9 1.9-2 3.5-2.5-.7-1.8 1L14 21h-4l-.6-2.6-1.8-1-2.5.7-2-3.5L5 12.7v-2L3.1 8.8l2-3.5 2.5.7 1.8-1z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
       <div class="view-cube" id="view-cube" role="group" aria-label="Cube orientation"></div>

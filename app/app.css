@@ -180,7 +180,7 @@ kbd {
   min-width: 0;
 }
 
-.update-dialog {
+.app-dialog {
   width: min(390px, calc(100% - 28px));
   padding: 20px;
   border: 1px solid var(--line-2);
@@ -188,11 +188,18 @@ kbd {
   color: var(--ink);
   background: var(--panel);
 }
-.update-dialog::backdrop { background: #0008; }
-.update-dialog h2 { margin: 0; font-size: 1.15rem; }
-.update-dialog p { margin: 10px 0 18px; color: var(--ink-2); }
-.update-dialog form { display: flex; justify-content: flex-end; gap: 8px; }
-.update-dialog a { text-decoration: none; }
+.app-dialog::backdrop { background: #0008; }
+.app-dialog h2 { margin: 0; font-size: 1.15rem; }
+.app-dialog p { margin: 10px 0 18px; color: var(--ink-2); }
+.app-dialog form { display: flex; justify-content: flex-end; gap: 8px; }
+.app-dialog a { text-decoration: none; }
+.settings-options { margin: 16px 0; padding: 0; border: 0; }
+.settings-options legend { margin-bottom: 6px; font-size: 0.86rem; color: var(--ink-2); }
+.settings-options label { display: flex; align-items: center; gap: 8px; min-height: 38px; cursor: pointer; }
+.settings-options input { margin: 0; }
+.settings-options i { width: 15px; height: 15px; border: 1px solid var(--line-2); border-radius: 4px; }
+.orientation-white { background: var(--u); }
+.orientation-yellow { background: var(--d); }
 .update-trigger.update-available { color: var(--accent-ink); background: var(--accent); }
 .update-trigger.update-available:hover { background: var(--accent); filter: brightness(1.08); }
 

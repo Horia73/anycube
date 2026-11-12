@@ -4,6 +4,10 @@
 to scramble, paint, show to a camera, turn by hand, solve and follow move
 by move. Everything runs on the machine it is started on.
 
+Use the gear next to the cube to choose white or yellow on top for scrambles
+and new painted cubes. Green stays in front. Cubes read by the camera keep
+their own colours.
+
 <p align="center">
   <img src="../docs/interface.png" width="800" alt="A 4x4x4 part of the way through its solution, an arrow on each row that turns next">
 </p>

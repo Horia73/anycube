@@ -27,6 +27,9 @@ import { ViewCube } from "./view-cube.js";
 // a camera, 384 stickers and more.
 const PAINT_MAX = 7;
 const CAMERA_MAX = 7;
+const TOP_COLOUR = "anycube.top-colour";
+// Turning the cube 180° with the front held fixed exchanges both pairs.
+const YELLOW_TOP = [3, 4, 2, 0, 1, 5].map((face) => STICKERS[face]);
 
 const el = (tag, attrs = {}, children = []) => {
   const node = document.createElement(tag);
@@ -92,6 +95,12 @@ export async function mount(root, options = {}) {
   const player = new Player(view);
   view.busy = () => player.moving;
   const solver = new Solver();
+  let defaultPalette = STICKERS;
+  try {
+    if (localStorage.getItem(TOP_COLOUR) === "yellow") defaultPalette = YELLOW_TOP;
+  } catch {
+    // Storage can be disabled. The choice still works for this visit.
+  }
 
   const state = {
     size: 3,
@@ -136,7 +145,8 @@ export async function mount(root, options = {}) {
       speed: player.speed,
       scramble: $("scramble").value,
       painted: p
-        ? { facelets: Array.from(p.facelets), palette: p.palette, doubt: p.doubt ? Array.from(p.doubt) : null, note: $("paint-note").textContent }
+        ? { facelets: Array.from(p.facelets), palette: p.palette, followsDefault: p.palette === defaultPalette,
+            doubt: p.doubt ? Array.from(p.doubt) : null, note: $("paint-note").textContent }
         : null,
       carried: state.carried,
       shows: state.shows,
@@ -169,6 +179,11 @@ export async function mount(root, options = {}) {
     keepLater();
   };
 
+  function showPalette(palette) {
+    viewCube.setPalette(palette);
+    view.setColours({ palette });
+  }
+
   // What was kept, with the cube it shows worked out: null if there is
   // nothing, or if it does not hold together.
   function kept() {
@@ -178,7 +193,7 @@ export async function mount(root, options = {}) {
       if (!["scramble", "paint", "camera"].includes(page.input)) return null;
       const model = new CubeModel(page.size);
       const scramble = model.normalise(String(page.scramble ?? "")).moves;
-      let palette = STICKERS;
+      let palette = defaultPalette;
       let start = model.applyAll(model.solved(), scramble);
       if (page.painted) {
         if (page.painted.facelets?.length !== model.count || page.painted.palette?.length !== 6) return null;
@@ -186,7 +201,7 @@ export async function mount(root, options = {}) {
       }
       if (page.input !== "scramble" && page.painted && page.size <= PAINT_MAX && page.shows !== "scramble") {
         start = page.painted.facelets;
-        palette = page.painted.palette;
+        palette = page.painted.followsDefault ? defaultPalette : page.painted.palette;
       }
       let moves = [];
       if (page.solution) {
@@ -212,7 +227,7 @@ export async function mount(root, options = {}) {
   view.waiting = true;
   let page = kept();
   if (page) {
-    view.setColours({ palette: page.palette });
+    showPalette(page.palette);
     if (page.rot) view.rot = page.rot;
     view.setCube(page.size, page.shown);
     view.waiting = false;
@@ -329,7 +344,7 @@ export async function mount(root, options = {}) {
   function painted(n = state.size) {
     let p = state.painted.get(n);
     if (!p) {
-      p = { facelets: new CubeModel(n).solved(), palette: STICKERS.slice(), doubt: null };
+      p = { facelets: new CubeModel(n).solved(), palette: defaultPalette, doubt: null };
       state.painted.set(n, p);
     }
     p.facelets = new CubeModel(n).withCentres(p.facelets);
@@ -344,12 +359,12 @@ export async function mount(root, options = {}) {
   function entered() {
     const { model, size } = state;
     if (state.scan) {
-      return { problem: "Capture all six faces first", start: new Uint8Array(model.count).fill(BLANK), palette: STICKERS };
+      return { problem: "Capture all six faces first", start: new Uint8Array(model.count).fill(BLANK), palette: defaultPalette };
     }
     if (state.input === "scramble") {
-      if (state.scramble.problem) return { problem: state.scramble.problem, start: model.solved(), palette: STICKERS };
+      if (state.scramble.problem) return { problem: state.scramble.problem, start: model.solved(), palette: defaultPalette };
       const moves = state.scramble.moves;
-      return { kind: "moves", input: model.names(moves), start: model.applyAll(model.solved(), moves), palette: STICKERS, moves: moves.length };
+      return { kind: "moves", input: model.names(moves), start: model.applyAll(model.solved(), moves), palette: defaultPalette, moves: moves.length };
     }
     const p = painted();
     const cube = { start: p.facelets, palette: p.palette };
@@ -379,7 +394,7 @@ export async function mount(root, options = {}) {
     state.result = null;
     state.detail = null;
     const cube = entered();
-    view.setColours({ palette: cube.palette });
+    showPalette(cube.palette);
     view.setMarks(state.input === "scramble" || state.scan ? null : painted().doubt);
     player.load(state.model, cube.start, []);
     state.shows = state.input === "scramble" ? "scramble" : "painted";
@@ -566,7 +581,7 @@ export async function mount(root, options = {}) {
       // and not changed under Scramble since is left as it was painted.
       const shown = state.model.toText(player.facelets);
       if (shown !== state.carried) {
-        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: STICKERS.slice(), doubt: null });
+        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette, doubt: null });
         $("paint-note").textContent = PAINT_NOTE;
       }
       same = state.model.toText(painted().facelets) === shown;
@@ -744,7 +759,9 @@ export async function mount(root, options = {}) {
 
   const paint = new PaintEditor($("paint"), {
     onchange: (facelets) => {
-      painted().facelets = facelets;
+      const cube = painted();
+      cube.facelets = facelets;
+      if (cube.palette === defaultPalette) cube.palette = defaultPalette.slice();
       show();
     },
     onface: (face) => view.look(face),
@@ -752,7 +769,7 @@ export async function mount(root, options = {}) {
   view.onpaint = (i) => paint.paint(i);
 
   function repaint(facelets) {
-    state.painted.set(state.size, { facelets, palette: STICKERS.slice(), doubt: null });
+    state.painted.set(state.size, { facelets, palette: defaultPalette, doubt: null });
     const p = painted();
     paint.set(state.size, p.facelets, p.palette, null);
     $("paint-note").textContent = PAINT_NOTE;
@@ -1073,7 +1090,7 @@ export async function mount(root, options = {}) {
     if (state.input !== "scramble" && state.shows === "scramble" && !player.moving && !state.scan && state.size <= PAINT_MAX) {
       const p = painted();
       if (state.model.toText(p.facelets) !== state.model.toText(player.facelets)) {
-        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: STICKERS.slice(), doubt: null });
+        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette, doubt: null });
         paint.set(state.size, painted().facelets, painted().palette, null);
       }
     }
@@ -1179,12 +1196,56 @@ export async function mount(root, options = {}) {
   $("arrows").addEventListener("click", () => setArrows($("arrows").getAttribute("aria-pressed") !== "true"));
   $("reset-view").addEventListener("click", () => view.look(null));
 
+  const settingsOptions = $("settings-options");
+  function setTopColour(colour) {
+    settingsOptions.querySelector(`input[value="${colour}"]`).checked = true;
+    const previous = defaultPalette;
+    defaultPalette = colour === "yellow" ? YELLOW_TOP : STICKERS;
+    if (previous === defaultPalette) return;
+    for (const cube of state.painted.values()) {
+      if (cube.palette === previous) cube.palette = defaultPalette;
+    }
+    const current = state.painted.get(state.size);
+    if (current?.palette === defaultPalette && paint.palette === previous) {
+      paint.set(state.size, current.facelets, current.palette, current.doubt);
+    }
+    if (view.palette === previous) showPalette(defaultPalette);
+    keepLater();
+  }
+
+  $("open-settings").addEventListener("click", () => $("settings").showModal());
+  let savingSettings = Promise.resolve();
+  settingsOptions.addEventListener("change", (event) => {
+    if (!event.target.matches('input[name="top-colour"]')) return;
+    const colour = event.target.value;
+    setTopColour(colour);
+    const status = $("settings-status");
+    status.hidden = true;
+    savingSettings = savingSettings.then(async () => {
+      if (solver.config.local && solver.config.top_colour) {
+        const response = await fetch("/api/settings", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ top_colour: colour }),
+        });
+        if (!response.ok) throw new Error("Could not save settings");
+        try { localStorage.setItem(TOP_COLOUR, colour); } catch { /* The local server already saved it. */ }
+      } else {
+        localStorage.setItem(TOP_COLOUR, colour);
+      }
+    }).catch(() => {
+      if (!settingsOptions.querySelector(`input[value="${colour}"]`).checked) return;
+      status.textContent = "Could not save the preference. It will apply for this visit.";
+      status.hidden = false;
+    });
+  });
+
   // Space plays and pauses, the arrows step, the face letters turn the cube,
   // wherever the keys are not needed for something else.
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     const t = e.target;
-    if (t.isContentEditable || t.closest?.("textarea, input, select, [role=tab]")) return;
+    if (t.isContentEditable || t.closest?.("dialog, textarea, input, select, [role=tab]")) return;
     if (e.key === " " && scanner.running) {
       if (t !== scanner.capture && t.closest?.("button, [role=button]")) return;
       if (!e.repeat) scanner.capture.click();
@@ -1215,8 +1276,8 @@ export async function mount(root, options = {}) {
     setSize(was.size);
     $("scramble").value = String(was.scramble ?? "");
     if (was.painted && was.size <= PAINT_MAX) {
-      const { facelets, palette, doubt, note } = was.painted;
-      state.painted.set(was.size, { facelets, palette, doubt: doubt ? Float32Array.from(doubt) : null });
+      const { facelets, palette, followsDefault, doubt, note } = was.painted;
+      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette, doubt: doubt ? Float32Array.from(doubt) : null });
       if (note) $("paint-note").textContent = note;
     }
     state.carried = typeof was.carried === "string" ? was.carried : null;
@@ -1248,8 +1309,7 @@ export async function mount(root, options = {}) {
         state.solution = { moves: was.moves, parts: was.solution.parts, label: was.solution.label, optimal: was.solution.optimal, found: was.solution.found };
         player.load(state.model, start, was.moves);
         state.shows = ofScramble ? "scramble" : "painted";
-        view.setColours({ palette: STICKERS });
-        if (!ofScramble) view.setColours({ palette: entered().palette });
+        showPalette(ofScramble ? defaultPalette : entered().palette);
         renderSolution(state.solution);
         player.seek(was.position, was.turns);
       }
@@ -1278,6 +1338,10 @@ export async function mount(root, options = {}) {
   }
   renderSolution(null);
   await solver.loadConfig();
+  const storedColour = defaultPalette === YELLOW_TOP ? "yellow" : "white";
+  const preferred = solver.config.top_colour ?? storedColour;
+  setTopColour(preferred === "yellow" ? "yellow" : "white");
+  settingsOptions.disabled = false;
   // Whether the browser can solve by itself decides what the page says about each size.
   await solver.startBrowser();
   renderSizes();

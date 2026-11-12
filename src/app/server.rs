@@ -11,6 +11,7 @@
 //! POST   /api/check        {"size": 3, "facelets": "..."}                     -> {"ok": true} or what is wrong
 //! GET    /api/scramble     ?size=3: a random-state scramble, for the sizes that have one
 //! GET    /api/config       what this server does
+//! POST   /api/settings     {"top_colour": "white" | "yellow"}
 //! ```
 //!
 //! A search cannot be interrupted from inside, so the solvers run in a
@@ -26,7 +27,9 @@ use super::assets;
 use crate::api::{self, check, solve, Input, Mode};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -69,6 +72,7 @@ struct Shared {
     changed: Condvar,
     /// The worker process, where a request to stop a solve can reach it.
     child: Mutex<Option<Child>>,
+    settings: Mutex<PathBuf>,
     max_size: usize,
 }
 
@@ -320,6 +324,43 @@ fn respond_json(request: Request, status: u16, body: Value) {
     respond(request, status, "application/json", body.to_string().into_bytes(), "no-store");
 }
 
+fn read_settings(path: &Path) -> Value {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}))
+}
+
+fn write_top_colour(path: &Path, colour: &str) -> std::io::Result<()> {
+    let mut settings = read_settings(path);
+    settings["top_colour"] = json!(colour);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    fs::write(&temporary, settings.to_string())?;
+    fs::rename(&temporary, path).inspect_err(|_| {
+        let _ = fs::remove_file(&temporary);
+    })
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::{fs, json, read_settings, write_top_colour};
+
+    #[test]
+    fn orientation_is_replaced_without_losing_other_settings() {
+        let path = std::env::temp_dir().join(format!("anycube-settings-test-{}.json", std::process::id()));
+        fs::write(&path, r#"{"other":true}"#).unwrap();
+        write_top_colour(&path, "yellow").unwrap();
+        assert_eq!(read_settings(&path), json!({"top_colour": "yellow", "other": true}));
+        write_top_colour(&path, "white").unwrap();
+        assert_eq!(read_settings(&path), json!({"top_colour": "white", "other": true}));
+        fs::remove_file(path).unwrap();
+    }
+}
+
 fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
     // Only this machine's own pages may talk to the server: a page elsewhere
     // that points a name at 127.0.0.1 arrives with that name as its host.
@@ -349,9 +390,32 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
                 "max_scramble_moves": api::MAX_SCRAMBLE_MOVES,
                 "repo_url": null,
                 "local": true,
+                "top_colour": if read_settings(&shared.settings.lock().unwrap())["top_colour"] == "yellow" { "yellow" } else { "white" },
                 "version": env!("CARGO_PKG_VERSION"),
             }),
         ),
+        (Method::Post, "/api/settings") => {
+            let origin = format!("http://{}", host);
+            if request.headers().iter().any(|h| h.field.equiv("Origin") && h.value.as_str() != origin) {
+                return respond_json(request, 403, error("forbidden", "settings requests must come from this app", false));
+            }
+            let json_body = request.headers().iter().any(|h| {
+                h.field.equiv("Content-Type") && h.value.as_str().split(';').next().is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
+            });
+            if !json_body {
+                return respond_json(request, 415, error("bad_request", "settings must be sent as JSON", false));
+            }
+            let Ok(settings) = parsed() else {
+                return respond_json(request, 400, error("bad_request", "the body is not JSON", false));
+            };
+            let Some(colour @ ("white" | "yellow")) = settings["top_colour"].as_str() else {
+                return respond_json(request, 400, error("bad_request", "top_colour must be white or yellow", false));
+            };
+            if write_top_colour(&shared.settings.lock().unwrap(), colour).is_err() {
+                return respond_json(request, 500, error("settings", "could not save settings", false));
+            }
+            respond_json(request, 200, json!({"top_colour": colour}))
+        }
         (Method::Get, "/api/health") => {
             let board = shared.board.lock().unwrap();
             respond_json(request, 200, json!({"status": "ok", "waiting": board.order.len(), "busy": board.running.is_some()}))
@@ -451,7 +515,10 @@ pub struct Running {
 pub fn start(port: u16, max_size: usize) -> Result<Running, String> {
     let server = Server::http(("127.0.0.1", port)).map_err(|e| format!("cannot listen on 127.0.0.1:{}: {}", port, e))?;
     let port = server.server_addr().to_ip().map(|a| a.port()).ok_or("no port")?;
-    let shared = Arc::new(Shared { board: Mutex::default(), changed: Condvar::new(), child: Mutex::new(None), max_size });
+    let shared = Arc::new(Shared {
+        board: Mutex::default(), changed: Condvar::new(), child: Mutex::new(None),
+        settings: Mutex::new(super::data_dir().join("settings.json")), max_size,
+    });
     let jobs = shared.clone();
     std::thread::spawn(move || run_jobs(jobs));
     std::thread::spawn(move || {
