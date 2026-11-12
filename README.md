@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v0.1.1-2f6fde" alt="release v0.1.1">
+  <img src="https://img.shields.io/github/v/release/Horia73/anycube?color=2f6fde" alt="latest release">
   <img src="https://img.shields.io/badge/cubes-2x2x2_to_21x21x21-1faa59" alt="cubes 2x2x2 to 21x21x21">
   <img src="https://img.shields.io/badge/written_in-Rust-f58220" alt="written in Rust">
   <img src="https://img.shields.io/badge/licence-MIT-d92b3a" alt="licence MIT">
@@ -108,10 +108,15 @@ add it to your applications, with its icon. Nothing is written outside your
 own directories and nothing needs `sudo`. Building needs Rust: if it is not
 installed, the installer stops and names the one command that installs it.
 `--uninstall` after the same line (`... | sh -s -- --uninstall`) removes it
-all. On Windows, or by hand: `cargo build --release` in a clone.
+all.
 
-In the local app, **Check for updates** compares your version with the
-latest GitHub release. To update, rerun the installer or rebuild your clone.
+On Windows, download the x64 ZIP from [GitHub Releases](https://github.com/Horia73/anycube/releases/latest),
+extract it, and run `.\anycube.exe app` in PowerShell from the extracted
+folder. To build from source, run `cargo build --release` in a clone.
+
+The local app checks GitHub when it opens and shows **Update available**
+when there is a newer release. Use **Check for updates** to check again.
+To update, rerun the installer or download the newer Windows ZIP.
 The installer downloads a prebuilt program when one is available for your
 system and compiles from source otherwise. Compatible lookup tables are reused.
 

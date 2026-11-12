@@ -1,6 +1,6 @@
 [package]
 name = "anycube"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "NxNxN Rubik's cube solver with short solutions: 2x2x2, 3x3x3, 4x4x4, 5x5x5, 6x6x6, 7x7x7 and every larger size"
 license = "MIT"

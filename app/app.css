@@ -193,6 +193,8 @@ kbd {
 .update-dialog p { margin: 10px 0 18px; color: var(--ink-2); }
 .update-dialog form { display: flex; justify-content: flex-end; gap: 8px; }
 .update-dialog a { text-decoration: none; }
+.update-trigger.update-available { color: var(--accent-ink); background: var(--accent); }
+.update-trigger.update-available:hover { background: var(--accent); filter: brightness(1.08); }
 
 @media (max-width: 400px) {
   .top.local-top .sizes { gap: 3px; }

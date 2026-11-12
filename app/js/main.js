@@ -16,6 +16,18 @@ function compareVersions(latest, current) {
   return installed[4] ? 1 : 0;
 }
 
+async function latestRelease() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(RELEASE_API, { credentials: "omit", signal: controller.signal });
+    if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
+    return (await response.json()).tag_name;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function addUpdateCheck(app) {
   if (!app.config.local) return;
   const top = document.getElementById("top-extra");
@@ -25,28 +37,37 @@ function addUpdateCheck(app) {
   top.closest(".top").classList.add("local-top");
   top.append(document.getElementById("local-update-button").content.cloneNode(true));
 
-  let checking = false;
-  top.querySelector(".update-trigger").addEventListener("click", async () => {
+  const trigger = top.querySelector(".update-trigger");
+  let pending;
+  let available;
+  function check() {
+    if (!pending) {
+      pending = latestRelease().then((latest) => {
+        available = compareVersions(latest, current) > 0 ? latest : null;
+        const label = available ? "Update available" : "Check for updates";
+        trigger.classList.toggle("update-available", Boolean(available));
+        trigger.setAttribute("aria-label", label);
+        trigger.title = label;
+        trigger.querySelector(".wide-only").textContent = label;
+        return available;
+      }).finally(() => { pending = null; });
+    }
+    return pending;
+  }
+
+  trigger.addEventListener("click", async () => {
     dialog.showModal();
-    if (checking) return;
-    checking = true;
     status.textContent = `Installed version ${current}. Checking GitHub…`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8_000);
     try {
-      const response = await fetch(RELEASE_API, { credentials: "omit", signal: controller.signal });
-      if (!response.ok) throw new Error(`GitHub returned ${response.status}`);
-      const { tag_name: latest } = await response.json();
-      status.textContent = compareVersions(latest, current) > 0
+      const latest = available ?? await check();
+      status.textContent = latest
         ? `${latest} is available. You have ${current}. Rerun the installer or rebuild from source to update.`
         : `You’re up to date. Installed version ${current}.`;
     } catch {
       status.textContent = `Couldn’t check GitHub. Installed version ${current}.`;
-    } finally {
-      clearTimeout(timeout);
-      checking = false;
     }
   });
+  check().catch(() => {});
 }
 
 mount(document.getElementById("app")).then(addUpdateCheck);
