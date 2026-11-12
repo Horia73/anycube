@@ -112,6 +112,7 @@ export async function mount(root, options = {}) {
     input: "scramble", // where the cube comes from: "scramble", "paint" or "camera"
     mode: "normal",
     scramble: { moves: [], problem: null },
+    scramblePlayback: false,
     painted: new Map(), // size -> { facelets, palette, review? }
     carried: null, // the scramble's cube as it stood when Paint was last left for it (see setTab)
     shows: "scramble", // whose cube is on screen, with any solution of it: the scramble's or the painted one
@@ -128,9 +129,8 @@ export async function mount(root, options = {}) {
 
   // ------------------------------------------------- kept over a reload
 
-  // The page as it stands is kept for this tab, so that a reload brings it
-  // back: the size, the tab, the cube, the scramble, the solution and how
-  // far it was played, the way the cube is held. A new tab starts afresh.
+  // A reload restores the cube, its input and how far playback had got.
+  // A new tab starts afresh.
   const KEPT = "anycube.page";
   let keeping = false; // not before the page has started: a reload then keeps what was kept
   let keepSoon = 0;
@@ -147,6 +147,7 @@ export async function mount(root, options = {}) {
       mode: state.mode,
       speed: player.speed,
       scramble: $("scramble").value,
+      scramblePlayback: state.scramblePlayback,
       painted: p
         ? { facelets: Array.from(p.facelets), palette: p.palette, followsDefault: p.palette === defaultPalette,
             review: p.review?.active ? p.review.stickers : undefined,
@@ -207,20 +208,27 @@ export async function mount(root, options = {}) {
         start = page.painted.facelets;
         palette = page.painted.followsDefault ? defaultPalette : page.painted.palette;
       }
+      const scramblePlayback = page.scramblePlayback === true && page.input === "scramble" && scramble.length > 0;
       let moves = [];
-      if (page.solution) {
+      if (scramblePlayback) {
+        page.solution = null;
+        start = model.solved();
+        moves = scramble;
+      } else if (page.solution) {
         moves = model.parse(String(page.solution.moves), { slices: true });
         // A solution is kept only with the cube it solves.
-        if (!model.isSolved(model.applyAll(start, moves))) page.solution = null;
+        if (!model.isSolved(model.applyAll(start, moves))) {
+          page.solution = null;
+          moves = [];
+        }
       }
-      if (!page.solution) moves = [];
       const position = Math.max(0, Math.min(moves.length, Math.round(Number(page.position) || 0)));
       const turns = position < moves.length
         ? { partial: model.parse(page.turns?.partial ?? "", { slices: true }), detour: model.parse(page.turns?.detour ?? "", { slices: true }) }
         : { partial: [], detour: [] };
       const rot = Array.isArray(page.rot) && page.rot.length === 9 && page.rot.every(Number.isFinite) ? page.rot : null;
       const shown = model.applyAll(start, [...moves.slice(0, position), ...turns.partial, ...turns.detour]);
-      return { ...page, model, start, palette, moves, position, turns, rot, shown };
+      return { ...page, scramblePlayback, model, start, palette, moves, position, turns, rot, shown };
     } catch {
       return null;
     }
@@ -403,22 +411,24 @@ export async function mount(root, options = {}) {
     paint.select(face);
   }
 
-  // Shows the cube as entered, forgetting any solution of an earlier one,
-  // and says whether it can be solved.
+  // Shows the cube as entered, or loads the scramble for playback from
+  // solved. Either way, discard the previous solution and validate the input.
   let checking = 0;
-  function show() {
+  function show(scramblePlayback = false) {
     state.job?.abort();
     state.job = null;
     state.solution = null;
+    state.scramblePlayback = scramblePlayback;
     state.result = null;
     state.detail = null;
     const cube = entered();
     showPalette(cube.palette);
-    player.load(state.model, cube.start, []);
     state.shows = state.input === "scramble" ? "scramble" : "painted";
     view.setRaw(state.scan);
     showScanReview();
-    renderSolution(null);
+    renderMoves();
+    if (scramblePlayback) player.load(state.model, state.model.solved(), state.scramble.moves);
+    else player.load(state.model, cube.start, []);
     restStatus();
     judge(cube);
     keepLater();
@@ -616,11 +626,11 @@ export async function mount(root, options = {}) {
       // there to be corrected sticker by sticker. Only a cube painted before
       // and not changed under Scramble since is left as it was painted.
       const shown = state.model.toText(player.facelets);
-      if (shown !== state.carried) {
+      if (state.scramblePlayback || shown !== state.carried) {
         state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette });
         $("paint-note").textContent = PAINT_NOTE;
       }
-      same = state.model.toText(painted().facelets) === shown;
+      same = !state.scramblePlayback && state.model.toText(painted().facelets) === shown;
     } else if (tab === "scramble" && came !== "scramble") {
       // Back to the scramble: its cube is still on screen if nothing was painted meanwhile.
       same = state.shows === "scramble" && !state.scramble.problem;
@@ -676,7 +686,9 @@ export async function mount(root, options = {}) {
     syncScrambleScroll();
   }
 
-  function readScramble() {
+  let typing = 0;
+  function readScramble(scramblePlayback = false) {
+    clearTimeout(typing);
     let range = null;
     try {
       state.scramble = { moves: state.model.normalise(scrambleBox.value).moves, problem: null };
@@ -691,10 +703,11 @@ export async function mount(root, options = {}) {
     scrambleBox.setAttribute("aria-invalid", String(!!state.scramble.problem));
     markScrambleError(range);
     $("undo").disabled = state.scramble.moves.length === 0;
-    if (state.input === "scramble") show();
+    const canPlay = state.scramble.moves.length > 0 && !state.scramble.problem;
+    $("play-scramble").disabled = !canPlay;
+    if (state.input === "scramble") show(scramblePlayback && canPlay);
   }
 
-  let typing = 0;
   scrambleBox.addEventListener("scroll", syncScrambleScroll);
   scrambleBox.addEventListener("input", () => {
     scrambleMirror.hidden = true;
@@ -725,6 +738,14 @@ export async function mount(root, options = {}) {
     readScramble();
   }
   $("random").addEventListener("click", randomScramble);
+  $("play-scramble").addEventListener("click", () => {
+    ++scrambling;
+    readScramble(true);
+    if (!state.scramblePlayback) return;
+    if (narrow.matches) setTab("moves");
+    player.play();
+    $("play").focus();
+  });
 
   // The "i": what a random scramble is here and what may be typed. It lies
   // over the panel by the buttons, and goes at the next click or Escape.
@@ -770,7 +791,7 @@ export async function mount(root, options = {}) {
         player.turnByHand(slice === null ? moves : [slice]);
         return;
       }
-      const played = model.plain([...player.moves.slice(0, player.position), ...player.manualMoves]);
+      const played = state.scramblePlayback ? [] : model.plain([...player.moves.slice(0, player.position), ...player.manualMoves]);
       const before = done ? [] : [...state.scramble.moves, ...played];
       setScramble(model.simplify([...before, ...moves]));
     } else {
@@ -948,13 +969,20 @@ export async function mount(root, options = {}) {
 
   // Solve is one button in one place: it solves, and while a solve waits
   // on the server it cancels.
+  function scrambleInProgress() {
+    return state.scramblePlayback && player.position < player.length;
+  }
+
   function setBusy(busy) {
     const button = $("solve");
     const cancellable = busy && !solver.inBrowser(state.size);
+    const waitingForScramble = scrambleInProgress();
     button.textContent = cancellable ? "Cancel" : "Solve";
     button.classList.toggle("primary", !cancellable);
-    button.disabled = cancellable ? false : busy || !state.valid || !solvable();
-    button.title = button.disabled && !busy ? $("valid").textContent : "";
+    button.disabled = !cancellable && (busy || !state.valid || !solvable() || waitingForScramble);
+    button.title = button.disabled && !busy
+      ? waitingForScramble && solvable() ? "Finish the scramble or skip to the end." : $("valid").textContent
+      : "";
   }
 
   async function solve() {
@@ -965,7 +993,7 @@ export async function mount(root, options = {}) {
       restStatus();
       return;
     }
-    if (!state.valid || !solvable()) return;
+    if (!state.valid || !solvable() || scrambleInProgress()) return;
     let cube = entered();
     if (!cube.kind) return;
     const { size, mode, model } = state;
@@ -1037,15 +1065,16 @@ export async function mount(root, options = {}) {
     if (newScramble) {
       $("scramble").value = cube.input;
       state.scramble = { moves: newScramble, problem: null };
-      $("undo").disabled = newScramble.length === 0;
+      $("undo").disabled = $("play-scramble").disabled = newScramble.length === 0;
       judge(entered());
     } else if (newPaint) {
       state.painted.set(size, newPaint);
       paint.set(size, newPaint.facelets, newPaint.palette);
     }
     state.solution = { ...result, moves, label: size === 2 ? "the fewest there are" : `${mode} search` };
+    state.scramblePlayback = false;
     state.shows = state.input === "scramble" ? "scramble" : "painted";
-    renderSolution(state.solution);
+    renderMoves();
     player.load(model, cube.start, moves);
     const secs = result.ms / 1000;
     const took = secs < 1 ? `${Math.max(1, Math.round(result.ms))} ms` : `${secs.toFixed(1)} s`;
@@ -1068,10 +1097,17 @@ export async function mount(root, options = {}) {
 
   // ------------------------------------------------------------- playback
 
-  function renderSolution(solution) {
+  function renderMoves() {
+    const { solution, scramblePlayback } = state;
+    const moves = scramblePlayback ? state.scramble.moves : solution?.moves;
     const list = $("moves");
     const copy = $("copy");
-    const none = !solution || solution.moves.length === 0;
+    const kind = scramblePlayback ? "Scramble" : "Solution";
+    $("solution").setAttribute("aria-label", scramblePlayback ? "Scramble moves" : kind);
+    $("to-start").setAttribute("aria-label", scramblePlayback ? "Back to the solved cube" : "Back to the scrambled cube");
+    $("to-end").setAttribute("aria-label", scramblePlayback ? "On to the scrambled cube" : "On to the solved cube");
+    $("scrub").setAttribute("aria-label", `Position in the ${kind.toLowerCase()}`);
+    const none = !moves?.length;
     $("placeholder").hidden = !none;
     copy.hidden = none;
     if (none) {
@@ -1084,9 +1120,9 @@ export async function mount(root, options = {}) {
           : "A cube to turn by hand: drag a layer, or press U R F D L B.";
       return;
     }
-    const { moves, parts } = solution;
+    const parts = solution?.parts;
     const names = moves.map((m) => state.model.moveName(m));
-    const groups = parts?.length ? parts : [{ name: "Solution", moves: moves.length }];
+    const groups = parts?.length ? parts : [{ name: kind, moves: moves.length }];
     let k = 0;
     list.replaceChildren(
       ...groups.map((part) => {
@@ -1098,7 +1134,9 @@ export async function mount(root, options = {}) {
         return el("div", { class: "part" }, groups.length > 1 ? [head, ol] : [ol]);
       }),
     );
-    $("summary").replaceChildren(el("b", { text: count(solution.found ?? moves.length, "move") }), solution.label ?? "");
+    const total = count(solution?.found ?? moves.length, "move");
+    if (scramblePlayback) $("summary").replaceChildren(el("b", { text: kind }), total);
+    else $("summary").replaceChildren(el("b", { text: total }), solution.label ?? "");
     copy.textContent = "Copy";
   }
 
@@ -1108,9 +1146,9 @@ export async function mount(root, options = {}) {
   });
 
   $("copy").addEventListener("click", async () => {
-    if (!state.solution) return;
+    if (!player.length) return;
     try {
-      await navigator.clipboard.writeText(state.model.names(state.solution.moves));
+      await navigator.clipboard.writeText(state.model.names(player.moves));
       $("copy").textContent = "Copied";
     } catch {
       $("copy").textContent = "Not copied";
@@ -1143,6 +1181,7 @@ export async function mount(root, options = {}) {
     play.disabled = length === 0;
     $("to-start").disabled = $("step-back").disabled = !player.canStepBack;
     $("to-end").disabled = $("step-on").disabled = position >= length;
+    if (state.scramblePlayback) setBusy(!!state.job);
     // Once the solution is being followed, the line that announced it is in the way.
     if (state.result?.[0] === "good" && !state.job && (playing || player.canStepBack)) {
       state.result = null;
@@ -1159,7 +1198,8 @@ export async function mount(root, options = {}) {
     const off = $("detour");
     off.hidden = !detour;
     $("solution").classList.toggle("off-solution", detour);
-    const correction = detour ? `Back to the solution · ${state.model.moveName(player.nextMove)}` : "";
+    const sequence = state.scramblePlayback ? "scramble" : "solution";
+    const correction = detour ? `Back to the ${sequence} · ${state.model.moveName(player.nextMove)}` : "";
     const correctionChanged = off.textContent !== correction;
     if (correctionChanged) off.textContent = correction;
     // The moves done so far, and the one that is next.
@@ -1337,9 +1377,11 @@ export async function mount(root, options = {}) {
       const p = painted();
       paint.set(was.size, p.facelets, p.palette);
     }
-    readScramble();
+    readScramble(was.scramblePlayback);
     if (was.input !== "scramble") show();
-    if (was.solution && was.moves.length) {
+    if (state.scramblePlayback) {
+      player.seek(was.position, was.turns);
+    } else if (was.solution && was.moves.length) {
       // The cube the solution is of: the scramble's even under Paint, if it was that cube on screen.
       const ofScramble = was.shows === "scramble" && !state.scramble.problem;
       const start = ofScramble ? state.model.applyAll(state.model.solved(), state.scramble.moves) : entered().start;
@@ -1349,7 +1391,7 @@ export async function mount(root, options = {}) {
         player.load(state.model, start, was.moves);
         state.shows = ofScramble ? "scramble" : "painted";
         showPalette(ofScramble ? defaultPalette : entered().palette);
-        renderSolution(state.solution);
+        renderMoves();
         player.seek(was.position, was.turns);
       }
     }
@@ -1375,7 +1417,7 @@ export async function mount(root, options = {}) {
     const { face, from, to, quarters } = page.model.info(page.moves[page.position]);
     view.setCue({ face, from, to, quarters }, true);
   }
-  renderSolution(null);
+  renderMoves();
   await solver.loadConfig();
   const storedColour = defaultPalette === YELLOW_TOP ? "yellow" : "white";
   const preferred = solver.config.top_colour ?? storedColour;

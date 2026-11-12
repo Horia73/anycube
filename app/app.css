@@ -1656,11 +1656,33 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   }
 }
 
-/* A phone too narrow for "Random scramble" beside the other buttons says "Random". */
-@media (max-width: 430px) {
+#panel-scramble {
+  container-type: inline-size;
+}
+
+#panel-scramble .button:not(.info) {
+  padding-inline: 8px;
+}
+
+@container (max-width: 440px) {
   #random .long {
     display: none;
   }
+}
+
+@container (max-width: 360px) {
+  #play-scramble .long {
+    display: none;
+  }
+}
+
+@container (max-width: 310px) {
+  #panel-scramble .button:not(.info) {
+    padding-inline: 6px;
+  }
+}
+
+@media (max-width: 430px) {
   .row {
     gap: 5px;
   }
