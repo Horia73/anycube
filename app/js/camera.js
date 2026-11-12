@@ -23,7 +23,7 @@
 // picture (README, "Not done") would keep the feed and the detector and
 // put a session that follows moves in the place of the six steps.
 
-import { cellColour, guess, learn, STICKERS } from "./colour.js";
+import { cellColour, guess, learn, similarReading, STICKERS } from "./colour.js";
 import { findFace, FACE_SCORE } from "./detect.js";
 
 // Names from the user's starting position. In facelet order the front is
@@ -476,18 +476,18 @@ export class CameraScanner {
 
   // The step at which a face was captured that the one in the picture now is alike:
   // by its middle sticker on an odd cube (no two faces share one), by all of it
-  // otherwise. Alike is having the same colours, as the marks over the picture name
-  // them: an orange middle is not a red one seen again, however near the two are.
+  // otherwise. The live colour names and the observed shades must both agree.
   #shownBefore(colours) {
     const nn = this.n * this.n;
     const mid = (nn - 1) / 2;
     const seen = this.#colours(colours);
     const name = (rgb) => guess(rgb, seen).colour;
     const now = colours.map(name);
+    const same = (rgb, i) => name(rgb) === now[i] && similarReading(rgb, colours[i]);
     for (let k = 0; k < SCAN_STEPS.length; k++) {
       const was = this.faces[SCAN_STEPS[k].face];
       if (!was || k === this.step) continue;
-      if (this.n % 2 === 1 ? name(was[mid]) === now[mid] : was.every((rgb, i) => name(rgb) === now[i])) return k;
+      if (this.n % 2 === 1 ? same(was[mid], mid) : was.every(same)) return k;
     }
     return -1;
   }

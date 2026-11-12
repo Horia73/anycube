@@ -151,6 +151,11 @@ function distance(p, q) {
   return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
 }
 
+// Allow modest changes in exposure when comparing repeated camera readings.
+export function similarReading(a, b) {
+  return distance(toLab(a), toLab(b)) <= 12;
+}
+
 function distantSeeds(total, first, between) {
   const seeds = [first];
   const near = Array.from({ length: total }, (_, i) => between(i, first));
