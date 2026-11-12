@@ -51,7 +51,7 @@ export function quad(cx, cy, side, tilt = 0, lean = 0, skew = 0) {
  * `body` the colour of the cube itself, `others` further faces of the
  * cube seen beside this one (`{ corners, stickers }`, drawn under it).
  */
-export function picture({ W = 320, H = 240, n, corners, stickers, background = [96, 104, 112], clutter = [], fill = 0.84, margin = 0.12, noise = 4, light = () => 1, seed = 1, body = BODY, others = [] }) {
+export function picture({ W = 320, H = 240, n, corners, stickers, colours = COLOURS, background = [96, 104, 112], clutter = [], fill = 0.84, margin = 0.12, noise = 4, light = () => 1, seed = 1, body = BODY, others = [] }) {
   const random = rng(seed);
   const gauss = () => {
     let u = 0;
@@ -86,7 +86,7 @@ export function picture({ W = 320, H = 240, n, corners, stickers, background = [
         if (u < 0 || v < 0 || u >= 1 || v >= 1) return body;
         const [fu, fv] = [u * n, v * n];
         const [c, r] = [Math.floor(fu), Math.floor(fv)];
-        if (Math.abs(fu - c - 0.5) <= fill / 2 && Math.abs(fv - r - 0.5) <= fill / 2) return COLOURS[face.stickers[r * n + c]];
+        if (Math.abs(fu - c - 0.5) <= fill / 2 && Math.abs(fv - r - 0.5) <= fill / 2) return colours[face.stickers[r * n + c]];
         return body;
       }
     }

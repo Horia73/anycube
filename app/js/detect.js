@@ -12,12 +12,12 @@
 // then with perspective. Of its N by N windows the one with the most
 // stickers is taken, fitted once more to its own stickers, and kept only
 // if it looks like a face: stickers of one size right on their places,
-// dark gaps between them, four sides like a square's, all in the picture.
+// seams between them, four sides like a square's, all in the picture.
 //
 // What it does not do: tell a face from the same face turned by a quarter
 // (the caller's order of rows is "as the picture shows them"), find a face
 // turned by more than 35 degrees or seen much from the side, or one whose
-// stickers are not set apart by something darker or of another colour.
+// stickers are not set apart by seams or a change of colour.
 //
 // No DOM here, so that the tests can load it under Node. A caller hands in
 // a frame scaled down to about 320 pixels on its longer side (480 for the
@@ -27,8 +27,8 @@ import { cellColour } from "./colour.js";
 
 /**
  * The least `score` a face is returned with: findFace answers null below
- * it, so a caller has nothing to compare. A 2x2x2, with four stickers to
- * go by, needs 0.9.
+ * it, so a caller has nothing to compare. A 2x2 with a missing patch also
+ * needs the cross between all four stickers.
  */
 export const FACE_SCORE = 0.75;
 // The same for a face with no dark gaps between its stickers.
@@ -402,6 +402,37 @@ function windowsOf(on, n) {
   return windows.filter((w) => w.held >= windows[0].held - 1).slice(0, 3);
 }
 
+// Follow both seams across a 2x2. A light or dark frame stands out on
+// multiple lines between the sticker interiors. Check all four halves
+// before using the cross to fill in a patch split by a logo.
+function hasStickerCross(light, a, b, required) {
+  const offsets = [-0.18, 0, 0.18];
+  const steps = [0.36, 0.40, 0.44, 0.48, 0.52, 0.56, 0.60, 0.64];
+  const contrast = (required === 4 ? 12 : 6) * 27;
+  let supported = 0;
+  for (const cross of [0, 1]) {
+    for (const across of [true, false]) {
+      let highs = 0;
+      let lows = 0;
+      for (const offset of offsets) {
+        const lane = cross + offset;
+        const read = (t) => across ? light(a + t, b + lane) : light(a + lane, b + t);
+        const left = read(0.24);
+        const right = read(0.76);
+        const levels = steps.map(read);
+        const high = Math.max(...levels);
+        const low = Math.min(...levels);
+        const middle = (left + right) / 2;
+        // Light is the sum of three smoothed channels, each scaled by nine.
+        if (high >= Math.max(left, right) + 3 * 27 && high >= middle + contrast) highs++;
+        if (low <= Math.min(left, right) - 3 * 27 && low <= middle - contrast) lows++;
+      }
+      if (highs >= 2 || lows >= 2) supported++;
+    }
+  }
+  return supported >= required;
+}
+
 // A lattice and one of its windows, looked at closely: the lattice fitted
 // again to the stickers of the window alone (one beside the face that
 // happened to sit on the lattice has pulled at it till then), and then
@@ -456,6 +487,13 @@ function rate(fit, w, cut, image, n) {
   // Four points always lie on some lattice seen in perspective: the four
   // stickers of a 2x2x2 have to lie near one seen flat as well.
   if (n === 2) {
+    if (inside.length === 3) {
+      // With a corner inferred, require a near square so three background
+      // patches cannot define a sheared grid and supply their own seams.
+      const [u, v] = lengths;
+      const dot = edges[0][0] * edges[1][0] + edges[0][1] * edges[1][1];
+      if (Math.min(u, v) < 0.85 * Math.max(u, v) || Math.abs(dot) > 0.16 * u * v) return null;
+    }
     const flat = solveAffine(
       inside.map((c) => [c.i, c.j]),
       inside.map((c) => [stickers[c.k].x, stickers[c.k].y]),
@@ -503,7 +541,7 @@ function rate(fit, w, cut, image, n) {
   // dip between them. Squares that only happen to stand in rows (tiles,
   // keys, books) have anything between them. Where the gaps are not dark
   // (a cube with a pale body), nearly all of the face has to have been
-  // seen instead; the four stickers of a 2x2x2 are too few to do without.
+  // seen instead. A 2x2 can also show a clear cross of light seams.
   const { R, G, B } = cut;
   const light = (i, j) => {
     const [x, y] = warpPoint(h, i, j);
@@ -539,7 +577,9 @@ function rate(fit, w, cut, image, n) {
     }
   }
   const bodied = gaps > 0 && dark >= (n === 2 ? 1 : 0.75) * gaps;
-  if (score < (n === 2 ? 0.9 : bodied ? FACE_SCORE : PALE_SCORE) || (n === 2 && !bodied)) return null;
+  if (n === 2) {
+    if (!(score >= 0.9 && bodied) && !hasStickerCross(light, a, b, inside.length === 4 ? 3 : 4)) return null;
+  } else if (score < (bodied ? FACE_SCORE : PALE_SCORE)) return null;
   let off = 0;
   for (const c of inside) off += c.off;
   return { h, a, b, score, mean: off / inside.length };
@@ -629,16 +669,19 @@ export function findFace(image, n) {
   };
   const corners = [place(0, 0), place(n, 0), place(n, n), place(0, n)];
 
-  // The middle half of each sticker, read from the picture as it came.
+  // A 2x2 can have a logo across much of one sticker. Read around the
+  // centre in that case. Larger faces use the middle half of each sticker.
   const M = 5;
   const cells = [];
   const buffer = new Uint8ClampedArray(M * M * 4);
+  const offset = (i) => n === 2 ? 0.17 + (0.66 * i) / (M - 1) : 0.25 + (0.5 * (i + 0.5)) / M;
   for (let row = 0; row < n; row++) {
     for (let col = 0; col < n; col++) {
       let k = 0;
       for (let v = 0; v < M; v++) {
         for (let u = 0; u < M; u++) {
-          const [x, y] = place(col + 0.25 + (0.5 * (u + 0.5)) / M, row + 0.25 + (0.5 * (v + 0.5)) / M);
+          if (n === 2 && u > 0 && u < M - 1 && v > 0 && v < M - 1) continue;
+          const [x, y] = place(col + offset(u), row + offset(v));
           const px = Math.max(0, Math.min(W - 1, Math.round(x)));
           const py = Math.max(0, Math.min(H - 1, Math.round(y)));
           const i = (py * W + px) * 4;
@@ -648,7 +691,7 @@ export function findFace(image, n) {
           buffer[k++] = 255;
         }
       }
-      cells.push(cellColour(buffer));
+      cells.push(cellColour(n === 2 ? buffer.subarray(0, k) : buffer));
     }
   }
   return { corners, cells, score: Math.min(1, best.score) };

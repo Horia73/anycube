@@ -79,6 +79,39 @@ for (const n of [3, 4, 5]) {
 
 test("a 2x2x2 face, with four stickers to go by", (t) => sweep(t, 2, CASES, 2));
 
+test("a small light-framed 2x2 with a logo still reads the dark sticker", () => {
+  const corners = quad(163, 147, 64);
+  const colours = [[60, 55, 50], [115, 42, 36], [55, 110, 61], [175, 151, 99], [155, 87, 65], [50, 70, 110]];
+  const stickers = [0, 0, 4, 3];
+  const image = picture({ W: 288, H: 288, n: 2, corners, stickers, colours, body: [167, 154, 140], fill: 0.85, noise: 2 });
+  // A broad, light logo in the centre of the top-left sticker.
+  for (let y = 120; y <= 141; y++) {
+    for (let x = 137; x <= 155; x++) {
+      if (x < 139 + Math.abs(y - 131) || x > 145 + Math.abs(y - 131)) continue;
+      image.data.set([160, 148, 135], (y * image.width + x) * 4);
+    }
+  }
+  const face = findFace(image, 2);
+  assert.ok(face);
+  assert.ok(cornerError(face.corners, corners) < 0.04);
+  face.cells.forEach((rgb, i) => {
+    const difference = rgb.map((channel, d) => channel - colours[stickers[i]][d]);
+    assert.ok(Math.hypot(...difference) < 12, `sticker ${i}: ${rgb}`);
+  });
+});
+
+test("a 2x2 still has four stickers when yellow is almost as bright as the frame", () => {
+  const corners = quad(175, 123, 70);
+  const colours = [[60, 55, 50], [178, 154, 101]];
+  const stickers = [0, 1, 1, 1];
+  const image = picture({ W: 288, H: 288, n: 2, corners, stickers, colours, body: [167, 154, 140], fill: 0.81, noise: 1 });
+  const face = findFace(image, 2);
+  assert.ok(face);
+  assert.ok(cornerError(face.corners, corners) < 0.04);
+  assert.ok(face.cells[0][0] < 80);
+  assert.ok(face.cells.slice(1).every((rgb) => rgb[0] > 160));
+});
+
 for (const n of [6, 7]) {
   test(`a ${n}x${n}x${n} face, in a picture of 480 by 360`, (t) =>
     sweep(
@@ -142,7 +175,7 @@ test("a face held any way within what is promised: how often it is found", (t) =
 
 test("a cube as it is held, and cubes of other makes", (t) => {
   for (const [name, make] of Object.entries(HARDER)) {
-    for (const n of [3, 4]) {
+    for (const n of [2, 3, 4]) {
       let right = 0;
       for (let seed = 1; seed <= 10; seed++) {
         const { image, corners, stickers, light } = make(n, seed);
