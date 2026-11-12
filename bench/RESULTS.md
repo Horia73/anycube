@@ -1810,3 +1810,38 @@ twice above). The full sets are in the table of the release.
 
 Calls with a short first phase run on one core: a search to 10 moves is
 0.2 ms, where waking the other cores for it cost several times that.
+
+Then every size on the fixed sets with `scripts/release.py measure v0.1.1
+--minor` (commit 03710a2; the 3x3x3 row again on bdd6b44, after its table
+was made with less memory), the machine idle. A minor release takes the
+place of the newest row in the tables of the README, so the figures of
+v0.1.0 are kept here:
+
+| Size | Moves, v0.1.0 | Moves, v0.1.1 | Seconds, v0.1.0 | Seconds, v0.1.1 |
+|---:|---:|---:|---:|---:|
+| 2 | 8.79 | 8.79 | 0.00 | 0.00 |
+| 3 | 19.03 | 18.13 | 0.22 | 0.20 |
+| 4 | 40.71 | 40.44 | 2.76 | 2.62 |
+| 5 | 67.75 | 67.30 | 0.58 | 0.65 |
+| 6 | 108.85 | 107.90 | 8.40 | 7.55 |
+| 7 | 152.75 | 152.25 | 3.81 | 3.59 |
+| 8 | 235.65 | 233.75 | 12.88 | 12.59 |
+| 9 | 314.65 | 313.90 | 3.67 | 3.63 |
+| 10 | 406.05 | 399.55 | 16.55 | 12.78 |
+| 11 | 510.40 | 509.60 | 7.47 | 5.94 |
+| 12 | 619.80 | 611.20 | 21.68 | 20.30 |
+| 13 | 757.80 | 757.60 | 15.84 | 13.68 |
+| 14 | 888.40 | 871.20 | 30.38 | 18.94 |
+| 15 | 1031.80 | 1031.80 | 21.45 | 16.79 |
+| 16 | 1185.60 | 1194.80 | 40.34 | 27.20 |
+| 17 | 1392.00 | 1391.80 | 36.98 | 33.82 |
+| 18 | 1548.00 | 1534.60 | 45.82 | 38.28 |
+| 19 | 1763.80 | 1763.00 | 49.50 | 46.24 |
+| 20 | 1938.60 | 1922.40 | 56.52 | 56.50 |
+| 21 | 2254.00 | 2248.20 | 84.15 | 68.15 |
+
+Shorter on every size from 3 up but two: the 15x15x15 is the same and the
+16x16x16 is 9 moves longer on its five cubes, an even size, where two runs
+of the same code differ by that much. The times are the same or lower,
+but for the 5x5x5 (0.58 s to 0.65 s); sizes 4 to 7 hold about 0.4 GB less,
+the table of 554 MB being gone.

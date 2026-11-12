@@ -21,6 +21,12 @@ The row of one size in the results table, and the whole table for a release:
 scripts/release.py measure v0.2.0
 ```
 
+A minor release takes the place of the newest row instead of adding one:
+
+```bash
+scripts/release.py measure v0.1.1 --minor
+```
+
 ```bash
 scripts/release.py readme
 ```

@@ -11,7 +11,7 @@ Moves, lower is better:
 
 | Solver | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| **anycube v0.1.0** | **40.7** | **67.8** | **108.9** | **152.8** | **235.7** | **314.7** | **406.1** |
+| **anycube v0.1.1** | **40.4** | **67.3** | **107.9** | **152.3** | **233.8** | **313.9** | **399.6** |
 | [dwalton76](https://github.com/dwalton76/rubiks-cube-NxNxN-solver) | 51.7 | 79.8 | 136.1 | 194.4 | 308.4 | 368.0 | 523.4 |
 | [gullicube](https://github.com/rokicki/gullicube) | 97.3 | 166.3 | 273.7 | 396.3 | 566.0 | 703.0 | 890.3 |
 | [Chen Shuang](https://github.com/cs0x7f) | 44.5 | 70.6 | | | | | |
@@ -20,7 +20,7 @@ Seconds, lower is better:
 
 | Solver | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| **anycube v0.1.0** | 2.8 | **0.58** | **8.4** | **3.8** | 12.9 | **3.7** | 16.6 |
+| **anycube v0.1.1** | 2.6 | **0.65** | **7.5** | **3.6** | 12.6 | **3.6** | 12.8 |
 | dwalton76 | 1.6 | 4.6 | 43 | 9.4 | 15.8 | 11.0 | 24.8 |
 | gullicube | 9.8 | 8.1 | 8.5 | 4.2 | **8.9** | 6.0 | **10.5** |
 | Chen Shuang | **0.14** | 1.1 | | | | | |
@@ -48,7 +48,8 @@ of each: the [README](../README.md#results).
 ./target/release/anycube row bench/scrambles101010-20.txt --size 10
 
 # every size, recorded under a release name, then the tables written
-scripts/release.py measure v0.1.0
+# (--minor: the release takes the place of the newest row instead of adding one)
+scripts/release.py measure v0.1.1 --minor
 scripts/release.py readme
 ```
 
