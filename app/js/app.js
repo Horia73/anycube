@@ -396,13 +396,13 @@ export async function mount(root, options = {}) {
     const { size } = state;
     const where = solver.where(size);
     const good = (what) => [el("b", { text: "Valid" }), ` · ${what} · ${where}`];
+    if (cube.problem) {
+      setValid("bad", cube.problem);
+      return;
+    }
     if (!solvable(size)) {
       const largest = solver.config.offline ? 3 : solver.config.max_size;
       setValid("play", options.overLimit?.(size, largest) ?? `Larger than the ${name(largest)} solved here: this one is for playing.`);
-      return;
-    }
-    if (cube.problem) {
-      setValid("bad", cube.problem);
       return;
     }
     if (cube.kind === "moves") {
@@ -590,24 +590,53 @@ export async function mount(root, options = {}) {
 
   // ------------------------------------------------------------- scramble
 
+  const scrambleBox = $("scramble");
+  const scrambleMirror = $("scramble-mirror");
+
+  function syncScrambleScroll() {
+    scrambleMirror.scrollTop = scrambleBox.scrollTop;
+  }
+
+  function markScrambleError(range) {
+    scrambleMirror.hidden = !range;
+    if (!range) {
+      scrambleMirror.replaceChildren();
+      return;
+    }
+    const { start, end } = range;
+    const text = scrambleBox.value;
+    scrambleMirror.replaceChildren(
+      text.slice(0, start),
+      el("mark", { text: text.slice(start, end) }),
+      text.slice(end),
+    );
+    // The textarea has a blank line after a final newline.
+    if (text.endsWith("\n")) scrambleMirror.append("\n");
+    syncScrambleScroll();
+  }
+
   function readScramble() {
-    const box = $("scramble");
+    let range = null;
     try {
-      state.scramble = { moves: state.model.normalise(box.value).moves, problem: null };
+      state.scramble = { moves: state.model.normalise(scrambleBox.value).moves, problem: null };
       if (state.scramble.moves.length > solver.config.max_scramble_moves && solvable()) {
         state.scramble.problem = `${state.scramble.moves.length} moves: the solver takes scrambles up to ${solver.config.max_scramble_moves}`;
       }
     } catch (error) {
       if (!(error instanceof ScrambleError)) throw error;
       state.scramble = { moves: [], problem: error.message };
+      range = error.range;
     }
-    box.classList.toggle("bad", !!state.scramble.problem);
+    scrambleBox.setAttribute("aria-invalid", String(!!state.scramble.problem));
+    markScrambleError(range);
     $("undo").disabled = state.scramble.moves.length === 0;
     if (state.input === "scramble") show();
   }
 
   let typing = 0;
-  $("scramble").addEventListener("input", () => {
+  scrambleBox.addEventListener("scroll", syncScrambleScroll);
+  scrambleBox.addEventListener("input", () => {
+    scrambleMirror.hidden = true;
     clearTimeout(typing);
     typing = setTimeout(readScramble, 150);
   });

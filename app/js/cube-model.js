@@ -31,7 +31,12 @@ function turn(axis, v) {
   return [axis[0] * d - c[0], axis[1] * d - c[1], axis[2] * d - c[2]];
 }
 
-export class ScrambleError extends Error {}
+export class ScrambleError extends Error {
+  constructor(message, range = null) {
+    super(message);
+    this.range = range;
+  }
+}
 
 // The face whose outward normal is along `axis` (0 = x, 1 = y, 2 = z) with that sign.
 const FACE_OF = [
@@ -379,25 +384,23 @@ export class CubeModel {
     };
     const moves = [];
     const push = (face, layers, power) => moves.push(this.move(at[face], layers, power));
-    const tokens = text
-      .replace(/[’′`´]/g, "'")
-      .replace(/[(),;\[\]]/g, " ")
-      .split(/\s+/)
-      .filter(Boolean);
-    for (const tok of tokens) {
+    const tokens = text.replace(/[’′`´]/g, "'").matchAll(/[^\s(),;[\]]+/g);
+    for (const token of tokens) {
+      const [tok] = token;
+      const range = { start: token.index, end: token.index + tok.length };
       const m = /^(\d*)([URFDLBurfdlbxyzMES])(w?)(2'|2|'|)$/.exec(tok);
-      if (!m) throw new ScrambleError(`'${tok.slice(0, 12)}' is not a move`);
+      if (!m) throw new ScrambleError(`'${tok.slice(0, 12)}' is not a move`, range);
       const power = m[4] === "" ? 0 : m[4] === "'" ? 2 : 1;
       const back = 2 - power;
       const letter = m[2];
       if ("xyz".includes(letter)) {
-        if (m[1] || m[3]) throw new ScrambleError(`'${tok}' is not a move`);
+        if (m[1] || m[3]) throw new ScrambleError(`'${tok}' is not a move`, range);
         rotate([1, 0, 2]["xyz".indexOf(letter)], power);
         continue;
       }
       if ("MES".includes(letter)) {
-        if (m[1] || m[3]) throw new ScrambleError(`'${tok}' is not a move`);
-        if (n % 2 === 0) throw new ScrambleError(`${letter} is the middle slice, and a ${n}x${n}x${n} has none`);
+        if (m[1] || m[3]) throw new ScrambleError(`'${tok}' is not a move`, range);
+        if (n % 2 === 0) throw new ScrambleError(`${letter} is the middle slice, and a ${n}x${n}x${n} has none`, range);
         // M turns with L, E with D, S with F: the whole cube turned that
         // way, and the two outer blocks turned back.
         const face = [4, 3, 2]["MES".indexOf(letter)];
@@ -409,9 +412,9 @@ export class CubeModel {
       }
       const face = FACE_LETTERS.indexOf(letter.toUpperCase());
       const wide = m[3] === "w" || letter !== letter.toUpperCase();
-      if (m[1] && !wide) throw new ScrambleError(`'${tok}': a number goes with a wide turn, as in 3Rw`);
+      if (m[1] && !wide) throw new ScrambleError(`'${tok}': a number goes with a wide turn, as in 3Rw`, range);
       const layers = m[1] ? Number(m[1]) : wide ? 2 : 1;
-      if (layers < 1 || layers > n) throw new ScrambleError(`'${tok}' turns more layers than a ${n}x${n}x${n} has`);
+      if (layers < 1 || layers > n) throw new ScrambleError(`'${tok}' turns more layers than a ${n}x${n}x${n} has`, range);
       if (layers <= half) {
         push(face, layers, power);
       } else {

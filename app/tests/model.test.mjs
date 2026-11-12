@@ -77,6 +77,18 @@ test("what people type: lower case, apostrophes, brackets", () => {
   assert.throws(() => new CubeModel(4).normalise("5Rw"), /more layers/);
 });
 
+test("scramble errors locate the original move in pasted text", () => {
+  const model = new CubeModel(4);
+  for (const bad of ["F3", "M", "5Rw’", "xw", "2R", "<invalid-move>"]) {
+    const before = "[R’ U2],\n(F;\t";
+    const text = `${before}${bad}), L2`;
+    assert.throws(() => model.normalise(text), {
+      constructor: ScrambleError,
+      range: { start: before.length, end: before.length + bad.length },
+    });
+  }
+});
+
 test("whole-cube turns are folded into the moves after them", () => {
   // Turned like U, the back is on the right; turned like R, the front is on top.
   assert.equal(new CubeModel(3).normalise("y R U R' U' y'").text, "B U B' U'");

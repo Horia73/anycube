@@ -92,7 +92,10 @@ export const APP_HTML = `
     <div class="panels">
       <div role="tabpanel" id="panel-scramble" aria-labelledby="tab-scramble" class="tabpanel">
         <label class="sr" for="scramble">Scramble</label>
-        <textarea id="scramble" rows="6" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" placeholder="R U R' U' F2 D L' B …"></textarea>
+        <div class="scramble-field">
+          <div id="scramble-mirror" aria-hidden="true" hidden></div>
+          <textarea id="scramble" rows="6" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-errormessage="valid" placeholder="R U R' U' F2 D L' B …"></textarea>
+        </div>
         <div class="row">
           <button type="button" class="button" id="random"><span>Random<span class="long"> scramble</span></span></button>
           <button type="button" class="button" id="undo" title="Take back the last move">Undo</button>

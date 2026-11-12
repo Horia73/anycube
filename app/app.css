@@ -978,24 +978,60 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   display: none;
 }
 
-textarea {
-  display: block;
-  width: 100%;
-  resize: none;
-  /* Six whole lines, none cut: the lines, the padding and the border. */
-  height: calc(6 * 1.45em + 20px);
-  padding: 9px 11px;
-  border: 1px solid var(--line);
+.scramble-field {
+  position: relative;
+  overflow: hidden;
   border-radius: 11px;
   background: var(--bg);
-  font: 500 0.95rem/1.45 var(--mono);
 }
-textarea::placeholder {
+#scramble,
+#scramble-mirror {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  font: 500 0.95rem/1.45 var(--mono);
+  scrollbar-gutter: stable;
+}
+#scramble {
+  position: relative;
+  display: block;
+  resize: none;
+  overflow: auto;
+  /* Six whole lines, none cut: the lines, the padding and the border. */
+  height: calc(6 * 1.45em + 20px);
+  border-color: var(--line);
+  border-radius: inherit;
+  background: transparent;
+}
+#scramble::placeholder {
   color: var(--ink-3);
   opacity: 0.7;
 }
-textarea.bad {
+#scramble:focus {
+  outline: none;
+  border-color: var(--ink-2);
+}
+#scramble[aria-invalid="true"] {
   border-color: var(--danger);
+}
+#scramble[aria-invalid="true"]:focus {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+#scramble-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: transparent;
+  forced-color-adjust: none;
+}
+#scramble-mirror mark {
+  color: inherit;
+  background: var(--danger-bg);
+  text-decoration: underline wavy var(--danger);
+  text-underline-offset: 2px;
 }
 
 .row {
@@ -1452,9 +1488,12 @@ textarea.bad {
   .panels {
     height: 150px;
   }
-  textarea {
-    height: calc(4 * 1.45em + 16px);
+  #scramble,
+  #scramble-mirror {
     padding: 7px 9px;
+  }
+  #scramble {
+    height: calc(4 * 1.45em + 16px);
   }
   .row {
     margin-top: 6px;
@@ -1554,7 +1593,7 @@ textarea.bad {
   .panels {
     height: 176px;
   }
-  textarea {
+  #scramble {
     height: calc(5 * 1.45em + 20px);
   }
   .panel {
