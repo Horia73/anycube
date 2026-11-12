@@ -180,6 +180,25 @@ kbd {
   min-width: 0;
 }
 
+.update-dialog {
+  width: min(390px, calc(100% - 28px));
+  padding: 20px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  color: var(--ink);
+  background: var(--panel);
+}
+.update-dialog::backdrop { background: #0008; }
+.update-dialog h2 { margin: 0; font-size: 1.15rem; }
+.update-dialog p { margin: 10px 0 18px; color: var(--ink-2); }
+.update-dialog form { display: flex; justify-content: flex-end; gap: 8px; }
+.update-dialog a { text-decoration: none; }
+
+@media (max-width: 400px) {
+  .top.local-top .sizes { gap: 3px; }
+  .top.local-top .sizes button { min-width: 32px; }
+}
+
 .bench {
   min-height: 0;
   display: grid;
@@ -1382,6 +1401,8 @@ textarea.bad {
   .top .size-row {
     flex: 1;
   }
+  .local-top .top-extra { display: flex; }
+  .local-top .update-trigger { padding-inline: 8px; }
   .sizes button,
   .custom input {
     height: 34px;

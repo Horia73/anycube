@@ -110,6 +110,11 @@ installed, the installer stops and names the one command that installs it.
 `--uninstall` after the same line (`... | sh -s -- --uninstall`) removes it
 all. On Windows, or by hand: `cargo build --release` in a clone.
 
+In the local app, **Check for updates** compares your version with the
+latest GitHub release. To update, rerun the installer or rebuild your clone.
+The installer downloads a prebuilt program when one is available for your
+system and compiles from source otherwise. Compatible lookup tables are reused.
+
 ### Install the web app (PWA)
 
 Open [anycube.agenticweb.ro](https://anycube.agenticweb.ro) in one of these

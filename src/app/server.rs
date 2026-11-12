@@ -300,7 +300,8 @@ fn query(url: &str, name: &str) -> Option<u64> {
 }
 
 const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; \
-                   connect-src 'self'; worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; \
+                   connect-src 'self' https://api.github.com/repos/Horia73/anycube/releases/latest; \
+                   worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; \
                    form-action 'self'; frame-ancestors 'none'";
 
 fn respond(request: Request, status: u16, mime: &str, body: Vec<u8>, cache: &str) {

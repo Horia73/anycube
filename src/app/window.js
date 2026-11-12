@@ -82,10 +82,10 @@ function run(argv) {
   win.contentView.addSubview(web);
   web.loadRequest($.NSURLRequest.requestWithURL($.NSURL.URLWithString(url)));
 
-  // Closing the window ends the application, and the server with it.
+  // Closing the window ends the application. Open release notes in the browser.
   ObjC.registerSubclass({
     name: "AnycubeWindowDelegate",
-    protocols: ["NSWindowDelegate"],
+    protocols: ["NSWindowDelegate", "WKUIDelegate"],
     methods: {
       "windowWillClose:": {
         types: ["void", ["id"]],
@@ -94,10 +94,21 @@ function run(argv) {
           $.NSApplication.sharedApplication.terminate(null);
         },
       },
+      "webView:createWebViewWithConfiguration:forNavigationAction:windowFeatures:": {
+        types: ["id", ["id", "id", "id", "id"]],
+        implementation: function (_view, _configuration, action, _features) {
+          const address = action.request.URL;
+          if (ObjC.unwrap(address.absoluteString) === "https://github.com/Horia73/anycube/releases/latest") {
+            $.NSWorkspace.sharedWorkspace.openURL(address);
+          }
+          return null;
+        },
+      },
     },
   });
   const delegate = $.AnycubeWindowDelegate.alloc.init;
   win.delegate = delegate;
+  web.UIDelegate = delegate;
 
   win.makeKeyAndOrderFront(null);
   // Comes to the front, as an application that was just opened does; a

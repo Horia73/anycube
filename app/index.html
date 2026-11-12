@@ -12,5 +12,18 @@
 <body>
 <!-- The application by itself: js/main.js mounts it here. -->
 <div class="app" id="app"></div>
+<template id="local-update-button">
+  <button class="button quiet update-trigger" type="button" aria-label="Check for updates" title="Check for updates">
+    <span aria-hidden="true">↻</span><span class="wide-only">Check for updates</span>
+  </button>
+</template>
+<dialog class="update-dialog" id="updates" aria-labelledby="updates-title">
+  <h2 id="updates-title">Check for updates</h2>
+  <p id="update-status" role="status"></p>
+  <form method="dialog">
+    <button class="button" autofocus>Close</button>
+    <a class="button primary" href="https://github.com/Horia73/anycube/releases/latest" target="_blank" rel="noopener noreferrer">View release</a>
+  </form>
+</dialog>
 </body>
 </html>
