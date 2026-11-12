@@ -90,9 +90,49 @@ pub fn open(url: &str, data_dir: &Path) -> Opened {
             return Opened::Window(child);
         }
     }
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-    match Command::new(opener).arg(url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status() {
-        Ok(s) if s.success() => Opened::Tab,
-        _ => Opened::Nothing,
+    open_tab(url)
+}
+
+pub fn open_tab(url: &str) -> Opened {
+    if open_default_browser(url) {
+        Opened::Tab
+    } else {
+        Opened::Nothing
     }
+}
+
+#[cfg(not(windows))]
+fn open_default_browser(url: &str) -> bool {
+    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    Command::new(opener)
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(windows)]
+fn open_default_browser(url: &str) -> bool {
+    use std::ffi::c_void;
+    use std::ptr::{null, null_mut};
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            window: *mut c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: i32,
+        ) -> isize;
+    }
+
+    let url: Vec<u16> = url.encode_utf16().chain([0]).collect();
+    // The server supplies a loopback URL. Its wide string is NUL-terminated,
+    // and ShellExecuteW uses the default handler for its scheme.
+    const SW_SHOWNORMAL: i32 = 1;
+    (unsafe { ShellExecuteW(null_mut(), null(), url.as_ptr(), null(), null(), SW_SHOWNORMAL) }) > 32
 }

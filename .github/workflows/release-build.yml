@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           target/release/anycube app --help
+          target/release/anycube solve R --size 2 --mode fast
           mkdir -p dist
           tar -C target/release -czf "dist/$ASSET" anycube
       - name: Smoke test and package on Windows
@@ -46,6 +47,8 @@ jobs:
         shell: pwsh
         run: |
           & ./target/release/anycube.exe app --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./target/release/anycube.exe solve R --size 2 --mode fast
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           New-Item -ItemType Directory -Path dist
           Compress-Archive -LiteralPath target/release/anycube.exe -DestinationPath "dist/$env:ASSET"

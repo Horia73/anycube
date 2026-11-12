@@ -167,11 +167,7 @@ pub fn main(args: &[String]) {
         }
     }
     let opened = if has("--browser") {
-        let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
-        match std::process::Command::new(opener).arg(&running.url).status() {
-            Ok(s) if s.success() => window::Opened::Tab,
-            _ => window::Opened::Nothing,
-        }
+        window::open_tab(&running.url)
     } else {
         window::open(&running.url, &data_dir())
     };
