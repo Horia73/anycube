@@ -145,7 +145,9 @@ test("no cube, no face", () => {
   for (const n of [2, 3, 4, 5]) {
     assert.equal(findFace(picture({ n, corners: null, stickers: [] }), n), null, "a plain background");
     assert.equal(findFace(picture({ n, corners: null, stickers: [], light: (x, y) => 0.5 + x / 640 + y / 960 }), n), null, "a background in uneven light");
-    for (let seed = 1; seed <= 10; seed++) {
+    const seeds = Array.from({ length: 10 }, (_, i) => i + 1);
+    if (n === 2) seeds.push(15, 50);
+    for (const seed of seeds) {
       assert.equal(findFace(clutterOnly(n, seed), n), null, `clutter ${seed}, looking for a ${n}x${n}x${n}`);
     }
   }

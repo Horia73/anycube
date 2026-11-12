@@ -578,7 +578,12 @@ function rate(fit, w, cut, image, n) {
   }
   const bodied = gaps > 0 && dark >= (n === 2 ? 1 : 0.75) * gaps;
   if (n === 2) {
-    if (!(score >= 0.9 && bodied) && !hasStickerCross(light, a, b, inside.length === 4 ? 3 : 4)) return null;
+    if (!(score >= 0.9 && bodied)) {
+      // A pale seam is weaker evidence than a dark gap. Ask for a more
+      // regular outline before accepting a face from the cross alone.
+      if (lengths.some((length, k) => length < 0.82 * lengths[(k + 2) % 4])) return null;
+      if (!hasStickerCross(light, a, b, inside.length === 4 ? 3 : 4)) return null;
+    }
   } else if (score < (bodied ? FACE_SCORE : PALE_SCORE)) return null;
   let off = 0;
   for (const c of inside) off += c.off;
