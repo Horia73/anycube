@@ -28,7 +28,6 @@
 
 use crate::c3::{N_FLIP, N_SLICE, N_TWIST, T3};
 use crate::cube::skip_move;
-use crate::sym::conjugators;
 use crate::tables::{load_or_gen, table_dir, Bytes};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
@@ -91,6 +90,37 @@ fn renaming(faces: [u8; 6], mirrored: bool) -> [u8; 18] {
     out
 }
 
+/// How a symmetry that renames the moves by `mu` acts on a coordinate with `n` values: the map
+/// `p` with `p(x after m) == p(x) after mu(m)` that keeps `home` in place. It is spread from
+/// `home` outwards, a value at a time, then checked on every value and move.
+fn under(mu: &[u8; 18], n: usize, home: usize, act: &(dyn Fn(usize, usize) -> usize + Sync)) -> Vec<u32> {
+    const NONE: u32 = u32::MAX;
+    let mut p = vec![NONE; n];
+    p[home] = home as u32;
+    let mut reached = vec![home];
+    let mut next = 0;
+    while next < reached.len() {
+        let x = reached[next];
+        next += 1;
+        for m in 0..18 {
+            let y = act(m, x);
+            if p[y] == NONE {
+                p[y] = act(mu[m] as usize, p[x] as usize) as u32;
+                reached.push(y);
+            }
+        }
+    }
+    assert_eq!(reached.len(), n, "every value is reached from the home value");
+    let mut hit = vec![false; n];
+    for x in 0..n {
+        assert!(!std::mem::replace(&mut hit[p[x] as usize], true), "the symmetry takes no two values to one");
+        for m in 0..18 {
+            assert_eq!(p[act(m, x)] as usize, act(mu[m] as usize, p[x] as usize), "the symmetry goes along with the moves");
+        }
+    }
+    p
+}
+
 /// Every shortest way from a position `d` moves away, five bits a move, the first move lowest.
 fn shortest(
     step: &dyn Fn(usize, usize, usize) -> (usize, usize),
@@ -137,16 +167,8 @@ fn generate(t: &T3) -> Vec<u8> {
     let fs_act =
         |m: usize, x: usize| t.flip_mv[x / N_SLICE][m] as usize * N_SLICE + t.slice_mv[x % N_SLICE][m] as usize;
     // Each symmetry as it acts on the twist, and on flip and slice together.
-    let maps: Vec<(Vec<u32>, Vec<u32>)> = group
-        .par_iter()
-        .map(|mu| {
-            let pairs: Vec<(usize, usize)> = (0..18).map(|m| (m, mu[m] as usize)).collect();
-            let tw = conjugators(N_TWIST, &pairs, &tw_act, &tw_act, &[(0, 0)]);
-            let fs = conjugators(N_FS, &pairs, &fs_act, &fs_act, &[(goal, goal)]);
-            assert!(tw.len() == 1 && fs.len() == 1, "one map of the twist and one of flip and slice per symmetry");
-            (tw[0].clone(), fs[0].clone())
-        })
-        .collect();
+    let maps: Vec<(Vec<u32>, Vec<u32>)> =
+        group.par_iter().map(|mu| (under(mu, N_TWIST, 0, &tw_act), under(mu, N_FS, goal, &fs_act))).collect();
     // Classes of flip and slice: the smallest image names the class.
     let best: Vec<(u32, u8)> =
         (0..N_FS).into_par_iter().map(|x| (0..N_SYM).map(|s| (maps[s].1[x], s as u8)).min().unwrap()).collect();
