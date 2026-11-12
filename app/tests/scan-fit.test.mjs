@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CubeModel } from "../js/cube-model.js";
 import { sortColours, named, STICKERS } from "../js/colour.js";
-import { arrange, assemble, assembleScan, cubeKey, fit, structure } from "../js/scan-fit.js";
+import { arrange, assemble, assembleScan, cubeKey, fit, reviewStickers, structure } from "../js/scan-fit.js";
 
 function random(seed) {
   let s = BigInt(seed);
@@ -65,6 +65,14 @@ for (const [name, { palette, exposure }] of Object.entries(DISTINCT)) {
     }
   });
 }
+
+test("scan review picks the most uncertain editable stickers", () => {
+  const doubt = new Float32Array(54);
+  doubt.set([0.78, 0.83, 0.41, 0.89, 1, 0.61, 0.91, 0.59]);
+  assert.deepEqual(reviewStickers(3, doubt), [6, 3, 1, 0]);
+  assert.deepEqual(reviewStickers(2, doubt.slice(0, 24)), [4, 6, 3, 1]);
+  assert.deepEqual(reviewStickers(3, new Float32Array(54).fill(0.54)), []);
+});
 
 test("what the outside of a cube says: real cubes pass, broken ones do not", () => {
   const rnd = random(1);

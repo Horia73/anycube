@@ -1331,6 +1331,9 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   border-radius: 1.5px;
   background: var(--cube-blank);
 }
+.net-face i.scan-review {
+  box-shadow: inset 0 0 0 1px #fffdf5, inset 0 0 0 2px #18191b;
+}
 .net-face.current {
   opacity: 1;
   box-shadow: 0 0 0 2px var(--ink);

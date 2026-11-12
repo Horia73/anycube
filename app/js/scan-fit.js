@@ -397,6 +397,16 @@ export function assembleScan(n, samples) {
   return { sorted, made: assemble(n, sorted) };
 }
 
+/** The closest colour calls in facelet order, excluding fixed centre stickers. */
+export function reviewStickers(n, doubt) {
+  const each = n * n;
+  const centre = n % 2 === 1 ? (each - 1) / 2 : -1;
+  return Array.from(doubt, (_, i) => i)
+    .filter((i) => i % each !== centre && doubt[i] >= 0.55)
+    .sort((a, b) => doubt[b] - doubt[a])
+    .slice(0, 4);
+}
+
 /**
  * The cube the six pictures make.
  *

@@ -32,7 +32,7 @@ const el = (tag, attrs = {}, children = []) => {
 export class PaintEditor {
   /**
    * @param {HTMLElement} root an empty element to build in
-   * @param {{ onchange: (facelets: Uint8Array) => void, onface: (face: number) => void }} hooks
+   * @param {{ onchange: (facelets: Uint8Array, sticker: number) => void, onface: (face: number) => void }} hooks
    */
   constructor(root, { onchange, onface }) {
     this.root = root;
@@ -41,6 +41,7 @@ export class PaintEditor {
     this.n = 3;
     this.facelets = new Uint8Array(54);
     this.palette = [];
+    this.scanReview = null;
     this.colour = 0;
     this.face = 2;
     this.swatches = el("div", { class: "swatches", role: "radiogroup", "aria-label": "Colour to paint with" });
@@ -93,6 +94,12 @@ export class PaintEditor {
     if (tell) this.onface(face);
   }
 
+  setScanReview(stickers) {
+    if (this.scanReview === stickers) return;
+    this.scanReview = stickers;
+    this.#colours();
+  }
+
   #locked(i) {
     const nn = this.n * this.n;
     return this.n % 2 === 1 && i % nn === (nn - 1) / 2;
@@ -107,7 +114,7 @@ export class PaintEditor {
     this.facelets[i] = colour;
     this.#colours();
     this.#counts();
-    this.onchange(this.facelets);
+    this.onchange(this.facelets, i);
   }
 
   // The unfolded cube. Up to 7 by 7 every sticker is shown; above that, a 7 by 7 sample of each face.
@@ -116,14 +123,21 @@ export class PaintEditor {
     const nn = n * n;
     const shown = Math.min(n, 7);
     for (const face of this.net.children) {
-      const base = Number(face.dataset.face) * nn;
+      const faceIndex = Number(face.dataset.face);
+      const base = faceIndex * nn;
+      let toCheck = 0;
       [...face.children].forEach((cell, k) => {
         const [r, c] = [Math.floor(k / shown), k % shown];
         const i = base + Math.floor((r * n) / shown) * n + Math.floor((c * n) / shown);
         const colour = facelets[i];
         cell.style.background = colour === BLANK ? "" : palette[colour];
+        const review = this.scanReview?.includes(i) ?? false;
+        cell.classList.toggle("scan-review", review);
+        if (review) toCheck++;
       });
-      face.classList.toggle("current", Number(face.dataset.face) === this.face);
+      const label = `Look at the ${FACE_NAMES[faceIndex].toLowerCase()} face`;
+      face.setAttribute("aria-label", toCheck ? `${label}, ${toCheck} ${toCheck === 1 ? "sticker" : "stickers"} to check` : label);
+      face.classList.toggle("current", faceIndex === this.face);
     }
   }
 

@@ -127,6 +127,7 @@ export class CubeView {
     this.inside = "#1c1f26";
     this.blank = "#3b404c";
     this.raw = null; // a colour per facelet that overrides the palette where set
+    this.scanReview = null; // sticker positions to check after a scan failed validation
     this.frame = null; // a face to draw a frame round
     // Layers `from` up to `to` under `face`, turned by `angle` radians clockwise seen from the face.
     this.turn = null;
@@ -345,6 +346,12 @@ export class CubeView {
   // says"): what the camera saw, before it is sorted into six colours.
   setRaw(raw) {
     this.raw = raw;
+    this.draw();
+  }
+
+  setScanReview(stickers) {
+    if (this.scanReview === stickers) return;
+    this.scanReview = stickers;
     this.draw();
   }
 
@@ -626,6 +633,7 @@ export class CubeView {
 
         // The stickers of this face that are on this box, one path per colour.
         const paths = new Map();
+        let review = null;
         const base = face * n * n;
         for (let r = 0; r < n; r++) {
           const y0 = -1 + r * cell;
@@ -663,6 +671,18 @@ export class CubeView {
               path.lineTo(p[3][0], p[3][1]);
             }
             path.closePath();
+            if (this.scanReview?.includes(i)) {
+              review ??= new Path2D();
+              const arm = cell * 0.19;
+              const [x, y] = [x0 + arm, y0 + arm];
+              const [right, bottom] = [x0 + cell - arm, y0 + cell - arm];
+              review.moveTo(...at(x, y + arm));
+              review.lineTo(...at(x, y));
+              review.lineTo(...at(x + arm, y));
+              review.moveTo(...at(right, bottom - arm));
+              review.lineTo(...at(right, bottom));
+              review.lineTo(...at(right - arm, bottom));
+            }
           }
         }
         for (const [colour, path] of paths) {
@@ -688,6 +708,18 @@ export class CubeView {
             for (const path of paths.values()) ctx.fill(path);
             ctx.restore();
           }
+        }
+        if (review) {
+          ctx.save();
+          ctx.lineJoin = ctx.lineCap = "round";
+          const width = Math.max(1.5, size / (90 * n));
+          ctx.lineWidth = width * 2.2;
+          ctx.strokeStyle = "#18191b";
+          ctx.stroke(review);
+          ctx.lineWidth = width;
+          ctx.strokeStyle = "#fffdf5";
+          ctx.stroke(review);
+          ctx.restore();
         }
       }
     }

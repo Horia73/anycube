@@ -19,7 +19,7 @@ import { APP_HTML } from "./markup.js";
 import { FACE_NAMES, PaintEditor } from "./paint.js";
 import { Player } from "./player.js";
 // (`arrange` here is the page's own layout; the scan's is `placed`.)
-import { arrange as placed, assembleScan } from "./scan-fit.js";
+import { arrange as placed, assembleScan, reviewStickers } from "./scan-fit.js";
 import { Solver } from "./solver.js";
 import { ViewCube } from "./view-cube.js";
 
@@ -31,6 +31,8 @@ const TOP_COLOUR = "anycube.top-colour";
 // Turning the cube 180° with the front held fixed exchanges both pairs.
 const YELLOW_TOP = [3, 4, 2, 0, 1, 5].map((face) => STICKERS[face]);
 const CENTRE_PROBLEM = "The centre colours don't form opposite pairs: white and yellow, red and orange, green and blue.";
+const SCAN_REVIEW_NOTE = "Check the outlined stickers first. Pick the right colour, then tap a sticker to correct it.";
+const SCAN_RETAKE_NOTE = "The scan could not be reconstructed. Compare the colours in Paint or retake the scan.";
 
 const el = (tag, attrs = {}, children = []) => {
   const node = document.createElement(tag);
@@ -110,7 +112,7 @@ export async function mount(root, options = {}) {
     input: "scramble", // where the cube comes from: "scramble", "paint" or "camera"
     mode: "normal",
     scramble: { moves: [], problem: null },
-    painted: new Map(), // size -> { facelets, palette }
+    painted: new Map(), // size -> { facelets, palette, review? }
     carried: null, // the scramble's cube as it stood when Paint was last left for it (see setTab)
     shows: "scramble", // whose cube is on screen, with any solution of it: the scramble's or the painted one
     scan: null, // while the camera reads a cube: the colours seen so far, per facelet
@@ -147,6 +149,7 @@ export async function mount(root, options = {}) {
       scramble: $("scramble").value,
       painted: p
         ? { facelets: Array.from(p.facelets), palette: p.palette, followsDefault: p.palette === defaultPalette,
+            review: p.review?.active ? p.review.stickers : undefined,
             note: $("paint-note").textContent }
         : null,
       carried: state.carried,
@@ -388,6 +391,18 @@ export async function mount(root, options = {}) {
     return cube;
   }
 
+  function showScanReview() {
+    const review = state.painted.get(state.size)?.review;
+    const stickers = review?.active && state.input !== "scramble" && !state.scan ? review.stickers : null;
+    view.setScanReview(stickers);
+    paint.setScanReview(stickers);
+  }
+
+  function lookAtReview(review) {
+    const face = Math.floor(review.stickers[0] / (state.size * state.size));
+    paint.select(face);
+  }
+
   // Shows the cube as entered, forgetting any solution of an earlier one,
   // and says whether it can be solved.
   let checking = 0;
@@ -402,6 +417,7 @@ export async function mount(root, options = {}) {
     player.load(state.model, cube.start, []);
     state.shows = state.input === "scramble" ? "scramble" : "painted";
     view.setRaw(state.scan);
+    showScanReview();
     renderSolution(null);
     restStatus();
     judge(cube);
@@ -413,6 +429,7 @@ export async function mount(root, options = {}) {
   // what the tab says about it is brought up to date.
   function stay() {
     const cube = entered();
+    showScanReview();
     restStatus();
     judge(cube);
     keepLater();
@@ -446,13 +463,30 @@ export async function mount(root, options = {}) {
     const error = await solver.check(size, "facelets", cube.input);
     clearTimeout(slow);
     if (mine !== checking) return;
+    const paintedCube = state.painted.get(size);
+    const review = paintedCube?.review;
     if (!error) {
       setValid("ok", good("every piece checked"));
+      if (review) {
+        delete paintedCube.review;
+        if (review.active) {
+          $("paint-note").textContent = "Every piece checks out. Compare the scan against your cube before solving.";
+          showScanReview();
+          keepLater();
+        }
+      }
     } else if (error.impossible) {
       const [brief, long] = IMPOSSIBLE[error.code] ?? [error.message, error.message];
       setValid("bad", `Cannot be solved: ${brief.toLowerCase()}`, long);
       state.detail = problemNodes(error);
       restStatus();
+      if (review && !review.active) {
+        review.active = true;
+        $("paint-note").textContent = SCAN_REVIEW_NOTE;
+        showScanReview();
+        if (state.tab === "paint") lookAtReview(review);
+        keepLater();
+      }
     } else {
       setValid("bad", error.message);
     }
@@ -741,8 +775,10 @@ export async function mount(root, options = {}) {
       setScramble(model.simplify([...before, ...moves]));
     } else {
       const facelets = model.applyAll(player.facelets, moves);
-      state.painted.set(state.size, { ...painted(), facelets });
-      paint.set(state.size, facelets, painted().palette);
+      const { palette, review } = painted();
+      state.painted.set(state.size, { facelets, palette });
+      if (review?.active) $("paint-note").textContent = PAINT_NOTE;
+      paint.set(state.size, facelets, palette);
       show();
     }
   }
@@ -760,9 +796,16 @@ export async function mount(root, options = {}) {
   // ---------------------------------------------------------------- paint
 
   const paint = new PaintEditor($("paint"), {
-    onchange: (facelets) => {
+    onchange: (facelets, sticker) => {
       const cube = painted();
       cube.facelets = facelets;
+      if (cube.review?.stickers.includes(sticker)) {
+        cube.review.stickers = cube.review.stickers.filter((i) => i !== sticker);
+        if (!cube.review.stickers.length) {
+          if (cube.review.active) $("paint-note").textContent = PAINT_NOTE;
+          delete cube.review;
+        }
+      }
       if (cube.palette === defaultPalette) cube.palette = defaultPalette.slice();
       show();
     },
@@ -811,7 +854,9 @@ export async function mount(root, options = {}) {
       if (n % 2 === 1 && !oppositeCentres(palette)) {
         return `${CENTRE_PROBLEM} Select a face below to retake it.`;
       }
-      state.painted.set(n, { facelets, palette });
+      const stickers = reviewStickers(n, placed(n, sorted.doubt, made));
+      const review = stickers.length ? { stickers, active: made.kind === "none" } : undefined;
+      state.painted.set(n, { facelets, palette, review });
       const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
       let note = "Read from the camera. Check it against your cube.";
       if (made.kind === "placed" && made.moved.length === 0) {
@@ -823,11 +868,12 @@ export async function mount(root, options = {}) {
       } else if (made.kind === "several") {
         note = "These pictures fit together as more than one cube. Scan again, or correct it here.";
       } else if (made.kind === "none") {
-        note = "The faces do not fit together as a cube. Correct the colours here or scan again.";
+        note = review?.active ? SCAN_REVIEW_NOTE : SCAN_RETAKE_NOTE;
       }
       $("paint-note").textContent = note;
       // The cube just read goes to where it can be looked over and corrected.
       setTab("paint");
+      if (review?.active) lookAtReview(review);
     },
     onstop: () => {
       // What was read of an unfinished scan is dropped; the painted cube is as it was.
@@ -1267,8 +1313,10 @@ export async function mount(root, options = {}) {
     setSize(was.size);
     $("scramble").value = String(was.scramble ?? "");
     if (was.painted && was.size <= PAINT_MAX) {
-      const { facelets, palette, followsDefault, note } = was.painted;
-      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette });
+      const { facelets, palette, followsDefault, note, review: savedReview } = was.painted;
+      const stickers = Array.isArray(savedReview) ? savedReview.filter((i) => Number.isInteger(i) && i >= 0 && i < facelets.length).slice(0, 4) : [];
+      const review = stickers.length ? { stickers, active: true } : undefined;
+      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette, review });
       if (note && !note.includes("ringed")) $("paint-note").textContent = note;
     }
     state.carried = typeof was.carried === "string" ? was.carried : null;
