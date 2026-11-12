@@ -10,7 +10,7 @@ of the last capture by default. The gear also lets you use the default top
 colour for scans.
 
 <p align="center">
-  <img src="../docs/interface.png" width="800" alt="A 4x4x4 part of the way through its solution, an arrow on each row that turns next">
+  <img src="../docs/interface.png" width="800" alt="A 4x4x4 partway through its solution, with arrows showing the next turn">
 </p>
 
 Paint a cube sticker by sticker; the line above Solve says what is still
@@ -20,11 +20,11 @@ missing or wrong, and Solve waits until the cube is one that exists:
   <img src="../docs/interface-paint.png" width="800" alt="Paint: a 3x3x3 with seven stickers not painted yet">
 </p>
 
-Or hold it up to a camera, a face at a time (the picture never leaves the
-computer; this one is a drawing of a face, not a camera's):
+Or hold it up to a camera, a face at a time. Camera images stay in the
+browser. The example below uses a simulated camera feed.
 
 <p align="center">
-  <img src="../docs/interface-camera.png" width="800" alt="Camera: a face of a 3x3x3 found in the picture, off to one side and tilted, with the colours read marked on it">
+  <img src="../docs/interface-camera.png" width="800" alt="Camera: a tilted 2x2x2 face with the detected stickers outlined, alongside a 3D guide for the next capture">
 </p>
 
 A valid scan starts the search automatically. When the solution is ready,

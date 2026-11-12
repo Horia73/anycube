@@ -145,7 +145,7 @@ anycube app
 ```
 
 <p align="center">
-  <img src="docs/interface.png" width="800" alt="The interface: a 4x4x4 part of the way through its solution, an arrow on each row that turns next">
+  <img src="docs/interface.png" width="800" alt="A 4x4x4 partway through its solution, with arrows showing the next turn">
 </p>
 
 That opens the interface: a cube of any size up to 50x50x50 to scramble,
