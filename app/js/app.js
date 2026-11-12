@@ -449,9 +449,7 @@ export async function mount(root, options = {}) {
   // ----------------------------------------------------------------- size
 
   function renderSizes() {
-    const top = Math.max(7, Math.min(solver.config.max_size, 10));
-    const sizes = [];
-    for (let n = 2; n <= top; n++) sizes.push(n);
+    const sizes = [2, 3, 4, 5, 6, 7];
     $("sizes").replaceChildren(
       ...sizes.map((n) => {
         const b = el("button", { type: "button", role: "radio", "aria-checked": "false", "aria-label": name(n), text: String(n) });
