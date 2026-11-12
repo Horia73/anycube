@@ -98,6 +98,7 @@ export async function mount(root, options = {}) {
   const player = new Player(view);
   view.busy = () => player.moving;
   const solver = new Solver();
+  let ready = false;
   let defaultPalette = STICKERS;
   try {
     if (localStorage.getItem(TOP_COLOUR) === "yellow") defaultPalette = YELLOW_TOP;
@@ -687,6 +688,14 @@ export async function mount(root, options = {}) {
   }
 
   let typing = 0;
+  function updateScrambleButtons() {
+    const empty = state.scramble.moves.length === 0;
+    const canPlay = !empty && !state.scramble.problem;
+    $("undo").disabled = empty;
+    $("play-scramble").disabled = !ready || !canPlay;
+    return canPlay;
+  }
+
   function readScramble(scramblePlayback = false) {
     clearTimeout(typing);
     let range = null;
@@ -702,9 +711,7 @@ export async function mount(root, options = {}) {
     }
     scrambleBox.setAttribute("aria-invalid", String(!!state.scramble.problem));
     markScrambleError(range);
-    $("undo").disabled = state.scramble.moves.length === 0;
-    const canPlay = state.scramble.moves.length > 0 && !state.scramble.problem;
-    $("play-scramble").disabled = !canPlay;
+    const canPlay = updateScrambleButtons();
     if (state.input === "scramble") show(scramblePlayback && canPlay);
   }
 
@@ -1065,7 +1072,7 @@ export async function mount(root, options = {}) {
     if (newScramble) {
       $("scramble").value = cube.input;
       state.scramble = { moves: newScramble, problem: null };
-      $("undo").disabled = $("play-scramble").disabled = newScramble.length === 0;
+      updateScrambleButtons();
       judge(entered());
     } else if (newPaint) {
       state.painted.set(size, newPaint);
@@ -1434,12 +1441,14 @@ export async function mount(root, options = {}) {
     }
   }
   if (!page) {
-    // A first visit: a 3x3x3, scrambled, and seen only once it is.
+    // Start with a scrambled 3x3x3 unless moves were already entered.
     setSize(Math.min(3, solver.config.max_size));
-    await randomScramble();
+    if (!scrambleBox.value.trim()) await randomScramble();
     view.waiting = false;
     view.draw();
   }
+  ready = true;
+  updateScrambleButtons();
   keeping = true;
   keep();
   // Leaving the page (a reload is that too) keeps it as it stands at that moment.
