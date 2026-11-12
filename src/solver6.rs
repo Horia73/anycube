@@ -981,6 +981,8 @@ pub struct Solution6 {
     /// wings, and matching on the quick way), inner reduction, the 5x5x5
     /// (with its 3x3x3).
     pub lens: [usize; 4],
+    /// The outer 5x5x5's two centre phases, three edge phases and 3x3x3 finish.
+    pub outer_lens: [usize; 6],
 }
 
 pub struct Solver6 {
@@ -1165,6 +1167,6 @@ impl Solver6 {
         // Back from the cube as held to the cube as given.
         let given = &self.holds[*hold].1;
         let all: Vec<u8> = moves.iter().chain(sol5.moves.iter()).map(|&m| given[m as usize]).collect();
-        Ok(Solution6 { moves: all, lens: [lens[0], lens[1], lens[2], sol5.moves.len()] })
+        Ok(Solution6 { moves: all, lens: [lens[0], lens[1], lens[2], sol5.moves.len()], outer_lens: sol5.lens })
     }
 }

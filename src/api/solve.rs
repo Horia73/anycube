@@ -250,8 +250,15 @@ mod big {
                     let p = if mode == Mode::Fast { Params6::fast() } else { Params6::normal() };
                     let sol = s6().solve(f, &p)?;
                     let l = sol.lens;
-                    let parts =
-                        vec![("centre staging", l[0]), ("inner cube set-up", l[1]), ("inner reduction", l[2]), ("5x5x5", l[3])];
+                    let outer = sol.outer_lens;
+                    let parts = vec![
+                        ("centre staging", l[0]),
+                        ("inner cube set-up", l[1]),
+                        ("inner reduction", l[2]),
+                        ("outer centres", outer[0] + outer[1]),
+                        ("outer edges", outer[2] + outer[3] + outer[4]),
+                        ("3x3x3", outer[5]),
+                    ];
                     (sol.moves.iter().map(|&m| m as usize).collect(), parts, false)
                 }
                 7 => {
