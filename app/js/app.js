@@ -86,6 +86,7 @@ export async function mount(root, options = {}) {
   const PLAY_MAX = options.playMax ?? 50;
 
   const canvas = $("cube");
+  const cubeLabel = canvas.getAttribute("aria-label");
   const view = new CubeView(canvas);
   const player = new Player(view);
   view.busy = () => player.moving;
@@ -244,6 +245,7 @@ export async function mount(root, options = {}) {
     const scanning = scanner.running;
     const host = scanning ? (narrow.matches ? $("scan-slot-narrow") : $("scan-slot")) : $("stage");
     if (canvas.parentElement !== host) host.prepend(canvas);
+    canvas.setAttribute("aria-label", scanning ? "The cube from your perspective, with the face to capture on the far side. Drag or use the arrow keys to look around." : cubeLabel);
     $("stage").classList.toggle("scanning", scanning);
     $("panel-lower").classList.toggle("scanning", scanning);
     $("camera-frame").hidden = !scanning;
@@ -755,18 +757,16 @@ export async function mount(root, options = {}) {
 
   let guiding = 0;
   const scanner = new CameraScanner($("camera-frame"), $("camera-side"), {
-    // The cube in the panel shows what to hold up: the face asked for in
-    // front with a frame round it, seen from the side the faces already
-    // read are on, so that their colours say how to hold the cube. Where it
-    // takes two moves to bring the face round, the cube makes both.
+    // The user sees the captured side come round to their left as the
+    // next face turns towards the camera. Show both moves when needed.
     onstep: (face, via) => {
       clearTimeout(guiding);
       view.setFrame(face);
       if (via === undefined) {
-        view.look(face, 450, "left");
+        view.lookForCapture(face, state.scan ? 450 : 0);
       } else {
-        view.look(via, 420, "left");
-        guiding = setTimeout(() => view.look(face, 520, "left"), 560);
+        view.lookForCapture(via, 420);
+        guiding = setTimeout(() => view.lookForCapture(face, 520), 560);
       }
     },
     onface: (face, colours) => {
@@ -838,7 +838,6 @@ export async function mount(root, options = {}) {
     placeCube();
     setTouch();
     show();
-    view.look(2, 450, "left");
     scanner.capture.focus({ preventScroll: true });
   });
 

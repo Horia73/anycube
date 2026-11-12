@@ -91,6 +91,9 @@ const HOME = mul(rotX(0.47), rotY(-0.62));
 // cube to look at it: the side faces by turning it round, U and D by tipping it.
 const TO_FRONT = [rotX(Math.PI / 2), rotY(-Math.PI / 2), IDENTITY, rotX(-Math.PI / 2), rotY(Math.PI / 2), rotY(Math.PI)];
 
+// Look from the user's side of the cube, with room to see the face on their left.
+const SCAN_VIEW = mul(rotX(0.44), rotY(Math.PI + 0.62));
+
 const reducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
 // The next frame, or a fifth of a second, whichever comes first: a page
@@ -236,11 +239,13 @@ export class CubeView {
     canvas.addEventListener("pointercancel", up);
     canvas.addEventListener("dblclick", (e) => {
       const [x, y] = at(e);
-      if (!this.pick(x, y) || this.mode === "look") this.look(null);
+      if (this.frame !== null) this.lookForCapture(this.frame);
+      else if (!this.pick(x, y) || this.mode === "look") this.look(null);
     });
     canvas.addEventListener("keydown", (e) => {
       const step = { ArrowLeft: rotY(-0.2), ArrowRight: rotY(0.2), ArrowUp: rotX(-0.2), ArrowDown: rotX(0.2) }[e.key];
       if (!step || e.altKey || e.metaKey || e.ctrlKey) return;
+      this.glide = null;
       this.rot = mul(step, this.rot);
       this.draw();
       e.preventDefault();
@@ -375,13 +380,18 @@ export class CubeView {
     this.draw();
   }
 
-  // Turns the cube to show a face (or back to the usual view, with `null`):
-  // the face in front, seen a little from above and from the right, or
-  // with `from` "left" well from the left, so that the face beside it on
-  // that side is in view too.
-  look(face, ms = 450, from = "right") {
-    const tilt = from === "left" ? mul(rotX(0.44), rotY(0.62)) : mul(rotX(0.3), rotY(-0.34));
-    const target = face === null ? HOME : mul(tilt, TO_FRONT[face]);
+  // Shows a face from above and to the right, or returns to the usual view.
+  look(face, ms = 450) {
+    const target = face === null ? HOME : mul(mul(rotX(0.3), rotY(-0.34)), TO_FRONT[face]);
+    this.#glideTo(target, ms);
+  }
+
+  // The face pointed at the camera is on the far side of the cube.
+  lookForCapture(face, ms = 450) {
+    this.#glideTo(mul(SCAN_VIEW, TO_FRONT[face]), ms);
+  }
+
+  #glideTo(target, ms) {
     if (reducedMotion() || ms <= 0) {
       this.rot = target;
       this.glide = null;

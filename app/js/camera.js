@@ -26,7 +26,9 @@
 import { cellColour, guess, learn, STICKERS } from "./colour.js";
 import { findFace, FACE_SCORE } from "./detect.js";
 
-const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
+// Names from the user's starting position. In facelet order the front is
+// the first face the camera sees, on the far side of the cube for the user.
+const FACE_NAMES = ["Top", "Left", "Back", "Bottom", "Right", "Front"];
 
 // The order the faces are asked for, and what to do to get to each, said
 // as what the hands do. With the top kept on top for the four sides, and
@@ -36,12 +38,12 @@ const FACE_NAMES = ["Top", "Right", "Front", "Bottom", "Left", "Back"];
 // the order, nor the way up: the six pictures are put together afterwards
 // the way they make a cube (scan-fit.js). `sign` is the small drawing.
 export const SCAN_STEPS = [
-  { face: 2, signs: ["hold"], text: "Hold any face to the camera, level. Note which face is on top." },
-  { face: 1, signs: ["round"], text: "A quarter turn sideways. The top stays on top." },
-  { face: 5, signs: ["round"], text: "Another quarter turn the same way." },
-  { face: 4, signs: ["round"], text: "And once more the same way." },
-  { face: 0, via: 2, signs: ["round", "tip"], text: "Round once more, then tip the top to the camera." },
-  { face: 3, via: 2, signs: ["up", "up"], text: "Tip back, and on: the bottom to the camera." },
+  { face: 2, signs: ["hold"], text: "Hold any face level, pointing away from you towards the camera. Note which face is on top." },
+  { face: 4, signs: ["round"], text: "Rotate the cube a quarter turn counterclockwise as seen from above. The captured face moves to your left." },
+  { face: 5, signs: ["round"], text: "Another quarter turn the same way. Keep the top on top." },
+  { face: 1, signs: ["round"], text: "And once more the same way." },
+  { face: 0, via: 2, signs: ["round", "up"], text: "Round once more, then tip the top away from you, towards the camera." },
+  { face: 3, via: 2, signs: ["down", "down"], text: "Tip back through the starting position until the bottom faces the camera." },
 ];
 
 // The small drawings: the face held to the camera, and an arrow for how
@@ -52,7 +54,7 @@ const FACE = '<rect x="11" y="9" width="18" height="18" rx="3.5"/>';
 const SIGNS = {
   hold: `${FACE}<circle class="head" cx="20" cy="18" r="2.6"/>`,
   round: `${FACE}<path d="M5 31c8 6 22 6 29 1"/>${HEAD(35, 31.5, -32)}`,
-  tip: `${FACE}<path d="M34 4c6 7 6 19 1 26"/>${HEAD(34.5, 31, 122)}`,
+  down: `${FACE}<path d="M34 4c6 7 6 19 1 26"/>${HEAD(34.5, 31, 122)}`,
   up: `${FACE}<path d="M34 32c6 -7 6 -19 1 -26"/>${HEAD(34.5, 5, -122)}`,
 };
 
@@ -292,7 +294,7 @@ export class CameraScanner {
     this.heading.textContent = done ? "All six faces captured" : `Face ${this.step + 1} of 6: ${FACE_NAMES[face].toLowerCase()}`;
     // A face gone back to is not the next one round: it is shown as the cube in the panel shows it.
     const again = this.jumped && !done;
-    this.text.textContent = done ? "" : again ? `The ${FACE_NAMES[face].toLowerCase()} face again: hold the cube as the one here, framed face to the camera.` : text;
+    this.text.textContent = done ? "" : again ? "Hold the cube as shown, with the face to capture pointing away from you, towards the camera." : text;
     this.text.classList.remove("warn");
     this.sign.innerHTML = (again ? ["hold"] : signs).map((name) => `<svg viewBox="0 0 40 38">${SIGNS[name]}</svg>`).join("<i>then</i>");
     this.again = -1;
