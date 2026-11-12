@@ -33,10 +33,11 @@ export const APP_HTML = `
         <button type="button" class="tool" id="arrows" aria-pressed="true" title="Show the next move as arrows on the cube">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h14M13 6l6 6-6 6"/></svg><span>Arrows</span>
         </button>
-        <button type="button" class="tool" id="reset-view" title="Back to the usual view of the cube">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v5h5"/></svg><span>View</span>
+        <button type="button" class="tool" id="reset-view" title="Back to the usual view of the cube" aria-label="Reset view">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v5h5"/></svg><span>Reset view</span>
         </button>
       </div>
+      <div class="view-cube" id="view-cube" role="group" aria-label="Cube orientation"></div>
       <p class="next" id="next" hidden><span id="next-label">next</span><b id="next-move"></b></p>
       <div class="status" id="status" role="status" aria-live="polite" hidden></div>
     </div>

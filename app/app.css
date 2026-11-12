@@ -303,6 +303,53 @@ kbd {
   border-color: var(--ink-3);
   background: var(--panel);
 }
+
+.view-cube {
+  --view-cube-half: clamp(24px, 5cqmin, 31px);
+  position: absolute;
+  z-index: 3;
+  top: 40px;
+  right: 8px;
+  display: grid;
+  place-items: center;
+  width: calc(3.5 * var(--view-cube-half));
+  aspect-ratio: 1;
+  pointer-events: none;
+}
+.view-cube-body {
+  position: relative;
+  width: calc(2 * var(--view-cube-half));
+  aspect-ratio: 1;
+}
+.view-cube-face {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template: 1fr 2.5fr 1fr / 1fr 2.5fr 1fr;
+  gap: 1px;
+  padding: 1px;
+  background: var(--line-2);
+}
+.view-cube-face button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--panel) 82%, var(--face-colour));
+  color: var(--ink);
+  font: 700 0.85rem/1 var(--mono);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.view-cube-face .view-cube-centre {
+  background: color-mix(in srgb, var(--panel) 91%, var(--face-colour));
+}
+.view-cube-face button:hover,
+.view-cube-face button:focus-visible {
+  background: var(--accent);
+  color: var(--accent-ink);
+  outline-offset: -2px;
+}
 /* The move that comes next, in letters, beside its arrows. */
 .next {
   left: 12px;
@@ -513,6 +560,7 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   box-sizing: border-box;
 }
 .stage.scanning .stage-tools,
+.stage.scanning .view-cube,
 .stage.scanning .next {
   display: none;
 }

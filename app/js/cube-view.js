@@ -115,6 +115,8 @@ export function nextFrame(callback) {
 }
 
 export class CubeView {
+  #rot = HOME;
+
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
@@ -127,7 +129,6 @@ export class CubeView {
     this.raw = null; // a colour per facelet that overrides the palette where set
     this.marks = null; // facelets to ring: ones to look at again
     this.frame = null; // a face to draw a frame round
-    this.rot = HOME;
     // Layers `from` up to `to` under `face`, turned by `angle` radians clockwise seen from the face.
     this.turn = null;
     // The move that comes next, shown as arrows: { face, from, to, quarters }.
@@ -143,8 +144,19 @@ export class CubeView {
     this.mode = "turn";
     this.onturn = () => {}; // (face, layer, quarters) once a dragged layer has settled
     this.onpaint = () => {}; // (facelet)
+    this.onorientation = () => {}; // (rotation matrix)
     this.busy = () => false; // whether something else is moving the cube just now
     this.#watch();
+  }
+
+  get rot() {
+    return this.#rot;
+  }
+
+  set rot(rot) {
+    if (rot === this.#rot) return;
+    this.#rot = rot;
+    this.onorientation(rot);
   }
 
   // ------------------------------------------------------------ geometry
@@ -376,6 +388,7 @@ export class CubeView {
   // without touching the stickers: for the middle layer of an odd cube,
   // which is the whole cube turned one way and its two halves the other.
   spin(face, quarters) {
+    this.glide = null;
     this.rot = mul(this.rot, about(FACES[face].normal, (-quarters * Math.PI) / 2));
     this.draw();
   }
@@ -391,6 +404,15 @@ export class CubeView {
     this.#glideTo(mul(SCAN_VIEW, TO_FRONT[face]), ms);
   }
 
+  /** Looks straight along a face, edge or corner direction in cube coordinates. */
+  lookAlong([x, y, z], ms = 280) {
+    const horizontal = Math.hypot(x, z);
+    // Keep the side views level. At the poles use the top/bottom face's own up direction.
+    const yaw = horizontal ? Math.atan2(-x, z) : 0;
+    const pitch = Math.atan2(y, horizontal);
+    this.#glideTo(mul(rotX(pitch), rotY(yaw)), ms);
+  }
+
   #glideTo(target, ms) {
     if (reducedMotion() || ms <= 0) {
       this.rot = target;
@@ -403,7 +425,7 @@ export class CubeView {
     const frame = (now) => {
       if (this.glide !== glide) return;
       const t = Math.min(1, (now - glide.start) / glide.ms);
-      this.rot = fromQuat(slerp(glide.from, glide.to, 1 - (1 - t) ** 3));
+      this.rot = t === 1 ? target : fromQuat(slerp(glide.from, glide.to, 1 - (1 - t) ** 3));
       this.#paint();
       if (t < 1) nextFrame(frame);
       else this.glide = null;

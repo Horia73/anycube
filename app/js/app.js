@@ -21,6 +21,7 @@ import { Player } from "./player.js";
 // (`arrange` here is the page's own layout; the scan's is `placed`.)
 import { arrange as placed, assemble } from "./scan-fit.js";
 import { Solver } from "./solver.js";
+import { ViewCube } from "./view-cube.js";
 
 // Cubes larger than this are entered as scrambles: nobody paints, or shows
 // a camera, 384 stickers and more.
@@ -160,6 +161,13 @@ export async function mount(root, options = {}) {
     clearTimeout(keepSoon);
     keepSoon = setTimeout(keep, 250);
   }
+
+  const viewCube = new ViewCube($("view-cube"), (direction) => view.lookAlong(direction));
+  viewCube.update(view.rot);
+  view.onorientation = (rot) => {
+    viewCube.update(rot);
+    keepLater();
+  };
 
   // What was kept, with the cube it shows worked out: null if there is
   // nothing, or if it does not hold together.
