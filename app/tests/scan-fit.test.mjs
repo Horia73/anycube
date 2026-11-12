@@ -6,8 +6,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CubeModel } from "../js/cube-model.js";
-import { sortColours, named } from "../js/colour.js";
-import { arrange, assemble, cubeKey, fit, structure } from "../js/scan-fit.js";
+import { sortColours, named, STICKERS } from "../js/colour.js";
+import { arrange, assemble, assembleScan, cubeKey, fit, structure } from "../js/scan-fit.js";
 
 function random(seed) {
   let s = BigInt(seed);
@@ -40,6 +40,31 @@ const scrambled = (n, rnd) => {
 
 // The same cube, however it was turned as a whole when it was put together.
 const sameCube = (n, a, b) => cubeKey(n, a) === cubeKey(n, b);
+
+const DISTINCT = {
+  "white and pale yellow": {
+    palette: [[203, 214, 167], [194, 25, 43], [16, 181, 94], [209, 192, 134], [240, 152, 75], [64, 87, 157]],
+    exposure: [1, 0.96, 1.02, 1.01, 1, 1.06],
+  },
+  "warm white and muted blue": {
+    palette: [[172, 166, 156], [154, 72, 64], [39, 131, 61], [191, 168, 63], [229, 88, 52], [73, 78, 96]],
+    exposure: [0.94, 0.91, 0.91, 0.96, 1.1, 0.96],
+  },
+};
+
+for (const [name, { palette, exposure }] of Object.entries(DISTINCT)) {
+  test(`camera scans preserve distinct ${name}`, () => {
+    for (const n of [3, 4]) {
+      const model = new CubeModel(n);
+      const truth = model.applyAll(model.solved(), model.parse("R U F2 D' B2 R2 L U' B L2 U2 F' D2 B'"));
+      const samples = Array.from(truth, (colour, i) => palette[colour].map((channel) => Math.round(channel * exposure[Math.floor(i / (n * n))])));
+      const { sorted, made } = assembleScan(n, samples);
+      assert.equal(made.kind, "taken", `size ${n}`);
+      const read = named(n, sorted, arrange(n, made.labels, made));
+      assert.deepEqual(Array.from(read.facelets, (colour) => read.palette[colour]), Array.from(truth, (colour) => STICKERS[colour]));
+    }
+  });
+}
 
 test("what the outside of a cube says: real cubes pass, broken ones do not", () => {
   const rnd = random(1);
@@ -164,8 +189,7 @@ test("a red and an orange sticker exchanged by the sorting are exchanged back", 
       const mix = (t) => COLOURS[1].map((v, d) => v * (1 - t) + COLOURS[4][d] * t);
       samples[red] = mix(0.56);
       samples[orange] = mix(0.44);
-      const sorted = sortColours(samples, n);
-      const made = assemble(n, sorted);
+      const { sorted, made } = assembleScan(n, samples);
       if (made.kind === "taken") continue; // the sorting got them right after all
       assert.equal(made.kind, "recoloured", `size ${n} round ${k}`);
       assert.deepEqual([...made.swapped].sort((a, b) => a - b), [red, orange].sort((a, b) => a - b));

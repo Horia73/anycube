@@ -20,7 +20,7 @@
 // No DOM here, so that the tests can load it under Node.
 
 import { CubeModel, FACES } from "./cube-model.js";
-import { named, nameByCorner, oppositeCentres } from "./colour.js";
+import { named, nameByCorner, oppositeCentres, sortColours, sortDistinctColours } from "./colour.js";
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -378,6 +378,25 @@ export function cubeKey(n, facelets) {
   return best ?? facelets.join("");
 }
 
+function fitWithoutRecolouring(n, sorted) {
+  const ways = fit(n, sorted);
+  if (ways.length && ways[0].changes === 0) return { kind: "taken", ...ways[0], labels: sorted.labels };
+  if (ways.length === 1) return { kind: "placed", ...ways[0], labels: sorted.labels };
+  if (ways.length > 1) return { kind: "several", ...SAME, moved: [], turned: [], ways: ways.length, labels: sorted.labels };
+  return null;
+}
+
+/** Uses the distinct observed colours when they fit together as a cube. */
+export function assembleScan(n, samples) {
+  const distinct = sortDistinctColours(samples, n);
+  if (distinct) {
+    const made = fitWithoutRecolouring(n, distinct);
+    if (made?.kind === "taken" || made?.kind === "placed") return { sorted: distinct, made };
+  }
+  const sorted = sortColours(samples, n);
+  return { sorted, made: assemble(n, sorted) };
+}
+
 /**
  * The cube the six pictures make.
  *
@@ -392,10 +411,8 @@ export function cubeKey(n, facelets) {
  *   on with (those of `sorted`, two exchanged for "recoloured").
  */
 export function assemble(n, sorted) {
-  const ways = fit(n, sorted);
-  if (ways.length && ways[0].changes === 0) return { kind: "taken", ...ways[0], labels: sorted.labels };
-  if (ways.length === 1) return { kind: "placed", ...ways[0], labels: sorted.labels };
-  if (ways.length > 1) return { kind: "several", ...SAME, moved: [], turned: [], ways: ways.length, labels: sorted.labels };
+  const fitted = fitWithoutRecolouring(n, sorted);
+  if (fitted) return fitted;
   // Two stickers each of which was nearly sorted where the other is: the likeliest mistake.
   const { labels, doubt, second } = sorted;
   const nn = n * n;

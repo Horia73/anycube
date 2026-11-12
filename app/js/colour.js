@@ -151,6 +151,26 @@ function distance(p, q) {
   return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
 }
 
+function distantSeeds(total, first, between) {
+  const seeds = [first];
+  const near = Array.from({ length: total }, (_, i) => between(i, first));
+  while (seeds.length < 6) {
+    let far = 0;
+    near.forEach((d, i) => {
+      if (d > near[far]) far = i;
+    });
+    seeds.push(far);
+    near.forEach((d, i) => (near[i] = Math.min(d, between(i, far))));
+  }
+  return seeds;
+}
+
+function groupMeans(samples, labels, each) {
+  const sums = Array.from({ length: 6 }, () => [0, 0, 0]);
+  samples.forEach((sample, i) => sample.forEach((value, d) => (sums[labels[i]][d] += value)));
+  return sums.map((sum) => sum.map((value) => value / each));
+}
+
 function hexToRgb(hex) {
   const v = parseInt(hex.slice(1), 16);
   return [v >> 16, (v >> 8) & 255, v & 255];
@@ -309,6 +329,46 @@ function casts(sorted, each) {
   return out;
 }
 
+/** Groups clearly separated camera colours by their full CIELAB distance. */
+export function sortDistinctColours(samples, n) {
+  const each = n * n;
+  if (samples.length !== 6 * each) return null;
+  const points = samples.map(toLab);
+  const seeds = n % 2 === 1
+    ? Array.from({ length: 6 }, (_, face) => face * each + Math.floor(each / 2))
+    : distantSeeds(points.length, 0, (a, b) => distance(points[a], points[b]));
+  let references = seeds.map((i) => points[i]);
+  const ranked = (point) => references
+    .map((reference, label) => ({ label, cost: distance(point, reference) }))
+    .sort((a, b) => a.cost - b.cost);
+  const balanced = (labels) => {
+    const counts = new Array(6).fill(0);
+    for (const label of labels) counts[label]++;
+    return counts.every((count) => count === each);
+  };
+  if (n % 2 === 0) {
+    // The farthest stickers may sit at the edge of each colour group.
+    const initial = points.map((point) => ranked(point)[0].label);
+    if (!balanced(initial)) return null;
+    references = groupMeans(points, initial, each);
+  }
+
+  const labels = new Int8Array(points.length);
+  const second = new Int8Array(points.length);
+  const doubt = new Float32Array(points.length);
+  for (const [i, point] of points.entries()) {
+    const [closest, next] = ranked(point);
+    // Leave close readings to the sorter that models glare and exposure.
+    if (closest.cost * 2 >= next.cost) return null;
+    labels[i] = closest.label;
+    second[i] = next.label;
+    doubt[i] = closest.cost / next.cost;
+  }
+  // Accept only when every sticker's first choice gives the right counts.
+  if (!balanced(labels)) return null;
+  return { labels, second, doubt, colours: groupMeans(samples, labels, each) };
+}
+
 /**
  * Sorts the camera's samples into six groups of n*n, without naming them.
  * The samples are in six runs of n*n, one run per picture (in any order of
@@ -360,27 +420,13 @@ export function sortColours(samples, n) {
     const byColour = samples.map((_, i) => i).sort((i, j) => colourful(j) - colourful(i));
     const starts = [0, 0.2, 0.4, 0.6, 0.8, 1].map((q) => byColour[Math.round(q * (byColour.length - 1))]);
     for (const first of starts) {
-      const seeds = [first];
-      const near = samples.map((_, i) => between(i, first));
-      while (seeds.length < 6) {
-        let far = 0;
-        near.forEach((d, i) => {
-          if (d > near[far]) far = i;
-        });
-        seeds.push(far);
-        samples.forEach((_, i) => (near[i] = Math.min(near[i], between(i, far))));
-      }
+      const seeds = distantSeeds(samples.length, first, between);
       const tried = run(seeds, false, 0);
       if (!best || tried.spread < best.spread) best = tried;
     }
   }
   const { labels, doubt, second } = best;
-  const colours = [0, 1, 2, 3, 4, 5].map((k) => {
-    const sum = [0, 0, 0];
-    for (let i = 0; i < labels.length; i++) if (labels[i] === k) for (let d = 0; d < 3; d++) sum[d] += samples[i][d];
-    return sum.map((v) => v / nn);
-  });
-  return { labels, doubt, second, colours };
+  return { labels, doubt, second, colours: groupMeans(samples, labels, nn) };
 }
 
 // The eight corners as triples of facelet indices, by their place: bit 0

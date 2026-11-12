@@ -12,14 +12,14 @@
 // from its `/api/config`.
 
 import { CameraScanner } from "./camera.js";
-import { named, oppositeCentres, sortColours, STICKERS } from "./colour.js";
+import { named, oppositeCentres, STICKERS } from "./colour.js";
 import { CubeModel, FACE_LETTERS, scrambleLength, ScrambleError } from "./cube-model.js";
 import { BLANK, CubeView } from "./cube-view.js";
 import { APP_HTML } from "./markup.js";
 import { FACE_NAMES, PaintEditor } from "./paint.js";
 import { Player } from "./player.js";
 // (`arrange` here is the page's own layout; the scan's is `placed`.)
-import { arrange as placed, assemble } from "./scan-fit.js";
+import { arrange as placed, assembleScan } from "./scan-fit.js";
 import { Solver } from "./solver.js";
 import { ViewCube } from "./view-cube.js";
 
@@ -805,10 +805,7 @@ export async function mount(root, options = {}) {
     },
     ondone: (samples) => {
       const n = state.size;
-      // The colours are sorted without regard to where each picture belongs;
-      // then the pictures are put together the way they make a cube.
-      const sorted = sortColours(samples, n);
-      const made = assemble(n, sorted);
+      const { sorted, made } = assembleScan(n, samples);
       const lying = placed(n, made.labels, made);
       const { facelets, palette } = named(n, sorted, lying);
       if (n % 2 === 1 && !oppositeCentres(palette)) {
