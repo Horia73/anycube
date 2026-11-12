@@ -202,7 +202,7 @@ export class CameraScanner {
     this.heading = el("p", { class: "cam-heading", "aria-live": "polite" });
     this.text = el("p", { class: "cam-text" });
     this.shots = el("ol", { class: "cam-shots", "aria-label": "Faces captured" });
-    this.capture = el("button", { type: "button", class: "button primary", text: "Capture" });
+    this.capture = el("button", { type: "button", class: "button primary", text: "Capture", title: "Capture (Space)", "aria-keyshortcuts": "Space" });
     this.back = el("button", { type: "button", class: "button", text: "Retake" });
     this.flip = el("button", { type: "button", class: "button quiet", "aria-pressed": "false", text: "Mirror" });
     this.swap = el("button", { type: "button", class: "button quiet", text: "Other camera", hidden: "" });

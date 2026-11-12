@@ -812,6 +812,7 @@ export async function mount(root, options = {}) {
     setTouch();
     show();
     view.look(2, 450, "left");
+    scanner.capture.focus({ preventScroll: true });
   });
 
   // ---------------------------------------------------------------- solve
@@ -1147,9 +1148,15 @@ export async function mount(root, options = {}) {
   // Space plays and pauses, the arrows step, the face letters turn the cube,
   // wherever the keys are not needed for something else.
   document.addEventListener("keydown", (e) => {
-    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     const t = e.target;
-    if (t.closest?.("textarea, input, [role=tab]")) return;
+    if (t.isContentEditable || t.closest?.("textarea, input, select, [role=tab]")) return;
+    if (e.key === " " && scanner.running) {
+      if (t !== scanner.capture && t.closest?.("button, [role=button]")) return;
+      if (!e.repeat) scanner.capture.click();
+      e.preventDefault();
+      return;
+    }
     const face = FACE_LETTERS.indexOf(e.key.toUpperCase());
     if (face >= 0 && e.key.length === 1) {
       if (view.mode === "turn") keyTurn(face, e.shiftKey ? -1 : 1);
