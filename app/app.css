@@ -686,6 +686,23 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 .moves:empty {
   display: none;
 }
+.detour {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
+  color: var(--ink-2);
+  font: 500 0.78rem/1.3 var(--sans);
+}
+.solution.off-solution {
+  grid-template-rows: 28px auto minmax(0, 1fr);
+}
+.solution.off-solution .moves,
+.solution.off-solution .wait {
+  grid-row: 3;
+}
+.solution.waiting .detour {
+  display: none;
+}
 .placeholder {
   margin: 0;
   font-size: 0.84rem;
@@ -811,6 +828,10 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
+}
+.move-progress {
+  margin-left: 0.4em;
+  font-size: 0.75em;
 }
 
 /* Controls. */

@@ -9,13 +9,17 @@ import { nextFrame } from "./cube-view.js";
 
 const QUARTER_MS = 1320; // one quarter turn at speed 1
 const CUE_SHARE = 0.75; // how long the arrows stand before a move, as a share of a quarter turn
+const same = (a, b) => a.every((colour, i) => colour === b[i]);
 
 export class Player {
   constructor(view) {
     this.view = view;
     this.model = null;
     this.moves = [];
-    this.facelets = null; // the cube after `position` moves
+    this.facelets = null;
+    this.base = null; // the cube after `position` whole solution moves
+    this.partial = null;
+    this.detour = [];
     this.position = 0;
     this.playing = false;
     this.speed = 1;
@@ -30,7 +34,9 @@ export class Player {
     this.model = model;
     this.start = start;
     this.moves = moves;
-    this.facelets = start;
+    this.base = this.facelets = start;
+    this.partial = null;
+    this.detour = [];
     this.position = 0;
     this.view.setCube(model.n, start);
     this.#showCue();
@@ -45,6 +51,19 @@ export class Player {
     return !!this.anim;
   }
 
+  get manualMoves() {
+    return [...(this.partial?.made ?? []), ...this.detour];
+  }
+
+  get nextMove() {
+    if (this.detour.length) return this.model.inverse(this.detour.at(-1));
+    return this.partial?.remaining[0] ?? this.moves[this.position];
+  }
+
+  get canStepBack() {
+    return this.position > 0 || !!this.partial || this.detour.length > 0;
+  }
+
   setSpeed(speed) {
     this.speed = speed;
   }
@@ -56,7 +75,7 @@ export class Player {
 
   // The next move, as the view draws it.
   #showCue() {
-    const next = this.cue && !this.anim && this.position < this.length ? this.moves[this.position] : undefined;
+    const next = this.cue && !this.anim ? this.nextMove : undefined;
     if (next === undefined) {
       this.view.setCue(null);
       return;
@@ -72,20 +91,77 @@ export class Player {
   }
 
   // Jumps to the cube after `k` moves, without animation.
-  seek(k) {
+  seek(k, { partial = [], detour = [] } = {}) {
     k = Math.max(0, Math.min(this.length, Math.round(k)));
     this.stop();
     const m = this.model;
-    // From wherever is nearer: the start, or where the cube is now.
+    // Start from the nearer point on the solution.
     if (k < this.position - k) {
-      this.facelets = this.start;
+      this.base = this.start;
       this.position = 0;
     }
-    while (this.position < k) this.facelets = m.apply(this.facelets, this.moves[this.position++]);
-    while (this.position > k) this.facelets = m.apply(this.facelets, m.inverse(this.moves[--this.position]));
+    while (this.position < k) this.base = m.apply(this.base, this.moves[this.position++]);
+    while (this.position > k) this.base = m.apply(this.base, m.inverse(this.moves[--this.position]));
+    this.facelets = this.base;
+    this.partial = null;
+    this.detour = [];
+    for (const turns of [partial, detour]) {
+      if (turns.length && this.position < this.length) this.#follow(turns);
+    }
     this.view.setFacelets(this.facelets);
     this.#showCue();
     this.onchange();
+  }
+
+  turnByHand(moves) {
+    this.stop();
+    this.#follow(moves);
+    this.view.setFacelets(this.facelets);
+    this.#showCue();
+    this.onchange();
+  }
+
+  #at(position, facelets) {
+    this.position = position;
+    this.base = this.facelets = facelets;
+    this.partial = null;
+    this.detour = [];
+  }
+
+  #follow(made) {
+    const m = this.model;
+    const next = this.moves[this.position];
+    const after = m.applyAll(this.facelets, made);
+    this.facelets = after;
+    let goal = m.apply(this.base, next);
+    if (same(after, goal)) {
+      this.#at(this.position + 1, after);
+      return;
+    }
+    if (same(after, this.base)) {
+      this.#at(this.position, after);
+      return;
+    }
+    const partial = m.progress(next, this.base, after);
+    if (partial) {
+      this.partial = partial.made.length ? partial : null;
+      this.detour = [];
+      return;
+    }
+    if (this.position > 0 && same(after, m.apply(this.base, m.inverse(this.moves[this.position - 1])))) {
+      this.#at(this.position - 1, after);
+      return;
+    }
+    // Moves can commute. If a detour reaches a later step, resume there.
+    const end = Math.min(this.length, this.position + this.detour.length + made.length);
+    for (let k = this.position + 1; k < end; k++) {
+      goal = m.apply(goal, this.moves[k]);
+      if (same(after, goal)) {
+        this.#at(k + 1, after);
+        return;
+      }
+    }
+    this.detour = m.simplify([...this.detour, ...made]);
   }
 
   play() {
@@ -123,22 +199,22 @@ export class Player {
 
   #turn(direction, wait) {
     const m = this.model;
-    if ((direction > 0 && this.position >= this.length) || (direction < 0 && this.position <= 0)) {
+    const back = direction < 0 && !this.partial && this.detour.length === 0;
+    let move = this.nextMove;
+    if (back) move = this.position > 0 ? m.inverse(this.moves[this.position - 1]) : undefined;
+    else if (direction < 0 && !this.detour.length) move = m.inverse(this.partial.made.at(-1));
+    if (move === undefined) {
       this.playing = false;
       this.#showCue();
       this.onchange();
       return;
     }
-    const move = this.moves[direction > 0 ? this.position : this.position - 1];
     const { face, from, to, quarters } = m.info(move);
-    // Backwards, the cube is first put as it was before the move, and the
-    // layers start fully turned and come back.
-    const before = direction > 0 ? this.facelets : m.apply(this.facelets, m.inverse(move));
     const full = (quarters * Math.PI) / 2;
     const ms = (QUARTER_MS * (Math.abs(quarters) === 2 ? 1.4 : 1)) / this.speed;
     // In play, with the cue on, the arrows of this move stand for a moment first.
     const lead = wait && this.cue ? (QUARTER_MS * CUE_SHARE) / this.speed : 0;
-    const anim = { direction, move, before, start: performance.now() + lead, ms };
+    const anim = { back, move, start: performance.now() + lead, ms };
     this.anim = anim;
     // The arrows of a move stay on its layers while they turn, and give way
     // to those of the next move when it ends. A move taken back has none.
@@ -152,8 +228,7 @@ export class Player {
       }
       const t = Math.min(1, (now - anim.start) / anim.ms);
       const eased = t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2;
-      this.view.setFacelets(before);
-      this.view.setTurn({ face, from, to, angle: full * (direction > 0 ? eased : 1 - eased) });
+      this.view.setTurn({ face, from, to, angle: full * eased });
       if (t < 1) {
         nextFrame(frame);
         return;
@@ -169,12 +244,12 @@ export class Player {
     const anim = this.anim;
     if (!anim) return;
     this.anim = null;
-    if (anim.direction > 0) {
-      this.facelets = this.model.apply(anim.before, anim.move);
-      this.position++;
+    if (anim.back) {
+      this.#at(this.position - 1, this.model.apply(this.base, anim.move));
+    } else if (!this.partial && !this.detour.length) {
+      this.#at(this.position + 1, this.model.apply(this.base, anim.move));
     } else {
-      this.facelets = anim.before;
-      this.position--;
+      this.#follow([anim.move]);
     }
     this.view.setTurn(null);
     this.view.setFacelets(this.facelets);

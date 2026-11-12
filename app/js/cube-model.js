@@ -130,6 +130,12 @@ export class CubeModel {
     return this.slab(face, from, to, power);
   }
 
+  // How deep a sticker at coordinate `along` is under the turning face.
+  #layer(along) {
+    const edge = this.n - 1;
+    return (edge - Math.max(-edge, Math.min(edge, along))) / 2;
+  }
+
   // The same for any run of layers of a face, counted from the face (0 is
   // the face itself): layers `from` up to but not including `to`. A move
   // is the run that starts at 0; a single inner layer is what a hand turns.
@@ -137,7 +143,6 @@ export class CubeModel {
     const key = ((face * 512 + from) * 512 + to) * 4 + power;
     let perm = this.perms.get(key);
     if (perm) return perm;
-    const n = this.n;
     const [ax, ay, az] = FACES[face].normal;
     const pos = this.pos;
     const quarter = new Uint32Array(this.count);
@@ -146,7 +151,7 @@ export class CubeModel {
       const [x, y, z] = [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
       // How deep the sticker's little cube is under the face.
       const along = x * ax + y * ay + z * az;
-      const layer = (n - 1 - Math.max(-(n - 1), Math.min(n - 1, along))) / 2;
+      const layer = this.#layer(along);
       if (layer < from || layer >= to) continue;
       // A quarter turn clockwise seen from outside: v -> a (a . v) - a x v.
       const tx = ax * along - (ay * z - az * y);
@@ -206,19 +211,47 @@ export class CubeModel {
     return this.slice(face, layer, layer + 1, quarters === 1 ? 0 : quarters === -1 ? 2 : 1);
   }
 
-  // What is left of move `next` when `made`, a turn of some of its layers
-  // but not all, has been made: the other layers still to be turned as
-  // `next` says, and those turned, if the turn was not all of theirs, the
-  // rest of the way. Nothing (null) when `made` is not such a turn.
-  remainder(next, made) {
-    const [a, b] = [this.info(next), this.info(made)];
-    if (a.face !== b.face || b.from < a.from || b.to > a.to || b.to - b.from === a.to - a.from) return null;
-    const still = (((a.quarters - b.quarters) % 4) + 4) % 4;
-    const out = [];
-    if (b.from > a.from) out.push(this.slice(a.face, a.from, b.from, a.power));
-    if (b.to < a.to) out.push(this.slice(a.face, b.to, a.to, a.power));
-    if (still) out.push(this.slice(a.face, b.from, b.to, still - 1));
-    return out;
+  // A wide turn can be made in any layer order. A half turn can also be
+  // made as two quarters in either direction. Match each layer against the
+  // original cube so the same progress can be recognised after a detour.
+  progress(move, before, after) {
+    const { face, from, to, power } = this.info(move);
+    const target = power + 1;
+    const turns = target === 2 ? [0, 1, 2, 3] : [0, target];
+    const perms = turns.map((q) => (q ? this.perm(move - power + q - 1) : null));
+    const layers = Array.from({ length: to - from }, () => turns.slice());
+    const [ax, ay, az] = FACES[face].normal;
+    for (let i = 0; i < this.count; i++) {
+      const k = i * 3;
+      const layer = this.#layer(ax * this.pos[k] + ay * this.pos[k + 1] + az * this.pos[k + 2]);
+      if (layer < from || layer >= to) {
+        if (before[i] !== after[i]) return null;
+        continue;
+      }
+      const candidates = layers[layer - from];
+      for (let p = candidates.length - 1; p >= 0; p--) {
+        const q = candidates[p];
+        const perm = perms[turns.indexOf(q)];
+        if (before[perm ? perm[i] : i] !== after[i]) candidates.splice(p, 1);
+      }
+      if (!candidates.length) return null;
+    }
+    const done = layers.map((candidates) => candidates.includes(target) ? target : candidates[0]);
+    const remaining = done.map((q) => (target - q + 4) % 4);
+    const toMoves = (turns) => {
+      const moves = [];
+      for (let i = 0; i < turns.length; ) {
+        const q = turns[i];
+        let j = i + 1;
+        while (j < turns.length && turns[j] === q) j++;
+        if (q) moves.push(this.slice(face, from + i, from + j, q - 1));
+        i = j;
+      }
+      return moves;
+    };
+    const splitHalf = target === 2 && done.some((q) => q % 2);
+    const units = done.reduce((sum, q) => sum + (splitHalf ? Math.min(q, 4 - q) : Number(q === target)), 0);
+    return { made: toMoves(done), remaining: toMoves(remaining), fraction: units ? `${units}/${done.length * (splitHalf ? 2 : 1)}` : "" };
   }
 
   // The same stickers with the middle of each face of an odd cube set to
@@ -252,19 +285,6 @@ export class CubeModel {
       }
     }
     return out;
-  }
-
-  // What is left of a solution after moves it did not ask for: those moves
-  // undone, then the rest, with moves of the same layers that meet made one
-  // or none. `kept` says how many moves at the end are the rest's own, as
-  // they were; when all of the result is that, the moves made were the ones
-  // the solution asked for next.
-  rejoin(rest, made) {
-    const undo = made.map((m) => this.inverse(m)).reverse();
-    const moves = this.simplify([...undo, ...rest]);
-    let kept = 0;
-    while (kept < rest.length && kept < moves.length && moves[moves.length - 1 - kept] === rest[rest.length - 1 - kept]) kept++;
-    return { moves, kept };
   }
 
   applyAll(facelets, moves) {
@@ -311,16 +331,22 @@ export class CubeModel {
     });
   }
 
-  // Reads moves as the solver writes them (`U`, `Rw2`, `3Fw'`); nothing else.
-  parse(text) {
+  // Reads moves written by the solver, and optionally layers moved by hand.
+  parse(text, { slices = false } = {}) {
     return text
       .split(/\s+/)
       .filter(Boolean)
       .map((tok) => {
-        const m = /^(\d*)([URFDLB])(w?)(2|')?$/.exec(tok);
-        const layers = m ? (m[1] ? Number(m[1]) : m[3] ? 2 : 1) : 0;
-        if (!m || layers < 1 || layers > this.n / 2 || (m[1] && !m[3])) throw new ScrambleError(`'${tok}' is not a move of this cube`);
-        return this.move(FACE_LETTERS.indexOf(m[2]), layers, m[4] === "2" ? 1 : m[4] === "'" ? 2 : 0);
+        const m = /^(?:(\d+)(?:-(\d+))?)?([URFDLB])(w?)(2|')?$/.exec(tok);
+        if (!m) throw new ScrambleError(`'${tok}' is not a move of this cube`);
+        const [, first, last, face, wide, suffix] = m;
+        const inner = Boolean(last || (first && !wide));
+        const from = inner ? Number(first) - 1 : 0;
+        const to = Number(last || first || (wide ? 2 : 1));
+        if (from < 0 || to <= from || to > this.n / 2 || (inner && (!slices || from === 0)) || (last && !wide)) {
+          throw new ScrambleError(`'${tok}' is not a move of this cube`);
+        }
+        return this.slice(FACE_LETTERS.indexOf(face), from, to, suffix === "2" ? 1 : suffix === "'" ? 2 : 0);
       });
   }
 

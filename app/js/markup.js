@@ -37,7 +37,7 @@ export const APP_HTML = `
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 3-6.2M4 4v5h5"/></svg><span>View</span>
         </button>
       </div>
-      <p class="next" id="next" hidden><span>next</span><b id="next-move"></b></p>
+      <p class="next" id="next" hidden><span id="next-label">next</span><b id="next-move"></b></p>
       <div class="status" id="status" role="status" aria-live="polite" hidden></div>
     </div>
 
@@ -139,6 +139,7 @@ export const APP_HTML = `
       <section class="solution" id="solution" aria-label="Solution">
         <p id="summary" class="summary"></p>
         <button type="button" class="button small" id="copy" hidden>Copy</button>
+        <p class="detour" id="detour" role="status" hidden></p>
         <div id="moves" class="moves"></div>
         <p class="placeholder" id="placeholder"></p>
         <div class="wait" id="wait" hidden></div>

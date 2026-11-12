@@ -88,6 +88,7 @@ export async function mount(root, options = {}) {
   const canvas = $("cube");
   const view = new CubeView(canvas);
   const player = new Player(view);
+  view.busy = () => player.moving;
   const solver = new Solver();
 
   const state = {
@@ -141,6 +142,10 @@ export async function mount(root, options = {}) {
         ? { moves: model.names(solution.moves), parts: solution.parts ?? [], label: solution.label ?? "", optimal: !!solution.optimal, found: solution.found ?? solution.moves.length }
         : null,
       position: player.position,
+      turns: {
+        partial: model.names(player.partial?.made ?? []),
+        detour: model.names(player.detour),
+      },
       rot: Array.from(view.rot),
     };
     try {
@@ -176,14 +181,18 @@ export async function mount(root, options = {}) {
       }
       let moves = [];
       if (page.solution) {
-        moves = model.parse(String(page.solution.moves));
+        moves = model.parse(String(page.solution.moves), { slices: true });
         // A solution is kept only with the cube it solves.
         if (!model.isSolved(model.applyAll(start, moves))) page.solution = null;
       }
       if (!page.solution) moves = [];
       const position = Math.max(0, Math.min(moves.length, Math.round(Number(page.position) || 0)));
+      const turns = position < moves.length
+        ? { partial: model.parse(page.turns?.partial ?? "", { slices: true }), detour: model.parse(page.turns?.detour ?? "", { slices: true }) }
+        : { partial: [], detour: [] };
       const rot = Array.isArray(page.rot) && page.rot.length === 9 && page.rot.every(Number.isFinite) ? page.rot : null;
-      return { ...page, model, start, palette, moves, position, rot, shown: model.applyAll(start, moves.slice(0, position)) };
+      const shown = model.applyAll(start, [...moves.slice(0, position), ...turns.partial, ...turns.detour]);
+      return { ...page, model, start, palette, moves, position, turns, rot, shown };
     } catch {
       return null;
     }
@@ -657,9 +666,7 @@ export async function mount(root, options = {}) {
 
   // ---------------------------------------------------- turning by hand
 
-  // A layer was turned on the cube. The cube shown, whatever it is (as
-  // entered, or part of the way through a solution), becomes the cube
-  // entered, with the turn added.
+  // Follow a solution by hand, or edit the cube when there is no solution to follow.
   function turned(face, layer, quarters) {
     const { model } = state;
     const { moves, rotate } = model.handTurn(face, layer, quarters);
@@ -669,73 +676,14 @@ export async function mount(root, options = {}) {
     if (state.input === "scramble") {
       if (state.scramble.problem) return;
       // What led to the cube shown: the scramble and, of a solution, the part played.
-      const solution = state.solution;
-      const at = player.position;
-      const played = solution ? solution.moves.slice(0, at) : [];
-      const done = solution && model.isSolved(player.facelets);
-      if (solution && solution.moves.length && !done) {
-        // A turn in the middle of a solution does not lose it, nor what was
-        // played of it. What is left, with the turn undone in front of it,
-        // solves the cube as it now is; where the two meet, moves of the same
-        // layers become one or none.
-        const rest = solution.moves.slice(at);
-        // The turn as one move of its own layer, where it can be one.
-        const one = model.handSlice(face, layer, quarters);
-        const made = one === null ? moves : [one];
-        const { moves: merged, kept } = model.rejoin(rest, made);
-        const extra = merged.length - kept;
-        if (extra === 0) {
-          // The turn was what the solution asked for next: it steps on.
-          player.seek(at + rest.length - kept);
-          return;
-        }
-        // Otherwise the list stays as it is up to here, the turn just made
-        // is added to it as done, and after it comes what now leads to the
-        // solved cube. The scramble is not touched: the list is still a way
-        // from that cube to the solved one.
-        const base = solution.parts?.length ? solution.parts : [{ name: "Solution", moves: solution.moves.length }];
-        const cut = (from, to) => {
-          // The parts as they cover moves `from` up to `to` of the list as it was.
-          const out = [];
-          let k = 0;
-          for (const part of base) {
-            const [lo, hi] = [Math.max(from, k), Math.min(to, k + part.moves)];
-            if (hi > lo) out.push({ name: part.name, moves: hi - lo });
-            k += part.moves;
-          }
-          return out;
-        };
-        const total = solution.moves.length;
-        // One layer of a wide move the solution asked for: that layer is done,
-        // and the move's other layers are what comes next, in the same part of
-        // the solution. Nothing is undone.
-        const left = one === null ? null : model.remainder(rest[0], one);
-        const sameLayers = (x, y) => Math.floor(x / 3) === Math.floor(y / 3);
-        // A quarter of a half turn the solution asked for: half of that move
-        // is done and the other half is next, in the same part of the solution.
-        const half = moves.length === 1 && extra === 1 && kept === rest.length - 1 && sameLayers(moves[0], rest[0]) && sameLayers(merged[0], rest[0]);
-        const parts = left
-          ? [...cut(0, at), { name: cut(at, at + 1)[0].name, moves: 1 + left.length }, ...cut(at + 1, total)]
-          : half
-            ? [...cut(0, at), { name: cut(at, at + 1)[0].name, moves: 2 }, ...cut(at + 1, total)]
-            : [...cut(0, at), { name: "Your turn", moves: made.length }, { name: "Back to the solution", moves: extra }, ...cut(total - kept, total)];
-        // Parts of one name that now stand side by side are one part.
-        const joined = [];
-        for (const part of parts) {
-          const last = joined[joined.length - 1];
-          if (last && last.name === part.name) last.moves += part.moves;
-          else joined.push({ ...part });
-        }
-        const list = left ? [...played, one, ...left, ...rest.slice(1)] : [...played, ...made, ...merged];
-        state.solution = { ...solution, moves: list, parts: joined, found: solution.found ?? total };
-        state.result = null;
-        player.load(model, player.start, list);
-        renderSolution(state.solution);
-        player.seek(at + made.length);
-        restStatus();
+      const done = state.solution && model.isSolved(player.facelets);
+      if (player.position < player.length && !done) {
+        const slice = model.handSlice(face, layer, quarters);
+        player.turnByHand(slice === null ? moves : [slice]);
         return;
       }
-      const before = done ? [] : [...state.scramble.moves, ...model.plain(played)];
+      const played = model.plain([...player.moves.slice(0, player.position), ...player.manualMoves]);
+      const before = done ? [] : [...state.scramble.moves, ...played];
       setScramble(model.simplify([...before, ...moves]));
     } else {
       const facelets = model.applyAll(player.facelets, moves);
@@ -928,27 +876,33 @@ export async function mount(root, options = {}) {
       return;
     }
     if (!state.valid || !solvable()) return;
-    // Solve is for the cube on screen. Part of the way through a solution
-    // that is the cube the moves played so far have led to, not the one the
-    // solution began from: it becomes the cube entered. A cube that has been
-    // played, or turned, all the way to solved is said to be solved.
-    if (state.input === "scramble" && state.solution && player.position > 0 && !state.scramble.problem) {
-      if (state.model.isSolved(player.facelets)) {
+    let cube = entered();
+    if (!cube.kind) return;
+    const { size, mode, model } = state;
+    const shown = player.facelets;
+    let newScramble;
+    let newPaint;
+    // Take the cube on screen, including any turns made by hand.
+    if (state.solution && (player.position > 0 || player.manualMoves.length)) {
+      if (model.isSolved(shown)) {
         state.result = ["good", "This cube is solved.", "Scramble it, or turn a layer, to go again."];
         restStatus();
         return;
       }
-      const moves = state.model.simplify([...state.scramble.moves, ...state.model.plain(state.solution.moves.slice(0, player.position))]);
-      if (moves.length <= solver.config.max_scramble_moves) {
-        $("scramble").value = state.model.names(moves);
-        state.scramble = { moves, problem: null };
-        $("undo").disabled = moves.length === 0;
-        judge(entered());
+      if (cube.kind === "moves") {
+        const played = model.plain([...player.moves.slice(0, player.position), ...player.manualMoves]);
+        newScramble = model.simplify([...state.scramble.moves, ...played]);
+        if (newScramble.length > solver.config.max_scramble_moves) {
+          state.result = ["bad", `The current cube needs ${newScramble.length} scramble moves. The limit is ${solver.config.max_scramble_moves}.`];
+          restStatus();
+          return;
+        }
+        cube = { ...cube, start: shown, input: model.names(newScramble) };
+      } else {
+        newPaint = { ...painted(), facelets: shown, doubt: null };
+        cube = { ...cube, start: shown, input: model.toText(shown) };
       }
     }
-    const cube = entered();
-    if (!cube.kind) return;
-    const { size, mode } = state;
     const job = new AbortController();
     state.job = job;
     state.result = null;
@@ -966,6 +920,10 @@ export async function mount(root, options = {}) {
     if (state.job !== job) return; // cancelled, or the cube changed meanwhile
     state.job = null;
     setBusy(false);
+    if (player.facelets !== shown || player.moving || view.turn) {
+      restStatus();
+      return;
+    }
     if (failure) {
       if (failure.name === "AbortError") {
         state.result = null;
@@ -986,11 +944,20 @@ export async function mount(root, options = {}) {
       restStatus();
       return;
     }
+    if (newScramble) {
+      $("scramble").value = cube.input;
+      state.scramble = { moves: newScramble, problem: null };
+      $("undo").disabled = newScramble.length === 0;
+      judge(entered());
+    } else if (newPaint) {
+      state.painted.set(size, newPaint);
+      paint.set(size, newPaint.facelets, newPaint.palette, null);
+      view.setMarks(null);
+    }
     state.solution = { ...result, moves, label: size === 2 ? "the fewest there are" : `${mode} search` };
-    player.load(state.model, cube.start, moves);
     state.shows = state.input === "scramble" ? "scramble" : "painted";
     renderSolution(state.solution);
-    player.onchange();
+    player.load(model, cube.start, moves);
     const secs = result.ms / 1000;
     const took = secs < 1 ? `${Math.max(1, Math.round(result.ms))} ms` : `${secs.toFixed(1)} s`;
     if (moves.length === 0) {
@@ -1042,7 +1009,6 @@ export async function mount(root, options = {}) {
         return el("div", { class: "part" }, groups.length > 1 ? [head, ol] : [ol]);
       }),
     );
-    // The number is the solver's own: turns made by hand since are in the list, not in the count.
     $("summary").replaceChildren(el("b", { text: count(solution.found ?? moves.length, "move") }), solution.label ?? "");
     copy.textContent = "Copy";
   }
@@ -1064,6 +1030,7 @@ export async function mount(root, options = {}) {
 
   let chips = [];
   let marked = -1;
+  const fraction = el("small", { class: "move-progress" });
   player.onchange = () => {
     const { position, length, playing } = player;
     // Under Paint with the scramble's cube still on screen, the cube to
@@ -1085,29 +1052,52 @@ export async function mount(root, options = {}) {
     play.classList.toggle("playing", playing);
     play.setAttribute("aria-label", playing ? "Pause" : "Play");
     play.disabled = length === 0;
-    $("to-start").disabled = $("step-back").disabled = position === 0;
+    $("to-start").disabled = $("step-back").disabled = !player.canStepBack;
     $("to-end").disabled = $("step-on").disabled = position >= length;
     // Once the solution is being followed, the line that announced it is in the way.
-    if (state.result?.[0] === "good" && !state.job && (playing || position > 0)) {
+    if (state.result?.[0] === "good" && !state.job && (playing || player.canStepBack)) {
       state.result = null;
       restStatus();
     }
-    // The move that comes next, in letters beside its arrows.
-    const next = player.cue && position < length ? state.model.moveName(player.moves[position]) : null;
+    const detour = player.detour.length > 0;
+    const progress = player.partial?.fraction ?? "";
+    const next = player.cue && position < length
+      ? state.model.moveName(detour ? player.nextMove : player.moves[position])
+      : null;
     $("next").hidden = next === null;
-    $("next-move").textContent = next ?? "";
+    $("next-label").textContent = detour ? "back" : "next";
+    $("next-move").textContent = next && progress && !detour ? `${next} ${progress}` : next ?? "";
+    const off = $("detour");
+    off.hidden = !detour;
+    $("solution").classList.toggle("off-solution", detour);
+    const correction = detour ? `Back to the solution · ${state.model.moveName(player.nextMove)}` : "";
+    const correctionChanged = off.textContent !== correction;
+    if (correctionChanged) off.textContent = correction;
     // The moves done so far, and the one that is next.
     const list = $("moves");
     if (chips.length !== length || chips[0]?.isConnected === false) {
       chips = [...list.querySelectorAll(".move")];
       marked = -1;
     }
-    if (marked !== position && chips.length) {
+    const moved = marked !== position;
+    if (moved && chips.length) {
       chips.forEach((chip, k) => {
         chip.classList.toggle("done", k < position);
         chip.classList.toggle("now", k === position);
+        if (k === position) chip.setAttribute("aria-current", "step");
+        else chip.removeAttribute("aria-current");
       });
       marked = position;
+    }
+    const fractionText = progress ? ` ${progress}` : "";
+    const fractionChanged = fraction.textContent !== fractionText;
+    if (fractionChanged) fraction.textContent = fractionText;
+    if (progress && chips[position] && fraction.parentNode !== chips[position]) {
+      chips[position].append(fraction);
+    } else if (!progress) {
+      fraction.remove();
+    }
+    if (chips.length && (moved || fractionChanged || correctionChanged)) {
       const now = chips[Math.min(position, chips.length - 1)];
       const [top, bottom] = [now.offsetTop, now.offsetTop + now.offsetHeight];
       if (top < list.scrollTop) list.scrollTop = top - 6;
@@ -1220,7 +1210,7 @@ export async function mount(root, options = {}) {
         view.setColours({ palette: STICKERS });
         if (!ofScramble) view.setColours({ palette: entered().palette });
         renderSolution(state.solution);
-        player.seek(was.position);
+        player.seek(was.position, was.turns);
       }
     }
     if (was.rot) view.rot = was.rot;
@@ -1241,7 +1231,7 @@ export async function mount(root, options = {}) {
   }
   setArrows(arrows, false);
   // The kept cube is on screen already: with the arrows of the move that was next.
-  if (page && arrows && page.position < page.moves.length) {
+  if (page && arrows && page.position < page.moves.length && !page.turns.partial.length && !page.turns.detour.length) {
     const { face, from, to, quarters } = page.model.info(page.moves[page.position]);
     view.setCue({ face, from, to, quarters }, true);
   }

@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { CubeModel, ScrambleError, scrambleLength } from "../js/cube-model.js";
+import { Player } from "../js/player.js";
 import { WasmSolver } from "../js/wasm-solver.js";
 
 const built = new URL("../../target/wasm32-unknown-unknown/release/anycube_wasm.wasm", import.meta.url);
@@ -228,38 +229,6 @@ test("the middles of an odd cube's faces are set, however the stickers came", ()
   assert.equal(even.withCentres(empty), empty);
 });
 
-test("a solution survives turns it did not ask for", () => {
-  let seed = 7;
-  const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
-  for (const n of [3, 4, 5]) {
-    const model = new CubeModel(n);
-    const scramble = model.randomScramble(30, random);
-    // A solution of the scrambled cube: the scramble backwards.
-    const solution = scramble.map((m) => model.inverse(m)).reverse();
-    const start = model.applyAll(model.solved(), scramble);
-    for (let at = 0; at < solution.length; at += 3) {
-      const here = model.applyAll(start, solution.slice(0, at));
-      const rest = solution.slice(at);
-      // The move the solution asks for next, made by hand: the solution steps on.
-      const next = model.rejoin(rest, [rest[0]]);
-      assert.deepEqual(next.moves, rest.slice(1));
-      assert.equal(next.kept, next.moves.length);
-      // Any layer turned by hand: what is left still solves the cube as it now is.
-      for (let layer = 0; layer < n; layer++) {
-        for (const quarters of [1, 2, -1]) {
-          const face = Math.floor(random() * 6);
-          const { moves } = model.handTurn(face, layer, quarters);
-          const after = model.applyAll(here, moves);
-          const left = model.rejoin(rest, moves);
-          assert.ok(model.isSolved(model.applyAll(after, left.moves)), `${n}x${n}x${n}, after ${at} moves, layer ${layer} of face ${face}`);
-          assert.ok(left.moves.length <= rest.length + moves.length);
-          assert.deepEqual(left.moves.slice(left.moves.length - left.kept), rest.slice(rest.length - left.kept));
-        }
-      }
-    }
-  }
-});
-
 test("inner layers alone are a move: the same as the solver's moves that make them", () => {
   for (const n of [4, 5, 6, 7]) {
     const model = new CubeModel(n);
@@ -271,6 +240,7 @@ test("inner layers alone are a move: the same as the solver's moves that make th
           for (let power = 0; power < 3; power++) {
             const m = model.slice(face, from, to, power);
             const info = model.info(m);
+            assert.deepEqual(model.parse(model.moveName(m), { slices: true }), [m]);
             assert.deepEqual([info.face, info.from, info.to, info.power], [face, from, to, power]);
             assert.deepEqual(model.apply(start, m), model.applyAll(start, model.plain([m])), `${n}: ${model.moveName(m)}`);
             assert.deepEqual(model.apply(model.apply(start, m), model.inverse(m)), start);
@@ -296,41 +266,82 @@ test("inner layers alone are a move: the same as the solver's moves that make th
   }
 });
 
-test("one layer of a wide move made by hand leaves the move's other layers, nothing undone", () => {
-  for (const n of [4, 5, 6, 7]) {
-    const model = new CubeModel(n);
-    const rnd = random(60 + n);
-    const start = model.applyAll(model.solved(), model.randomScramble(30, rnd));
-    for (let face = 0; face < 6; face++) {
-      for (let layers = 2; layers <= Math.floor(n / 2); layers++) {
-        for (let power = 0; power < 3; power++) {
-          const wide = model.move(face, layers, power);
-          const want = model.apply(start, wide);
-          for (let layer = 0; layer < layers; layer++) {
-            for (const quarters of [1, 2, -1]) {
-              const made = model.handSlice(face, layer, quarters);
-              const left = model.remainder(wide, made);
-              const name = `${n}: ${model.moveName(wide)} after ${model.moveName(made)}`;
-              assert.deepEqual(model.applyAll(model.apply(start, made), left), want, name);
-              // The layer turned as the move says is done with: only the others are left, as the move had them.
-              if (quarters === model.info(wide).quarters) {
-                assert.ok(left.every((m) => model.info(m).power === power && (model.info(m).to <= layer || model.info(m).from > layer)), name);
-                assert.ok(left.length <= 2, name);
-              }
-              // And each of those in its turn steps the list on.
-              let rest = left;
-              for (const m of left) {
-                assert.equal(model.rejoin(rest, [m]).moves.length, rest.length - 1, name);
-                rest = rest.slice(1);
-              }
-            }
-          }
-        }
-      }
-    }
-    // A turn that is not of the move's layers, or is all of them, leaves nothing of this kind.
-    assert.equal(model.remainder(model.move(0, 2, 0), model.move(1, 1, 0)), null);
-    assert.equal(model.remainder(model.move(0, 2, 0), model.move(0, 2, 2)), null);
-    assert.equal(model.remainder(model.move(0, 1, 1), model.move(0, 1, 0)), null);
-  }
+function follow(text) {
+  const model = new CubeModel(6);
+  const solution = model.parse(text);
+  const start = model.applyAll(model.solved(), solution.map((m) => model.inverse(m)).reverse());
+  const view = { setCube() {}, setFacelets() {}, setTurn() {}, setCue(cue) { this.cue = cue; } };
+  const player = new Player(view);
+  player.load(model, start, solution);
+  const turn = (moves) => player.turnByHand(model.parse(moves, { slices: true }));
+  return { player, model, start, solution, view, turn };
+}
+
+test("wide turns keep their place as layers are completed in any order", () => {
+  const { player, model, view, solution, turn } = follow("3Fw U");
+  turn("3F");
+  assert.equal(player.partial.fraction, "1/3");
+  assert.deepEqual(view.cue, { face: 2, from: 0, to: 2, quarters: 1 });
+  turn("F");
+  assert.equal(player.partial.fraction, "2/3");
+  assert.equal(model.moveName(player.nextMove), "2F");
+  assert.equal(player.position, 0);
+  turn("2F");
+  assert.equal(player.partial, null);
+  assert.equal(player.position, 1);
+  assert.equal(player.moves, solution);
+  assert.equal(player.length, 2);
+  turn("U");
+  assert.ok(model.isSolved(player.facelets));
+});
+
+test("wide half turns track both quarters and full layers", () => {
+  const { player, model, turn } = follow("3Fw2 U");
+  turn("F'");
+  assert.equal(player.partial.fraction, "1/6");
+  assert.equal(model.moveName(player.nextMove), "F'");
+  turn("F'");
+  assert.equal(player.partial.fraction, "1/3");
+  turn("3F2");
+  assert.equal(player.partial.fraction, "2/3");
+  turn("2F2");
+  assert.equal(player.position, 1);
+  assert.equal(player.detour.length, 0);
+});
+
+test("a detour can return to the same partial move or to a later solution step", () => {
+  const { player, model, turn } = follow("3Fw U D");
+  turn("2F");
+  turn("U");
+  assert.equal(player.partial.fraction, "1/3");
+  assert.equal(model.moveName(player.nextMove), "U'");
+  const after = player.facelets;
+  const kept = { partial: player.partial.made, detour: player.detour };
+  player.seek(0, kept);
+  assert.deepEqual(player.facelets, after);
+  assert.equal(player.partial.fraction, "1/3");
+  assert.equal(model.names(player.detour), "U");
+  turn("U'");
+  assert.equal(player.detour.length, 0);
+  assert.equal(player.partial.fraction, "1/3");
+  turn("F 3F");
+  assert.equal(player.position, 1);
+
+  turn("D");
+  assert.equal(model.names(player.detour), "D");
+  turn("U");
+  assert.equal(player.position, 3);
+  assert.equal(player.detour.length, 0);
+  assert.ok(model.isSolved(player.facelets));
+});
+
+test("a wrong-way quarter turn offers the inverse and clears on return", () => {
+  const { player, model, start, turn } = follow("3Fw U");
+  turn("3F'");
+  assert.equal(player.partial, null);
+  assert.equal(model.moveName(player.nextMove), "3F");
+  turn("3F");
+  assert.equal(player.detour.length, 0);
+  assert.deepEqual(player.facelets, start);
+  assert.equal(model.moveName(player.nextMove), "3Fw");
 });
