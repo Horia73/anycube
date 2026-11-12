@@ -174,8 +174,9 @@ export class CameraScanner {
    * @param {HTMLElement} frame an empty element for the picture and its grid
    * @param {HTMLElement} side an empty element for the instructions and buttons
    * @param hooks `onstep(face)` when a face is asked for, `onface(face, colours)`
-   *   when one is captured (or taken back, with null), `ondone(samples)` with
-   *   6*n*n colours in facelet order (return a warning to keep the scan open),
+   *   when one is captured (or taken back, with null), `ondone(samples, sources)`
+   *   with 6*n*n colours and six capture methods in facelet order (return a
+   *   warning to keep the scan open),
    *   `onstop()` when the camera is switched off.
    */
   constructor(frame, side, hooks) {
@@ -183,6 +184,7 @@ export class CameraScanner {
     this.n = 3;
     this.step = 0;
     this.faces = new Array(6).fill(null);
+    this.sources = new Array(6).fill(null);
     this.live = null;
     this.timer = 0;
     this.scratch = document.createElement("canvas");
@@ -237,6 +239,7 @@ export class CameraScanner {
     this.n = n;
     this.step = 0;
     this.faces.fill(null);
+    this.sources.fill(null);
     this.again = -1;
     this.jumped = false;
     await this.feed.open();
@@ -410,12 +413,12 @@ export class CameraScanner {
   #capture() {
     this.#sample();
     // The face as found at this moment; the grid's cells if there is none.
-    if (this.found) this.take(this.found.cells);
-    else if (this.live) this.take(this.live);
+    if (this.found) this.take(this.found.cells, "detected");
+    else if (this.live) this.take(this.live, "grid");
   }
 
   /** Takes a face as read: n*n colours, row by row. What Capture does with the picture of the moment. */
-  take(colours) {
+  take(colours, source = "provided") {
     if (this.step >= SCAN_STEPS.length) return;
     this.live = colours;
     // A face that looks like one already shown is said so at once; a second
@@ -429,6 +432,7 @@ export class CameraScanner {
     }
     const face = SCAN_STEPS[this.step].face;
     this.faces[face] = this.live;
+    this.sources[face] = source;
     this.hooks.onface?.(face, this.live);
     // On to the first face not captured yet: the next one as a rule, another after one was taken again.
     const open = SCAN_STEPS.findIndex((step) => !this.faces[step.face]);
@@ -437,7 +441,7 @@ export class CameraScanner {
     this.step = open < 0 ? SCAN_STEPS.length : open;
     this.#show();
     if (this.step === SCAN_STEPS.length) {
-      const warning = this.hooks.ondone?.(this.faces.flat());
+      const warning = this.hooks.ondone?.(this.faces.flat(), this.sources.slice());
       if (warning) {
         this.heading.textContent = "Check the centre colours";
         this.text.textContent = warning;
@@ -472,6 +476,7 @@ export class CameraScanner {
     const face = SCAN_STEPS[k].face;
     if (this.faces[face]) {
       this.faces[face] = null;
+      this.sources[face] = null;
       this.hooks.onface?.(face, null);
     }
     this.step = k;

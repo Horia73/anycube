@@ -853,6 +853,25 @@ export async function mount(root, options = {}) {
 
   // --------------------------------------------------------------- camera
 
+  const diagnosticsStatus = $("camera-diagnostics-status");
+  let latestDiagnostic = 0;
+  function saveScan(report) {
+    const attempt = ++latestDiagnostic;
+    diagnosticsStatus.hidden = true;
+    fetch("/api/scan-diagnostics", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(report),
+      keepalive: true,
+    }).then((response) => {
+      if (!response.ok) throw new Error("Could not save scan diagnostics");
+    }).catch(() => {
+      if (attempt !== latestDiagnostic) return;
+      diagnosticsStatus.textContent = "This scan could not be saved for debugging.";
+      diagnosticsStatus.hidden = false;
+    });
+  }
+
   let guiding = 0;
   const scanner = new CameraScanner($("camera-frame"), $("camera-side"), {
     // The user sees the captured side come round to their left as the
@@ -874,15 +893,30 @@ export async function mount(root, options = {}) {
       }
       view.setRaw(state.scan);
     },
-    ondone: (samples) => {
+    ondone: (samples, sources) => {
       const n = state.size;
       const { sorted, made } = assembleScan(n, samples);
       const lying = placed(n, made.labels, made);
-      const { facelets, palette } = named(n, sorted, lying);
-      if (n % 2 === 1 && !oppositeCentres(palette)) {
+      const { facelets: reconstructed, palette } = named(n, sorted, lying);
+      const centreMismatch = n % 2 === 1 && !oppositeCentres(palette);
+      const facelets = centreMismatch ? reconstructed : state.model.withCentres(reconstructed);
+      const doubt = placed(n, sorted.doubt, made);
+      if (solver.config.scan_diagnostics) {
+        saveScan({
+          size: n,
+          rgb: samples,
+          sources,
+          facelets: state.model.toText(facelets),
+          palette,
+          assembly: { kind: made.kind, from: made.from, rot: made.rot, swapped: made.swapped },
+          uncertainty: Array.from(doubt, (value) => Math.round(value * 1000) / 1000),
+          centre_mismatch: centreMismatch,
+        });
+      }
+      if (centreMismatch) {
         return `${CENTRE_PROBLEM} Select a face below to retake it.`;
       }
-      const stickers = reviewStickers(n, placed(n, sorted.doubt, made));
+      const stickers = reviewStickers(n, doubt);
       const review = stickers.length ? { stickers, active: made.kind === "none" } : undefined;
       state.painted.set(n, { facelets, palette, review });
       const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
@@ -1426,6 +1460,7 @@ export async function mount(root, options = {}) {
   }
   renderMoves();
   await solver.loadConfig();
+  $("camera-diagnostics").hidden = !solver.config.scan_diagnostics;
   const storedColour = defaultPalette === YELLOW_TOP ? "yellow" : "white";
   const preferred = solver.config.top_colour ?? storedColour;
   setTopColour(preferred === "yellow" ? "yellow" : "white");
