@@ -176,7 +176,8 @@ export class CameraScanner {
    * @param {HTMLElement} side an empty element for the instructions and buttons
    * @param hooks `onstep(face)` when a face is asked for, `onface(face, colours)`
    *   when one is captured (or taken back, with null), `ondone(samples)` with
-   *   6*n*n colours in facelet order, `onstop()` when the camera is switched off.
+   *   6*n*n colours in facelet order (return a warning to keep the scan open),
+   *   `onstop()` when the camera is switched off.
    */
   constructor(frame, side, hooks) {
     this.hooks = hooks;
@@ -462,9 +463,14 @@ export class CameraScanner {
     this.step = open < 0 ? SCAN_STEPS.length : open;
     this.#show();
     if (this.step === SCAN_STEPS.length) {
-      const samples = this.faces.flat();
-      this.stop();
-      this.hooks.ondone?.(samples);
+      const warning = this.hooks.ondone?.(this.faces.flat());
+      if (warning) {
+        this.heading.textContent = "Check the centre colours";
+        this.text.textContent = warning;
+        this.text.classList.add("warn");
+      } else {
+        this.stop();
+      }
     }
   }
 

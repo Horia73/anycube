@@ -127,7 +127,6 @@ export class CubeView {
     this.inside = "#1c1f26";
     this.blank = "#3b404c";
     this.raw = null; // a colour per facelet that overrides the palette where set
-    this.marks = null; // facelets to ring: ones to look at again
     this.frame = null; // a face to draw a frame round
     // Layers `from` up to `to` under `face`, turned by `angle` radians clockwise seen from the face.
     this.turn = null;
@@ -355,12 +354,6 @@ export class CubeView {
     this.draw();
   }
 
-  // Facelets to ring (a number above 0.55 each), or null.
-  setMarks(marks) {
-    this.marks = marks;
-    this.draw();
-  }
-
   setTurn(turn) {
     this.turn = turn;
     this.draw();
@@ -393,9 +386,9 @@ export class CubeView {
     this.draw();
   }
 
-  // Shows a face from above and to the right, or returns to the usual view.
+  // Shows a face straight on, in the same orientation as the unfolded cube.
   look(face, ms = 450) {
-    const target = face === null ? HOME : mul(mul(rotX(0.3), rotY(-0.34)), TO_FRONT[face]);
+    const target = face === null ? HOME : TO_FRONT[face];
     this.#glideTo(target, ms);
   }
 
@@ -629,7 +622,6 @@ export class CubeView {
 
         // The stickers of this face that are on this box, one path per colour.
         const paths = new Map();
-        const ringed = [];
         const base = face * n * n;
         for (let r = 0; r < n; r++) {
           const y0 = -1 + r * cell;
@@ -667,28 +659,11 @@ export class CubeView {
               path.lineTo(p[3][0], p[3][1]);
             }
             path.closePath();
-            // A ring is for a colour to look at again: a sticker with no colour yet has none.
-            if (this.marks && this.marks[i] > 0.55 && (this.raw?.[i] || this.facelets[i] !== BLANK)) ringed.push([x0 + cell / 2, y0 + cell / 2]);
           }
         }
         for (const [colour, path] of paths) {
           ctx.fillStyle = colour;
           ctx.fill(path);
-        }
-        // A ring on the stickers to look at again.
-        for (const [x, y] of ringed) {
-          ctx.beginPath();
-          for (let s = 0; s <= 16; s++) {
-            const a = (s / 16) * Math.PI * 2;
-            const [px, py] = at(x + Math.cos(a) * cell * 0.26, y + Math.sin(a) * cell * 0.26);
-            s ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
-          }
-          ctx.lineWidth = Math.max(2, size / 260);
-          ctx.strokeStyle = "rgba(0,0,0,0.85)";
-          ctx.stroke();
-          ctx.lineWidth = Math.max(1, size / 520);
-          ctx.strokeStyle = "rgba(255,255,255,0.95)";
-          ctx.stroke();
         }
         // Light from above and a little from the right: faces turned away from it are darker.
         const facing = apply(m, normal);

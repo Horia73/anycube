@@ -117,6 +117,18 @@ test("two faces shown in each other's turn are put in their places", () => {
   }
 });
 
+test("an odd cube scan with adjacent white and yellow centres cannot be accepted", () => {
+  const n = 3;
+  const truth = scrambled(n, random(42));
+  // Simulate the camera assigning green and yellow to each other's group.
+  // The pieces still form a cube if the wrong colour names are trusted.
+  const colours = [0, 1, 3, 2, 4, 5];
+  const samples = Array.from(truth, (c) => COLOURS[colours[c]]);
+  const sorted = sortColours(samples, n);
+  assert.equal(structure(n, named(n, sorted, sorted.labels).facelets), null);
+  assert.equal(assemble(n, sorted).kind, "none");
+});
+
 test("six faces in any order and any way up make one cube, the right one", () => {
   const rnd = random(5);
   for (const n of [2, 3, 4, 5]) {

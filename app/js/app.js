@@ -12,7 +12,7 @@
 // from its `/api/config`.
 
 import { CameraScanner } from "./camera.js";
-import { named, sortColours, STICKERS } from "./colour.js";
+import { named, oppositeCentres, sortColours, STICKERS } from "./colour.js";
 import { CubeModel, FACE_LETTERS, scrambleLength, ScrambleError } from "./cube-model.js";
 import { BLANK, CubeView } from "./cube-view.js";
 import { APP_HTML } from "./markup.js";
@@ -30,6 +30,7 @@ const CAMERA_MAX = 7;
 const TOP_COLOUR = "anycube.top-colour";
 // Turning the cube 180° with the front held fixed exchanges both pairs.
 const YELLOW_TOP = [3, 4, 2, 0, 1, 5].map((face) => STICKERS[face]);
+const CENTRE_PROBLEM = "The centre colours don't form opposite pairs: white and yellow, red and orange, green and blue.";
 
 const el = (tag, attrs = {}, children = []) => {
   const node = document.createElement(tag);
@@ -109,7 +110,7 @@ export async function mount(root, options = {}) {
     input: "scramble", // where the cube comes from: "scramble", "paint" or "camera"
     mode: "normal",
     scramble: { moves: [], problem: null },
-    painted: new Map(), // size -> { facelets, palette, doubt }
+    painted: new Map(), // size -> { facelets, palette }
     carried: null, // the scramble's cube as it stood when Paint was last left for it (see setTab)
     shows: "scramble", // whose cube is on screen, with any solution of it: the scramble's or the painted one
     scan: null, // while the camera reads a cube: the colours seen so far, per facelet
@@ -146,7 +147,7 @@ export async function mount(root, options = {}) {
       scramble: $("scramble").value,
       painted: p
         ? { facelets: Array.from(p.facelets), palette: p.palette, followsDefault: p.palette === defaultPalette,
-            doubt: p.doubt ? Array.from(p.doubt) : null, note: $("paint-note").textContent }
+            note: $("paint-note").textContent }
         : null,
       carried: state.carried,
       shows: state.shows,
@@ -344,7 +345,7 @@ export async function mount(root, options = {}) {
   function painted(n = state.size) {
     let p = state.painted.get(n);
     if (!p) {
-      p = { facelets: new CubeModel(n).solved(), palette: defaultPalette, doubt: null };
+      p = { facelets: new CubeModel(n).solved(), palette: defaultPalette };
       state.painted.set(n, p);
     }
     p.facelets = new CubeModel(n).withCentres(p.facelets);
@@ -368,6 +369,9 @@ export async function mount(root, options = {}) {
     }
     const p = painted();
     const cube = { start: p.facelets, palette: p.palette };
+    if (size % 2 === 1 && !oppositeCentres(p.palette)) {
+      return { ...cube, problem: `${CENTRE_PROBLEM} Scan the cube again.` };
+    }
     const nn = size * size;
     const placed = new Array(6).fill(0);
     let blank = 0;
@@ -395,7 +399,6 @@ export async function mount(root, options = {}) {
     state.detail = null;
     const cube = entered();
     showPalette(cube.palette);
-    view.setMarks(state.input === "scramble" || state.scan ? null : painted().doubt);
     player.load(state.model, cube.start, []);
     state.shows = state.input === "scramble" ? "scramble" : "painted";
     view.setRaw(state.scan);
@@ -410,7 +413,6 @@ export async function mount(root, options = {}) {
   // what the tab says about it is brought up to date.
   function stay() {
     const cube = entered();
-    view.setMarks(state.input === "scramble" ? null : painted().doubt);
     restStatus();
     judge(cube);
     keepLater();
@@ -536,7 +538,7 @@ export async function mount(root, options = {}) {
     placeCube();
     if (paintable) {
       const p = painted();
-      paint.set(n, p.facelets, p.palette, p.doubt);
+      paint.set(n, p.facelets, p.palette);
     }
     setTouch();
     readScramble();
@@ -581,7 +583,7 @@ export async function mount(root, options = {}) {
       // and not changed under Scramble since is left as it was painted.
       const shown = state.model.toText(player.facelets);
       if (shown !== state.carried) {
-        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette, doubt: null });
+        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette });
         $("paint-note").textContent = PAINT_NOTE;
       }
       same = state.model.toText(painted().facelets) === shown;
@@ -595,7 +597,7 @@ export async function mount(root, options = {}) {
     setTouch();
     if (tab !== "scramble" && paintable) {
       const p = painted();
-      paint.set(state.size, p.facelets, p.palette, p.doubt);
+      paint.set(state.size, p.facelets, p.palette);
     }
     if (same && !state.scan) stay();
     else show();
@@ -739,8 +741,8 @@ export async function mount(root, options = {}) {
       setScramble(model.simplify([...before, ...moves]));
     } else {
       const facelets = model.applyAll(player.facelets, moves);
-      state.painted.set(state.size, { ...painted(), facelets, doubt: null });
-      paint.set(state.size, facelets, painted().palette, null);
+      state.painted.set(state.size, { ...painted(), facelets });
+      paint.set(state.size, facelets, painted().palette);
       show();
     }
   }
@@ -769,9 +771,9 @@ export async function mount(root, options = {}) {
   view.onpaint = (i) => paint.paint(i);
 
   function repaint(facelets) {
-    state.painted.set(state.size, { facelets, palette: defaultPalette, doubt: null });
+    state.painted.set(state.size, { facelets, palette: defaultPalette });
     const p = painted();
-    paint.set(state.size, p.facelets, p.palette, null);
+    paint.set(state.size, p.facelets, p.palette);
     $("paint-note").textContent = PAINT_NOTE;
     show();
   }
@@ -808,29 +810,23 @@ export async function mount(root, options = {}) {
       const sorted = sortColours(samples, n);
       const made = assemble(n, sorted);
       const lying = placed(n, made.labels, made);
-      const doubt = placed(n, sorted.doubt, made);
-      // Two stickers exchanged to make a cube are shown as doubtful, to be looked at.
-      if (made.swapped) {
-        const lies = placed(n, Int32Array.from(samples, (_, k) => k), made);
-        for (const i of made.swapped) doubt[lies.indexOf(i)] = 0.7;
+      const { facelets, palette } = named(n, sorted, lying);
+      if (n % 2 === 1 && !oppositeCentres(palette)) {
+        return `${CENTRE_PROBLEM} Select a face below to retake it.`;
       }
-      const { facelets, palette } = named(n, sorted, lying, doubt);
-      state.painted.set(n, { facelets, palette, doubt });
-      const unsure = doubt.filter((d) => d > 0.55).length;
+      state.painted.set(n, { facelets, palette });
       const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
-      const ringed = unsure > 0 ? ` ${count(unsure, "ringed sticker")} may be another colour: check ${unsure > 1 ? "them" : "it"}.` : " Check it against your cube.";
-      // Short enough for the panel to hold everything without a scroll.
-      let note = `Read from the camera.${ringed}`;
+      let note = "Read from the camera. Check it against your cube.";
       if (made.kind === "placed" && made.moved.length === 0) {
-        note = `The ${faces(made.turned)} ${made.turned.length > 1 ? "faces were" : "face was"} held turned round: put right.${ringed}`;
+        note = `Reoriented the ${faces(made.turned)} ${made.turned.length > 1 ? "faces" : "face"}. Check against your cube.`;
       } else if (made.kind === "placed") {
-        note = `${made.moved.length > 2 ? "Some" : "Two"} faces were shown out of turn: put in their places.${ringed}`;
+        note = `${made.moved.length > 2 ? "Some" : "Two"} faces were shown out of order and moved into place. Check against your cube.`;
       } else if (made.kind === "recoloured") {
-        note = "Two stickers that looked alike were exchanged to make a cube: the ringed ones. Check them.";
+        note = "Two similar sticker colours were swapped to make a valid cube. Check against your cube.";
       } else if (made.kind === "several") {
         note = "These pictures fit together as more than one cube. Scan again, or correct it here.";
       } else if (made.kind === "none") {
-        note = `The faces do not fit together as a cube: a colour was misread.${unsure > 0 ? " Check the ringed stickers." : " Correct it here, or scan again."}`;
+        note = "The faces do not fit together as a cube. Correct the colours here or scan again.";
       }
       $("paint-note").textContent = note;
       // The cube just read goes to where it can be looked over and corrected.
@@ -859,7 +855,6 @@ export async function mount(root, options = {}) {
     }
     // An empty cube that fills in as faces are captured; the painted cube is left alone until all six are.
     state.scan = new Array(6 * n * n).fill(null);
-    view.setMarks(null);
     placeCube();
     setTouch();
     show();
@@ -951,7 +946,7 @@ export async function mount(root, options = {}) {
         }
         cube = { ...cube, start: shown, input: model.names(newScramble) };
       } else {
-        newPaint = { ...painted(), facelets: shown, doubt: null };
+        newPaint = { ...painted(), facelets: shown };
         cube = { ...cube, start: shown, input: model.toText(shown) };
       }
     }
@@ -1003,8 +998,7 @@ export async function mount(root, options = {}) {
       judge(entered());
     } else if (newPaint) {
       state.painted.set(size, newPaint);
-      paint.set(size, newPaint.facelets, newPaint.palette, null);
-      view.setMarks(null);
+      paint.set(size, newPaint.facelets, newPaint.palette);
     }
     state.solution = { ...result, moves, label: size === 2 ? "the fewest there are" : `${mode} search` };
     state.shows = state.input === "scramble" ? "scramble" : "painted";
@@ -1090,8 +1084,8 @@ export async function mount(root, options = {}) {
     if (state.input !== "scramble" && state.shows === "scramble" && !player.moving && !state.scan && state.size <= PAINT_MAX) {
       const p = painted();
       if (state.model.toText(p.facelets) !== state.model.toText(player.facelets)) {
-        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette, doubt: null });
-        paint.set(state.size, painted().facelets, painted().palette, null);
+        state.painted.set(state.size, { facelets: player.facelets.slice(), palette: defaultPalette });
+        paint.set(state.size, painted().facelets, painted().palette);
       }
     }
     $("at").textContent = String(position);
@@ -1207,7 +1201,7 @@ export async function mount(root, options = {}) {
     }
     const current = state.painted.get(state.size);
     if (current?.palette === defaultPalette && paint.palette === previous) {
-      paint.set(state.size, current.facelets, current.palette, current.doubt);
+      paint.set(state.size, current.facelets, current.palette);
     }
     if (view.palette === previous) showPalette(defaultPalette);
     keepLater();
@@ -1276,9 +1270,9 @@ export async function mount(root, options = {}) {
     setSize(was.size);
     $("scramble").value = String(was.scramble ?? "");
     if (was.painted && was.size <= PAINT_MAX) {
-      const { facelets, palette, followsDefault, doubt, note } = was.painted;
-      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette, doubt: doubt ? Float32Array.from(doubt) : null });
-      if (note) $("paint-note").textContent = note;
+      const { facelets, palette, followsDefault, note } = was.painted;
+      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette });
+      if (note && !note.includes("ringed")) $("paint-note").textContent = note;
     }
     state.carried = typeof was.carried === "string" ? was.carried : null;
     for (const b of root.querySelectorAll(".modes button")) {
@@ -1296,7 +1290,7 @@ export async function mount(root, options = {}) {
     setTouch();
     if (was.input !== "scramble" && was.size <= PAINT_MAX) {
       const p = painted();
-      paint.set(was.size, p.facelets, p.palette, p.doubt);
+      paint.set(was.size, p.facelets, p.palette);
     }
     readScramble();
     if (was.input !== "scramble") show();

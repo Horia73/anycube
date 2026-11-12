@@ -41,7 +41,6 @@ export class PaintEditor {
     this.n = 3;
     this.facelets = new Uint8Array(54);
     this.palette = [];
-    this.doubt = null;
     this.colour = 0;
     this.face = 2;
     this.swatches = el("div", { class: "swatches", role: "radiogroup", "aria-label": "Colour to paint with" });
@@ -49,12 +48,11 @@ export class PaintEditor {
     root.append(this.swatches, this.net);
   }
 
-  /** Shows a cube. `doubt` marks stickers to look at again (0 to 1 each), or is null. */
-  set(n, facelets, palette, doubt = null) {
+  /** Shows a cube. */
+  set(n, facelets, palette) {
     this.n = n;
     this.facelets = facelets;
     this.palette = palette;
-    this.doubt = doubt;
     const nn = n * n;
     this.root.style.setProperty("--n", n);
     this.swatches.replaceChildren(
@@ -107,7 +105,6 @@ export class PaintEditor {
     if (this.facelets[i] === colour) return;
     this.facelets = Uint8Array.from(this.facelets);
     this.facelets[i] = colour;
-    if (this.doubt) this.doubt[i] = 0;
     this.#colours();
     this.#counts();
     this.onchange(this.facelets);
@@ -120,15 +117,12 @@ export class PaintEditor {
     const shown = Math.min(n, 7);
     for (const face of this.net.children) {
       const base = Number(face.dataset.face) * nn;
-      let doubtful = false;
       [...face.children].forEach((cell, k) => {
         const [r, c] = [Math.floor(k / shown), k % shown];
         const i = base + Math.floor((r * n) / shown) * n + Math.floor((c * n) / shown);
         const colour = facelets[i];
         cell.style.background = colour === BLANK ? "" : palette[colour];
       });
-      if (this.doubt) for (let k = 0; k < nn; k++) doubtful ||= this.doubt[base + k] > 0.55;
-      face.classList.toggle("doubt", doubtful);
       face.classList.toggle("current", Number(face.dataset.face) === this.face);
     }
   }

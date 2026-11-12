@@ -20,7 +20,7 @@
 // No DOM here, so that the tests can load it under Node.
 
 import { CubeModel, FACES } from "./cube-model.js";
-import { named, nameByCorner } from "./colour.js";
+import { named, nameByCorner, oppositeCentres } from "./colour.js";
 
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -221,7 +221,8 @@ export function fit(n, sorted, labels = sorted.labels, cap = 400) {
   };
   const consider = (arrangement) => {
     const lying = arrange(n, labels, arrangement);
-    const { facelets } = named(n, sorted, lying);
+    const { facelets, palette } = named(n, sorted, lying);
+    if (odd && !oppositeCentres(palette)) return;
     if (structure(n, facelets)) return;
     const key = cubeKey(n, facelets);
     // The same cube turned as a whole is 24 arrangements: the one nearest to how the pictures were taken.

@@ -1335,10 +1335,6 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   opacity: 1;
   box-shadow: 0 0 0 2px var(--ink);
 }
-.net-face.doubt:not(.current) {
-  box-shadow: 0 0 0 1.5px var(--danger);
-}
-
 /* The camera's side of the panel. */
 .private {
   display: grid;
