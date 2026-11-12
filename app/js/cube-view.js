@@ -459,6 +459,8 @@ export class CubeView {
     ctx.clearRect(0, 0, size, size);
     const f = this.#frame();
     const half = f.half;
+    const captureFace = this.frame === null ? null : FACES[this.frame];
+    const captureCorners = captureFace && this.#scanCorners(captureFace, f);
 
     // A soft shadow on the ground under the cube.
     const shadow = ctx.createRadialGradient(half, size * 0.9, 0, half, size * 0.9, size * 0.36);
@@ -472,7 +474,7 @@ export class CubeView {
     ctx.fillRect(0, 0, size, size * 2);
     ctx.restore();
 
-    if (this.frame !== null) this.#drawScanCamera(f);
+    if (captureFace) this.#drawScanCamera(f, captureFace, captureCorners);
 
     // The boxes: the layers that turn, and what lies on either side of them.
     const boxes = [];
@@ -689,7 +691,7 @@ export class CubeView {
         }
       }
     }
-    if (this.frame !== null && !(turn && turn.angle !== 0)) this.#drawScanFrame(f);
+    if (captureFace && !(turn && turn.angle !== 0)) this.#drawScanFrame(f, captureFace, captureCorners);
     // The arrows of the move that is next. While its own layers turn they
     // turn with them; while other layers turn there are none.
     const cue = this.cue;
@@ -706,67 +708,138 @@ export class CubeView {
     }
   }
 
-  // The camera stays in place while the cube turns. In the scan pose it
-  // looks straight at the far face, along the same axis as that face's normal.
-  #drawScanCamera(f) {
-    const { ctx } = this;
-    const front = 4.62;
-    const back = 4.94;
-    const corners = [[-0.49, -0.29], [0.49, -0.29], [0.49, 0.29], [-0.49, 0.29]];
-    const near = corners.map(([x, y]) => [x, y, front]);
-    const far = corners.map(([x, y]) => [x, y, back]);
-    const surface = (points, colour) => {
+  #scanCorners({ normal, right, down }, f) {
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => {
+      const v = normal.map((n, k) => n + right[k] * a + down[k] * b);
+      return this.#project(apply(this.rot, v), f);
+    });
+  }
+
+  // The camera stays in place as the cube turns, aimed at the centre of the
+  // far face in the scan pose. It sits a little above the face so it reads
+  // clearly in the same perspective as the cube.
+  #drawScanCamera(f, face, corners) {
+    const { ctx, rot } = this;
+    const offset = -0.29;
+    const height = 1.03;
+    const distance = 4.57;
+    const origin = apply(SCAN_VIEW, [offset, height, distance]);
+    const yaw = Math.atan2(offset, distance - 1);
+    const pitch = -Math.atan2(height, Math.hypot(offset, distance - 1));
+    const mount = mul(SCAN_VIEW, mul(rotY(yaw), rotX(pitch)));
+    const eye = apply(transposed(mount), [-origin[0], -origin[1], EYE - origin[2]]);
+    const project = (point) => this.#project(apply(mount, point).map((v, i) => v + origin[i]), f);
+    const path = (points) => {
       ctx.beginPath();
-      points.forEach((point, i) => {
-        const [x, y] = this.#project(apply(SCAN_VIEW, point), f);
+      points.forEach(([x, y], i) => {
         i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
       });
       ctx.closePath();
+    };
+    const surface = (points, colour, edge = colour) => {
+      path(points.map(project));
       ctx.fillStyle = colour;
+      ctx.strokeStyle = edge;
       ctx.fill();
       ctx.stroke();
     };
-    const lens = (z, radius, colour) => surface(Array.from({ length: 20 }, (_, i) => {
-      const angle = i * 2 * Math.PI / 20;
-      return [radius * Math.cos(angle), radius * Math.sin(angle), z];
-    }), colour);
+    // The sides of an extrusion whose two rims run counterclockwise.
+    const sides = (back, front, colour) => {
+      back.forEach((a, i) => {
+        const j = (i + 1) % back.length;
+        const b = back[j];
+        const [x, y] = [b[1] - a[1], a[0] - b[0]];
+        if (x * (eye[0] - a[0]) + y * (eye[1] - a[1]) > 0) {
+          surface([a, b, front[j], front[i]], colour(y / Math.hypot(x, y)));
+        }
+      });
+    };
+    const ring = (z, radius, x = 0, y = 0) => Array.from({ length: 24 }, (_, i) => {
+      const angle = i * Math.PI / 12;
+      return [x + radius * Math.cos(angle), y + radius * Math.sin(angle), z];
+    });
+    const gradient = (from, to, stops) => {
+      const paint = ctx.createLinearGradient(...project(from), ...project(to));
+      stops.forEach(([offset, colour]) => paint.addColorStop(offset, colour));
+      return paint;
+    };
 
     ctx.save();
-    ctx.lineWidth = Math.max(0.75, f.size / 360);
+    ctx.lineWidth = Math.max(0.6, f.size / 500);
     ctx.lineJoin = "round";
-    ctx.strokeStyle = "#18202a";
-    surface([far[1], near[1], near[2], far[2]], "#394652");
-    surface([far[2], near[2], near[3], far[3]], "#8c9baa");
-    surface(near, "#566574");
-    lens(front, 0.23, "#273542");
-    lens(front - 0.24, 0.20, "#43586a");
-    lens(front - 0.24, 0.127, "#add9e5");
+    // The projection meets the exact corners used by the face outline. It
+    // fades as the cube turns out of the camera's field, and the cube will
+    // occlude it when its surfaces are drawn.
+    const normal = apply(rot, face.normal);
+    const aim = normal[0] * SCAN_VIEW[2] + normal[1] * SCAN_VIEW[5] + normal[2] * SCAN_VIEW[8];
+    if (aim > 0.94) {
+      const lens = project([0, 0, -0.56]);
+      const beam = ctx.createLinearGradient(...lens, ...this.#project(normal, f));
+      beam.addColorStop(0, "rgba(93, 207, 255, 0.34)");
+      beam.addColorStop(1, "rgba(93, 207, 255, 0.10)");
+      ctx.globalAlpha = Math.min(1, (aim - 0.94) / 0.06);
+      path([lens, corners[2], corners[1], corners[0]]);
+      ctx.fillStyle = beam;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(72, 174, 236, 0.55)";
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // A chamfered body with a raised viewfinder and a shaded lens barrel.
+    const profile = [
+      [-0.55, -0.39], [0.62, -0.39], [0.72, -0.28], [0.72, 0.29],
+      [0.63, 0.39], [0.23, 0.39], [0.12, 0.56], [-0.18, 0.56],
+      [-0.28, 0.39], [-0.54, 0.39], [-0.64, 0.29], [-0.64, -0.29],
+    ];
+    const front = profile.map(([x, y]) => [x, y, 0]);
+    const back = profile.map(([x, y]) => [x, y, 0.43]);
+    sides(back, front, (up) => `hsl(216, 14%, ${24 + 21 * Math.max(0, up)}%)`);
+    surface(front, gradient([0, 0.52, 0], [0, -0.36, 0], [[0, "#657180"], [0.42, "#38424e"], [1, "#1b222b"]]), "#1d2631");
+    surface([[0.44, -0.30, -0.018], [0.63, -0.30, -0.018], [0.66, -0.25, -0.018], [0.66, 0.23, -0.018], [0.62, 0.28, -0.018], [0.44, 0.28, -0.018]], "#28333e");
+    surface(ring(-0.02, 0.036, -0.45, 0.22), "#b2e9ff", "#344b5d");
+
+    const base = ring(-0.025, 0.377);
+    const shoulder = ring(-0.19, 0.362);
+    const barrel = ring(-0.47, 0.30);
+    const rim = ring(-0.56, 0.329);
+    sides(base, shoulder, (up) => `hsl(215, 16%, ${19 + 18 * Math.max(0, up)}%)`);
+    sides(shoulder, barrel, (up) => `hsl(215, 18%, ${17 + 23 * Math.max(0, up)}%)`);
+    sides(barrel, rim, (up) => `hsl(215, 21%, ${28 + 29 * Math.max(0, up)}%)`);
+    surface(rim, gradient([0, 0.32, -0.56], [0, -0.32, -0.56], [[0, "#abbacb"], [0.38, "#586b81"], [1, "#202c3c"]]), "#17212c");
+    surface(ring(-0.562, 0.262), "#121b27");
+    const glass = gradient([-0.12, 0.20, -0.564], [0.15, -0.19, -0.564], [[0, "#a5e1f8"], [0.34, "#459ec5"], [0.62, "#1a4565"], [1, "#131e36"]]);
+    surface(ring(-0.564, 0.218), glass, "#5d8da9");
+    surface(ring(-0.566, 0.055, -0.064, 0.094), "rgba(217, 248, 255, 0.72)", "transparent");
     ctx.restore();
   }
 
-  // Project the actual face even when hidden. The dashed stroke lets the
-  // rear outline read through the stickers without looking like their edge.
-  #drawScanFrame(f) {
+  // Project the cube's own corners. An edge of the rear face can still be
+  // visible when it borders a visible face, so dash only the occluded edges.
+  #drawScanFrame(f, { normal, right, down }, corners) {
     const { ctx, rot } = this;
-    const { normal, right, down } = FACES[this.frame];
-    const visible = apply(rot, normal)[2] * EYE > 1;
-    const edge = 0.985;
+    const facing = (axis, sign = 1) => apply(rot, axis)[2] * sign * EYE > 1;
+    const visible = facing(normal);
+    const edges = [facing(down, -1), facing(right), facing(down), facing(right, -1)];
     ctx.save();
-    ctx.beginPath();
-    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b], i) => {
-      const v = normal.map((n, k) => n * 1.012 + (right[k] * a + down[k] * b) * edge);
-      const [x, y] = this.#project(apply(rot, v), f);
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    });
-    ctx.closePath();
-    ctx.lineJoin = "round";
-    if (!visible) ctx.setLineDash([Math.max(3, f.size / 53), Math.max(2, f.size / 85)]);
-    ctx.lineWidth = visible ? Math.max(5, f.size / 60) : Math.max(2.5, f.size / 95);
-    ctx.strokeStyle = "rgba(0,0,0,0.75)";
-    ctx.stroke();
-    ctx.lineWidth = visible ? Math.max(3, f.size / 100) : Math.max(1.35, f.size / 175);
-    ctx.strokeStyle = "#ffffff";
-    ctx.stroke();
+    for (const dashed of [false, true]) {
+      if (visible && dashed) break;
+      ctx.beginPath();
+      corners.forEach((point, i) => {
+        const occluded = !visible && !edges[i];
+        if (occluded !== dashed) return;
+        ctx.moveTo(...point);
+        ctx.lineTo(...corners[(i + 1) % corners.length]);
+      });
+      ctx.setLineDash(dashed ? [Math.max(2.6, f.size / 62), Math.max(1.8, f.size / 98)] : []);
+      ctx.lineCap = dashed ? "butt" : "round";
+      ctx.lineWidth = Math.max(2.4, f.size / 96);
+      ctx.strokeStyle = "rgba(12, 31, 49, 0.80)";
+      ctx.stroke();
+      ctx.lineWidth = Math.max(1.25, f.size / 164);
+      ctx.strokeStyle = dashed ? "#e4f7ff" : "#a5ddff";
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
