@@ -269,7 +269,7 @@ export async function mount(root, options = {}) {
     const scanning = scanner.running;
     const host = scanning ? (narrow.matches ? $("scan-slot-narrow") : $("scan-slot")) : $("stage");
     if (canvas.parentElement !== host) host.prepend(canvas);
-    canvas.setAttribute("aria-label", scanning ? "The cube from your perspective, with the face to capture on the far side. Drag or use the arrow keys to look around." : cubeLabel);
+    canvas.setAttribute("aria-label", scanning ? "The cube from your perspective. The outline marks the face to point towards the camera. Drag or use the arrow keys to look around." : cubeLabel);
     $("stage").classList.toggle("scanning", scanning);
     $("panel-lower").classList.toggle("scanning", scanning);
     $("camera-frame").hidden = !scanning;

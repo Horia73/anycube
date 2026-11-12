@@ -472,6 +472,8 @@ export class CubeView {
     ctx.fillRect(0, 0, size, size * 2);
     ctx.restore();
 
+    if (this.frame !== null) this.#drawScanCamera(f);
+
     // The boxes: the layers that turn, and what lies on either side of them.
     const boxes = [];
     const turn = this.turn;
@@ -687,28 +689,7 @@ export class CubeView {
         }
       }
     }
-    // A frame round one face, where it is in view: the face being asked for.
-    if (this.frame !== null && !(turn && turn.angle !== 0)) {
-      const { normal, right, down } = FACES[this.frame];
-      const m = this.rot;
-      if ((m[6] * normal[0] + m[7] * normal[1] + m[8] * normal[2]) * EYE > 1) {
-        const edge = 0.985;
-        ctx.beginPath();
-        [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b], i) => {
-          const v = [0, 1, 2].map((k) => normal[k] * 1.012 + right[k] * a * edge + down[k] * b * edge);
-          const [x, y] = this.#project(apply(m, v), f);
-          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-        });
-        ctx.closePath();
-        ctx.lineJoin = "round";
-        ctx.lineWidth = Math.max(5, size / 60);
-        ctx.strokeStyle = "rgba(0,0,0,0.75)";
-        ctx.stroke();
-        ctx.lineWidth = Math.max(3, size / 100);
-        ctx.strokeStyle = "#ffffff";
-        ctx.stroke();
-      }
-    }
+    if (this.frame !== null && !(turn && turn.angle !== 0)) this.#drawScanFrame(f);
     // The arrows of the move that is next. While its own layers turn they
     // turn with them; while other layers turn there are none.
     const cue = this.cue;
@@ -723,6 +704,70 @@ export class CubeView {
         if (shown < 1) this.draw();
       }
     }
+  }
+
+  // The camera stays in place while the cube turns. In the scan pose it
+  // looks straight at the far face, along the same axis as that face's normal.
+  #drawScanCamera(f) {
+    const { ctx } = this;
+    const front = 4.62;
+    const back = 4.94;
+    const corners = [[-0.49, -0.29], [0.49, -0.29], [0.49, 0.29], [-0.49, 0.29]];
+    const near = corners.map(([x, y]) => [x, y, front]);
+    const far = corners.map(([x, y]) => [x, y, back]);
+    const surface = (points, colour) => {
+      ctx.beginPath();
+      points.forEach((point, i) => {
+        const [x, y] = this.#project(apply(SCAN_VIEW, point), f);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fillStyle = colour;
+      ctx.fill();
+      ctx.stroke();
+    };
+    const lens = (z, radius, colour) => surface(Array.from({ length: 20 }, (_, i) => {
+      const angle = i * 2 * Math.PI / 20;
+      return [radius * Math.cos(angle), radius * Math.sin(angle), z];
+    }), colour);
+
+    ctx.save();
+    ctx.lineWidth = Math.max(0.75, f.size / 360);
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#18202a";
+    surface([far[1], near[1], near[2], far[2]], "#394652");
+    surface([far[2], near[2], near[3], far[3]], "#8c9baa");
+    surface(near, "#566574");
+    lens(front, 0.23, "#273542");
+    lens(front - 0.24, 0.20, "#43586a");
+    lens(front - 0.24, 0.127, "#add9e5");
+    ctx.restore();
+  }
+
+  // Project the actual face even when hidden. The dashed stroke lets the
+  // rear outline read through the stickers without looking like their edge.
+  #drawScanFrame(f) {
+    const { ctx, rot } = this;
+    const { normal, right, down } = FACES[this.frame];
+    const visible = apply(rot, normal)[2] * EYE > 1;
+    const edge = 0.985;
+    ctx.save();
+    ctx.beginPath();
+    [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([a, b], i) => {
+      const v = normal.map((n, k) => n * 1.012 + (right[k] * a + down[k] * b) * edge);
+      const [x, y] = this.#project(apply(rot, v), f);
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    });
+    ctx.closePath();
+    ctx.lineJoin = "round";
+    if (!visible) ctx.setLineDash([Math.max(3, f.size / 53), Math.max(2, f.size / 85)]);
+    ctx.lineWidth = visible ? Math.max(5, f.size / 60) : Math.max(2.5, f.size / 95);
+    ctx.strokeStyle = "rgba(0,0,0,0.75)";
+    ctx.stroke();
+    ctx.lineWidth = visible ? Math.max(3, f.size / 100) : Math.max(1.35, f.size / 175);
+    ctx.strokeStyle = "#ffffff";
+    ctx.stroke();
+    ctx.restore();
   }
 
   // The next move as arrows on the cube: one along the middle of every row
