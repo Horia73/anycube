@@ -12,12 +12,12 @@
 // from its `/api/config`.
 
 import { CameraScanner } from "./camera.js";
-import { named, oppositeCentres, STICKERS } from "./colour.js";
+import { BLACK_STICKER, named, oppositeCentres, STICKERS } from "./colour.js";
 import { CubeModel, FACE_LETTERS, scrambleLength, ScrambleError } from "./cube-model.js";
 import { BLANK, CubeView } from "./cube-view.js";
 import { APP_HTML } from "./markup.js";
 import { FACE_NAMES, PaintEditor } from "./paint.js";
-import { Player } from "./player.js";
+import { MAX_SPEED, MIN_SPEED, Player } from "./player.js";
 // (`arrange` here is the page's own layout; the scan's is `placed`.)
 import { arrange as placed, assembleScan, reviewStickers } from "./scan-fit.js";
 import { Solver } from "./solver.js";
@@ -28,6 +28,7 @@ import { ViewCube } from "./view-cube.js";
 const PAINT_MAX = 7;
 const CAMERA_MAX = 7;
 const TOP_COLOUR = "anycube.top-colour";
+const SCAN_ORIENTATION = "anycube.scan-orientation";
 // Turning the cube 180° with the front held fixed exchanges both pairs.
 const YELLOW_TOP = [3, 4, 2, 0, 1, 5].map((face) => STICKERS[face]);
 const CENTRE_PROBLEM = "The centre colours don't form opposite pairs: white (or black) and yellow, red and orange, green and blue.";
@@ -100,8 +101,10 @@ export async function mount(root, options = {}) {
   const solver = new Solver();
   let ready = false;
   let defaultPalette = STICKERS;
+  let scanOrientation = "capture";
   try {
     if (localStorage.getItem(TOP_COLOUR) === "yellow") defaultPalette = YELLOW_TOP;
+    if (localStorage.getItem(SCAN_ORIENTATION) === "standard") scanOrientation = "standard";
   } catch {
     // Storage can be disabled. The choice still works for this visit.
   }
@@ -151,7 +154,7 @@ export async function mount(root, options = {}) {
       scramblePlayback: state.scramblePlayback,
       painted: p
         ? { facelets: Array.from(p.facelets), palette: p.palette, followsDefault: p.palette === defaultPalette,
-            review: p.review?.active ? p.review.stickers : undefined,
+            review: p.review?.active ? p.review.stickers : undefined, capture: p.capture,
             note: $("paint-note").textContent }
         : null,
       carried: state.carried,
@@ -415,7 +418,7 @@ export async function mount(root, options = {}) {
   // Shows the cube as entered, or loads the scramble for playback from
   // solved. Either way, discard the previous solution and validate the input.
   let checking = 0;
-  function show(scramblePlayback = false) {
+  function show(scramblePlayback = false, solveScan = false) {
     state.job?.abort();
     state.job = null;
     state.solution = null;
@@ -431,7 +434,7 @@ export async function mount(root, options = {}) {
     if (scramblePlayback) player.load(state.model, state.model.solved(), state.scramble.moves);
     else player.load(state.model, cube.start, []);
     restStatus();
-    judge(cube);
+    judge(cube, solveScan);
     keepLater();
   }
 
@@ -446,7 +449,7 @@ export async function mount(root, options = {}) {
     keepLater();
   }
 
-  async function judge(cube) {
+  async function judge(cube, solveScan = false) {
     const mine = ++checking;
     const { size } = state;
     const where = solver.where(size);
@@ -486,6 +489,7 @@ export async function mount(root, options = {}) {
           keepLater();
         }
       }
+      if (solveScan) void solve();
     } else if (error.impossible) {
       const [brief, long] = IMPOSSIBLE[error.code] ?? [error.message, error.message];
       setValid("bad", `Cannot be solved: ${brief.toLowerCase()}`, long);
@@ -873,6 +877,7 @@ export async function mount(root, options = {}) {
   }
 
   let guiding = 0;
+  let finishedScan = null;
   const scanner = new CameraScanner($("camera-frame"), $("camera-side"), {
     // The user sees the captured side come round to their left as the
     // next face turns towards the camera. Show both moves when needed.
@@ -882,7 +887,7 @@ export async function mount(root, options = {}) {
       if (via === undefined) {
         view.lookForCapture(face, state.scan ? 450 : 0);
       } else {
-        view.lookForCapture(via.face, 420, via.upsideDown);
+        view.lookForCapture(via.face, 420, via.quarters);
         guiding = setTimeout(() => view.lookForCapture(face, 520), 560);
       }
     },
@@ -893,7 +898,7 @@ export async function mount(root, options = {}) {
       }
       view.setRaw(state.scan);
     },
-    ondone: (samples, sources) => {
+    ondone: (samples, sources, lastFace) => {
       const n = state.size;
       const { sorted, made } = assembleScan(n, samples);
       const lying = placed(n, made.labels, made);
@@ -918,9 +923,12 @@ export async function mount(root, options = {}) {
       }
       const stickers = reviewStickers(n, doubt);
       const review = stickers.length ? { stickers, active: made.kind === "none" } : undefined;
-      state.painted.set(n, { facelets, palette, review });
+      const face = made.from.indexOf(lastFace);
+      const capture = { face, quarters: made.rot[face] };
+      const canSolve = made.kind !== "none" && made.kind !== "several";
+      finishedScan = { facelets, palette, review, capture, canSolve };
       const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
-      let note = "Read from the camera. Check it against your cube.";
+      let note = "Read from the camera.";
       if (made.kind === "placed" && made.moved.length === 0) {
         note = `Reoriented the ${faces(made.turned)} ${made.turned.length > 1 ? "faces" : "face"}. Check against your cube.`;
       } else if (made.kind === "placed") {
@@ -933,9 +941,6 @@ export async function mount(root, options = {}) {
         note = review?.active ? SCAN_REVIEW_NOTE : SCAN_RETAKE_NOTE;
       }
       $("paint-note").textContent = note;
-      // The cube just read goes to where it can be looked over and corrected.
-      setTab("paint");
-      if (review?.active) lookAtReview(review);
     },
     onstop: () => {
       // What was read of an unfinished scan is dropped; the painted cube is as it was.
@@ -943,9 +948,20 @@ export async function mount(root, options = {}) {
       view.setFrame(null);
       state.scan = null;
       placeCube();
+      const scan = finishedScan;
+      finishedScan = null;
+      if (scan) {
+        const { facelets, palette, review, capture } = scan;
+        state.painted.set(state.size, { facelets, palette, review, capture });
+        showTab("paint");
+        state.input = "paint";
+        paint.set(state.size, facelets, palette);
+      }
       setTouch();
-      show();
-      view.look(null);
+      show(false, scan?.canSolve);
+      if (scan?.review?.active) lookAtReview(scan.review);
+      else if (scan) lookAtScan(scan, 0);
+      else view.look(null);
     },
   });
 
@@ -1128,7 +1144,7 @@ export async function mount(root, options = {}) {
         [el("b", { text: count(moves.length, "move") }), ` in ${took}, found ${where}.`],
         result.optimal ? "No shorter solution exists. Press play, or step through it." : "Press play, or step through it.",
       ];
-      if (state.input !== "scramble") view.look(null);
+      if (state.input !== "scramble" && !painted().capture) view.look(null);
       if (narrow.matches) setTab("moves");
     }
     restStatus();
@@ -1283,13 +1299,19 @@ export async function mount(root, options = {}) {
   $("to-end").addEventListener("click", () => player.seek(player.length));
   $("scrub").addEventListener("input", (e) => player.seek(Number(e.target.value)));
 
-  for (const b of root.querySelectorAll(".speed button")) {
-    b.addEventListener("click", () => {
-      for (const other of root.querySelectorAll(".speed button")) other.setAttribute("aria-checked", String(other === b));
-      player.setSpeed(Number(b.dataset.speed));
-      keepLater();
-    });
+  const speedButtons = [...root.querySelectorAll("[data-speed]")];
+  const customSpeed = $("custom-speed");
+  customSpeed.min = String(MIN_SPEED);
+  customSpeed.max = String(MAX_SPEED);
+  customSpeed.title = `${MIN_SPEED}× to ${MAX_SPEED}×`;
+  function setSpeed(speed) {
+    player.setSpeed(speed);
+    customSpeed.value = String(player.speed);
+    for (const b of speedButtons) b.setAttribute("aria-checked", String(Number(b.dataset.speed) === player.speed));
+    keepLater();
   }
+  for (const b of speedButtons) b.addEventListener("click", () => setSpeed(Number(b.dataset.speed)));
+  customSpeed.addEventListener("change", () => setSpeed(customSpeed.valueAsNumber));
 
   for (const b of root.querySelectorAll(".modes button")) {
     b.addEventListener("click", () => {
@@ -1312,9 +1334,41 @@ export async function mount(root, options = {}) {
     }
   }
   $("arrows").addEventListener("click", () => setArrows($("arrows").getAttribute("aria-pressed") !== "true"));
-  $("reset-view").addEventListener("click", () => view.look(null));
+  function shownScan() {
+    if (state.scan || state.shows !== "painted") return null;
+    const cube = state.painted.get(state.size);
+    return cube?.capture ? cube : null;
+  }
+
+  function lookAtScan({ capture, palette }, ms = 450) {
+    if (scanOrientation === "capture") {
+      view.lookForCapture(capture.face, ms, capture.quarters);
+    } else {
+      const preferred = palette.indexOf(defaultPalette[0]);
+      const top = preferred >= 0 ? preferred : Math.max(0, palette.indexOf(BLACK_STICKER));
+      let front = palette.indexOf(STICKERS[2]);
+      // Even cubes get their colour scheme from their corners. If green
+      // shares the chosen top's axis, use an adjacent face instead.
+      if (front < 0 || front % 3 === top % 3) front = top % 3 === 2 ? 1 : 2;
+      view.lookWithTop(top, front, ms);
+    }
+  }
+
+  $("reset-view").addEventListener("click", () => {
+    const scan = shownScan();
+    if (scan) lookAtScan(scan);
+    else view.look(null);
+  });
 
   const settingsOptions = $("settings-options");
+  const scanOptions = $("scan-options");
+  function setScanOrientation(orientation) {
+    scanOrientation = orientation;
+    scanOptions.querySelector(`input[value="${orientation}"]`).checked = true;
+    const scan = shownScan();
+    if (scan) lookAtScan(scan);
+  }
+
   function setTopColour(colour) {
     settingsOptions.querySelector(`input[value="${colour}"]`).checked = true;
     const previous = defaultPalette;
@@ -1328,31 +1382,38 @@ export async function mount(root, options = {}) {
       paint.set(state.size, current.facelets, current.palette);
     }
     if (view.palette === previous) showPalette(defaultPalette);
+    const scan = shownScan();
+    if (scan && scanOrientation === "standard") lookAtScan(scan);
     keepLater();
   }
 
   $("open-settings").addEventListener("click", () => $("settings").showModal());
   let savingSettings = Promise.resolve();
-  settingsOptions.addEventListener("change", (event) => {
-    if (!event.target.matches('input[name="top-colour"]')) return;
-    const colour = event.target.value;
-    setTopColour(colour);
+  $("settings").addEventListener("change", (event) => {
+    const input = event.target;
+    if (!input.matches('input[type="radio"]')) return;
+    const top = input.name === "top-colour";
+    const key = top ? "top_colour" : "scan_orientation";
+    const storage = top ? TOP_COLOUR : SCAN_ORIENTATION;
+    const value = input.value;
+    if (top) setTopColour(value);
+    else setScanOrientation(value);
     const status = $("settings-status");
     status.hidden = true;
     savingSettings = savingSettings.then(async () => {
-      if (solver.config.local && solver.config.top_colour) {
+      if (solver.config.local && key in solver.config) {
         const response = await fetch("/api/settings", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ top_colour: colour }),
+          body: JSON.stringify({ [key]: value }),
         });
         if (!response.ok) throw new Error("Could not save settings");
-        try { localStorage.setItem(TOP_COLOUR, colour); } catch { /* The local server already saved it. */ }
+        try { localStorage.setItem(storage, value); } catch { /* The local server already saved it. */ }
       } else {
-        localStorage.setItem(TOP_COLOUR, colour);
+        localStorage.setItem(storage, value);
       }
     }).catch(() => {
-      if (!settingsOptions.querySelector(`input[value="${colour}"]`).checked) return;
+      if (!input.checked) return;
       status.textContent = "Could not save the preference. It will apply for this visit.";
       status.hidden = false;
     });
@@ -1376,10 +1437,12 @@ export async function mount(root, options = {}) {
       e.preventDefault();
       return;
     }
-    if (!player.length || t.closest?.("canvas")) return;
-    if (e.key === " " && !t.closest?.("button")) {
-      player.toggle();
+    if (!player.length) return;
+    if (e.key === " " && !t.closest?.("button:not(#solve), a[href], [role=button]")) {
+      if (!e.repeat) player.toggle();
       e.preventDefault();
+    } else if (t.closest?.("canvas")) {
+      return;
     } else if (e.key === "ArrowLeft") {
       player.step(-1);
       e.preventDefault();
@@ -1394,10 +1457,11 @@ export async function mount(root, options = {}) {
     setSize(was.size);
     $("scramble").value = String(was.scramble ?? "");
     if (was.painted && was.size <= PAINT_MAX) {
-      const { facelets, palette, followsDefault, note, review: savedReview } = was.painted;
+      const { facelets, palette, followsDefault, note, review: savedReview, capture: savedCapture } = was.painted;
       const stickers = Array.isArray(savedReview) ? savedReview.filter((i) => Number.isInteger(i) && i >= 0 && i < facelets.length).slice(0, 4) : [];
       const review = stickers.length ? { stickers, active: true } : undefined;
-      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette, review });
+      const capture = [0, 1, 2, 3, 4, 5].includes(savedCapture?.face) && [0, 1, 2, 3].includes(savedCapture?.quarters) ? savedCapture : undefined;
+      state.painted.set(was.size, { facelets, palette: followsDefault ? defaultPalette : palette, review, capture });
       if (note && !note.includes("ringed")) $("paint-note").textContent = note;
     }
     state.carried = typeof was.carried === "string" ? was.carried : null;
@@ -1406,11 +1470,7 @@ export async function mount(root, options = {}) {
       for (const other of root.querySelectorAll(".modes button")) other.setAttribute("aria-checked", String(other === b));
       state.mode = was.mode;
     }
-    for (const b of root.querySelectorAll(".speed button")) {
-      if (Number(b.dataset.speed) !== was.speed) continue;
-      for (const other of root.querySelectorAll(".speed button")) other.setAttribute("aria-checked", String(other === b));
-      player.setSpeed(was.speed);
-    }
+    setSpeed(was.speed);
     state.input = was.input;
     showTab(was.tab === "moves" && narrow.matches ? "moves" : was.input);
     setTouch();
@@ -1464,7 +1524,9 @@ export async function mount(root, options = {}) {
   const storedColour = defaultPalette === YELLOW_TOP ? "yellow" : "white";
   const preferred = solver.config.top_colour ?? storedColour;
   setTopColour(preferred === "yellow" ? "yellow" : "white");
+  setScanOrientation((solver.config.scan_orientation ?? scanOrientation) === "standard" ? "standard" : "capture");
   settingsOptions.disabled = false;
+  scanOptions.disabled = false;
   // Whether the browser can solve by itself decides what the page says about each size.
   await solver.startBrowser();
   renderSizes();

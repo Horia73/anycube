@@ -41,7 +41,7 @@ import { CubeModel } from "./cube-model.js";
 
 // The page's sticker colours, in face order U R F D L B.
 export const STICKERS = ["#f4f4ef", "#d92b3a", "#1faa59", "#f7d038", "#f58220", "#2f6fde"];
-const BLACK_STICKER = "#24252b";
+export const BLACK_STICKER = "#24252b";
 
 // The three opposite pairs of the standard sticker colours, in any orientation.
 export function oppositeCentres(palette) {

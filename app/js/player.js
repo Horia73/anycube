@@ -9,6 +9,8 @@ import { nextFrame } from "./cube-view.js";
 
 const QUARTER_MS = 1320; // one quarter turn at speed 1
 const CUE_SHARE = 0.75; // how long the arrows stand before a move, as a share of a quarter turn
+export const MIN_SPEED = 0.25;
+export const MAX_SPEED = 24;
 const same = (a, b) => a.every((colour, i) => colour === b[i]);
 
 export class Player {
@@ -65,6 +67,15 @@ export class Player {
   }
 
   setSpeed(speed) {
+    if (!Number.isFinite(speed)) return;
+    speed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
+    if (this.anim && speed !== this.speed) {
+      // Keep the same progress through the cue or turn at the new rate.
+      const now = performance.now();
+      const scale = this.speed / speed;
+      this.anim.start = now + (this.anim.start - now) * scale;
+      this.anim.ms *= scale;
+    }
     this.speed = speed;
   }
 

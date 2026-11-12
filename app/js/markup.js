@@ -30,6 +30,11 @@ export const APP_HTML = `
     <label><input type="radio" name="top-colour" value="white" checked><i class="orientation-white" aria-hidden="true"></i> White on top</label>
     <label><input type="radio" name="top-colour" value="yellow"><i class="orientation-yellow" aria-hidden="true"></i> Yellow on top</label>
   </fieldset>
+  <fieldset class="settings-options" id="scan-options" disabled>
+    <legend>Orientation after scanning</legend>
+    <label><input type="radio" name="scan-orientation" value="capture" checked> Keep the last scan position</label>
+    <label><input type="radio" name="scan-orientation" value="standard"> Use the default top colour</label>
+  </fieldset>
   <p id="settings-status" role="status" hidden></p>
   <form method="dialog"><button class="button" autofocus>Close</button></form>
 </dialog>
@@ -64,7 +69,7 @@ export const APP_HTML = `
         <button type="button" class="key" id="step-back" aria-label="One move back" title="One move back (left arrow)">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 6l-9 6 9 6z"/></svg>
         </button>
-        <button type="button" class="key play" id="play" aria-label="Play" title="Play or pause (space)">
+        <button type="button" class="key play" id="play" aria-label="Play" title="Play or pause (space)" aria-keyshortcuts="Space">
           <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-play"><path d="M8 5l12 7-12 7z"/></svg>
           <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-pause"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
         </button>
@@ -77,13 +82,18 @@ export const APP_HTML = `
       </div>
       <p class="counter" aria-live="off"><span id="at">0</span><span class="of">/<span id="total">0</span></span></p>
       <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="Position in the solution">
-      <div class="speed" role="radiogroup" aria-label="Speed">
-        <button type="button" role="radio" aria-checked="false" data-speed="0.5">½×</button>
-        <button type="button" role="radio" aria-checked="true" data-speed="1">1×</button>
-        <button type="button" role="radio" aria-checked="false" data-speed="2">2×</button>
-        <button type="button" role="radio" aria-checked="false" data-speed="3">3×</button>
-        <button type="button" role="radio" aria-checked="false" data-speed="6">6×</button>
-        <button type="button" role="radio" aria-checked="false" data-speed="12">12×</button>
+      <div class="speed" role="group" aria-label="Playback speed">
+        <div class="speed-presets" role="radiogroup" aria-label="Preset speeds">
+          <button type="button" role="radio" aria-checked="false" data-speed="0.5">½×</button>
+          <button type="button" role="radio" aria-checked="true" data-speed="1">1×</button>
+          <button type="button" role="radio" aria-checked="false" data-speed="1.5">1.5×</button>
+          <button type="button" role="radio" aria-checked="false" data-speed="2">2×</button>
+          <button type="button" role="radio" aria-checked="false" data-speed="3">3×</button>
+          <button type="button" role="radio" aria-checked="false" data-speed="4">4×</button>
+          <button type="button" role="radio" aria-checked="false" data-speed="6">6×</button>
+          <button type="button" role="radio" aria-checked="false" data-speed="12">12×</button>
+        </div>
+        <label class="speed-custom"><input type="number" id="custom-speed" step="any" inputmode="decimal" value="1" aria-label="Custom playback multiplier"><span aria-hidden="true">×</span></label>
       </div>
     </div>
   </section>

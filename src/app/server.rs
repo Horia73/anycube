@@ -11,7 +11,7 @@
 //! POST   /api/check        {"size": 3, "facelets": "..."}                     -> {"ok": true} or what is wrong
 //! GET    /api/scramble     ?size=3: a random-state scramble, for the sizes that have one
 //! GET    /api/config       what this server does
-//! POST   /api/settings     {"top_colour": "white" | "yellow"}
+//! POST   /api/settings     {"top_colour": "white" | "yellow", "scan_orientation": "capture" | "standard"} (either field or both)
 //! ```
 //!
 //! A search cannot be interrupted from inside, so the solvers run in a
@@ -25,7 +25,7 @@
 
 use super::assets;
 use crate::api::{self, check, solve, Input, Mode};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -332,9 +332,11 @@ fn read_settings(path: &Path) -> Value {
         .unwrap_or_else(|| json!({}))
 }
 
-fn write_top_colour(path: &Path, colour: &str) -> std::io::Result<()> {
+fn write_settings(path: &Path, updates: &Map<String, Value>) -> std::io::Result<()> {
     let mut settings = read_settings(path);
-    settings["top_colour"] = json!(colour);
+    for (key, value) in updates {
+        settings[key.as_str()] = value.clone();
+    }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -347,16 +349,17 @@ fn write_top_colour(path: &Path, colour: &str) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod settings_tests {
-    use super::{fs, json, read_settings, write_top_colour};
+    use super::{fs, json, read_settings, write_settings};
 
     #[test]
     fn orientation_is_replaced_without_losing_other_settings() {
         let path = std::env::temp_dir().join(format!("anycube-settings-test-{}.json", std::process::id()));
         fs::write(&path, r#"{"other":true}"#).unwrap();
-        write_top_colour(&path, "yellow").unwrap();
-        assert_eq!(read_settings(&path), json!({"top_colour": "yellow", "other": true}));
-        write_top_colour(&path, "white").unwrap();
-        assert_eq!(read_settings(&path), json!({"top_colour": "white", "other": true}));
+        write_settings(&path, json!({"top_colour": "yellow", "scan_orientation": "standard"}).as_object().unwrap()).unwrap();
+        write_settings(&path, json!({"top_colour": "white"}).as_object().unwrap()).unwrap();
+        assert_eq!(read_settings(&path), json!({"top_colour": "white", "scan_orientation": "standard", "other": true}));
+        write_settings(&path, json!({"scan_orientation": "capture"}).as_object().unwrap()).unwrap();
+        assert_eq!(read_settings(&path), json!({"top_colour": "white", "scan_orientation": "capture", "other": true}));
         fs::remove_file(path).unwrap();
     }
 }
@@ -378,10 +381,9 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
     let parsed = || serde_json::from_str::<Value>(&body).map_err(|_| error("bad_request", "the body is not JSON", false));
 
     match (&method, path.as_str()) {
-        (Method::Get, "/api/config") => respond_json(
-            request,
-            200,
-            json!({
+        (Method::Get, "/api/config") => {
+            let settings = read_settings(&shared.settings.lock().unwrap());
+            respond_json(request, 200, json!({
                 "max_size": shared.max_size,
                 "browser_sizes": api::BROWSER_SIZES,
                 "modes": ["fast", "normal"],
@@ -390,10 +392,11 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
                 "max_scramble_moves": api::MAX_SCRAMBLE_MOVES,
                 "repo_url": null,
                 "local": true,
-                "top_colour": if read_settings(&shared.settings.lock().unwrap())["top_colour"] == "yellow" { "yellow" } else { "white" },
+                "top_colour": if settings["top_colour"] == "yellow" { "yellow" } else { "white" },
+                "scan_orientation": if settings["scan_orientation"] == "standard" { "standard" } else { "capture" },
                 "version": env!("CARGO_PKG_VERSION"),
-            }),
-        ),
+            }))
+        }
         (Method::Post, "/api/settings") => {
             let origin = format!("http://{}", host);
             if request.headers().iter().any(|h| h.field.equiv("Origin") && h.value.as_str() != origin) {
@@ -408,13 +411,19 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
             let Ok(settings) = parsed() else {
                 return respond_json(request, 400, error("bad_request", "the body is not JSON", false));
             };
-            let Some(colour @ ("white" | "yellow")) = settings["top_colour"].as_str() else {
-                return respond_json(request, 400, error("bad_request", "top_colour must be white or yellow", false));
+            let Some(updates) = settings.as_object().filter(|updates| {
+                !updates.is_empty() && updates.iter().all(|(key, value)| {
+                    matches!((key.as_str(), value.as_str()),
+                        ("top_colour", Some("white" | "yellow")) |
+                        ("scan_orientation", Some("capture" | "standard")))
+                })
+            }) else {
+                return respond_json(request, 400, error("bad_request", "expected a valid top_colour or scan_orientation", false));
             };
-            if write_top_colour(&shared.settings.lock().unwrap(), colour).is_err() {
+            if write_settings(&shared.settings.lock().unwrap(), updates).is_err() {
                 return respond_json(request, 500, error("settings", "could not save settings", false));
             }
-            respond_json(request, 200, json!({"top_colour": colour}))
+            respond_json(request, 200, settings)
         }
         (Method::Get, "/api/health") => {
             let board = shared.board.lock().unwrap();

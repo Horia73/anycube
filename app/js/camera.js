@@ -43,7 +43,7 @@ export const SCAN_STEPS = [
   { face: 5, signs: ["round"], text: "Another quarter turn the same way. Keep the top on top." },
   { face: 1, signs: ["round"], text: "And once more the same way." },
   { face: 0, via: { face: 2 }, signs: ["round", "up"], text: "Round once more, then tip the top away from you, towards the camera." },
-  { face: 3, via: { face: 5, upsideDown: true }, signs: ["up", "up"], text: "Keep tipping the same way, two quarter turns, until the bottom faces the camera." },
+  { face: 3, via: { face: 5, quarters: 2 }, signs: ["up", "up"], text: "Keep tipping the same way, two quarter turns, until the bottom faces the camera." },
 ];
 
 // The small drawings: the face held to the camera, and an arrow for how
@@ -174,9 +174,9 @@ export class CameraScanner {
    * @param {HTMLElement} frame an empty element for the picture and its grid
    * @param {HTMLElement} side an empty element for the instructions and buttons
    * @param hooks `onstep(face)` when a face is asked for, `onface(face, colours)`
-   *   when one is captured (or taken back, with null), `ondone(samples, sources)`
-   *   with 6*n*n colours and six capture methods in facelet order (return a
-   *   warning to keep the scan open),
+   *   when one is captured (or taken back, with null), `ondone(samples, sources, lastFace)`
+   *   with 6*n*n colours and six capture methods in facelet order, and the
+   *   last face captured (return a warning to keep the scan open),
    *   `onstop()` when the camera is switched off.
    */
   constructor(frame, side, hooks) {
@@ -441,7 +441,7 @@ export class CameraScanner {
     this.step = open < 0 ? SCAN_STEPS.length : open;
     this.#show();
     if (this.step === SCAN_STEPS.length) {
-      const warning = this.hooks.ondone?.(this.faces.flat(), this.sources.slice());
+      const warning = this.hooks.ondone?.(this.faces.flat(), this.sources.slice(), face);
       if (warning) {
         this.heading.textContent = "Check the centre colours";
         this.text.textContent = warning;

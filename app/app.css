@@ -573,11 +573,8 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   align-items: center;
   gap: 4px 12px;
 }
-/* Where the cube's column is narrow (a small window, a tablet upright, a
-   phone) the slider goes on a row of its own, and narrower still the least
-   used buttons go. By the column's width, not the window's: beside the
-   panel the column can be narrow in a wide window. */
-@container (max-width: 640px) {
+/* The cube's column can be narrow even beside the panel in a wide window. */
+@container (max-width: 720px) {
   .transport {
     grid-template-columns: auto auto minmax(0, 1fr);
     grid-template-areas: "keys counter speed" "scrub scrub scrub";
@@ -587,12 +584,19 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
     justify-self: end;
   }
 }
+@container (max-width: 580px) {
+  .transport {
+    grid-template-areas: "keys counter scrub" "speed speed speed";
+    gap: 4px 8px;
+  }
+  .speed {
+    justify-self: start;
+  }
+}
 @container (max-width: 480px) {
   .speed button {
-    padding: 4px 6px;
+    padding: 4px 5px;
   }
-  .speed button[data-speed="0.5"],
-  .speed button[data-speed="12"],
   #to-start,
   #to-end {
     display: none;
@@ -678,10 +682,15 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 .speed {
   grid-area: speed;
   display: inline-flex;
+  align-items: center;
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px;
   background: var(--bg-2);
+}
+.speed-presets {
+  display: flex;
+  flex-wrap: wrap;
 }
 .speed button {
   border: 0;
@@ -696,6 +705,29 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   background: var(--panel);
   color: var(--ink);
   box-shadow: 0 0 0 1px var(--line-2);
+}
+.speed-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-inline-start: 3px;
+  padding-inline: 5px 7px;
+  border-inline-start: 1px solid var(--line);
+  color: var(--ink-2);
+  font: 500 0.78rem/1.2 var(--mono);
+}
+.speed-custom input {
+  width: 5.5ch;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: end;
+  appearance: textfield;
+}
+.speed-custom input::-webkit-inner-spin-button {
+  appearance: none;
 }
 
 /* The lower part of the panel: the solution, or the cube the camera is reading. */
