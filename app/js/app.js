@@ -30,7 +30,7 @@ const CAMERA_MAX = 7;
 const TOP_COLOUR = "anycube.top-colour";
 // Turning the cube 180° with the front held fixed exchanges both pairs.
 const YELLOW_TOP = [3, 4, 2, 0, 1, 5].map((face) => STICKERS[face]);
-const CENTRE_PROBLEM = "The centre colours don't form opposite pairs: white and yellow, red and orange, green and blue.";
+const CENTRE_PROBLEM = "The centre colours don't form opposite pairs: white (or black) and yellow, red and orange, green and blue.";
 const SCAN_REVIEW_NOTE = "Check the outlined stickers first. Pick the right colour, then tap a sticker to correct it.";
 const SCAN_RETAKE_NOTE = "The scan could not be reconstructed. Compare the colours in Paint or retake the scan.";
 
@@ -835,7 +835,7 @@ export async function mount(root, options = {}) {
       if (via === undefined) {
         view.lookForCapture(face, state.scan ? 450 : 0);
       } else {
-        view.lookForCapture(via, 420);
+        view.lookForCapture(via.face, 420, via.upsideDown);
         guiding = setTimeout(() => view.lookForCapture(face, 520), 560);
       }
     },

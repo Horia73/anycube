@@ -400,8 +400,9 @@ export class CubeView {
   }
 
   // The face pointed at the camera is on the far side of the cube.
-  lookForCapture(face, ms = 450) {
-    this.#glideTo(mul(SCAN_VIEW, TO_FRONT[face]), ms);
+  lookForCapture(face, ms = 450, upsideDown = false) {
+    const facing = upsideDown ? mul(about([0, 0, 1], Math.PI), TO_FRONT[face]) : TO_FRONT[face];
+    this.#glideTo(mul(SCAN_VIEW, facing), ms);
   }
 
   /** Looks straight along a face, edge or corner direction in cube coordinates. */

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CubeModel } from "../js/cube-model.js";
-import { sortColours, named, STICKERS } from "../js/colour.js";
+import { sortColours, named, oppositeCentres, STICKERS } from "../js/colour.js";
 import { arrange, assemble, assembleScan, cubeKey, fit, reviewStickers, structure } from "../js/scan-fit.js";
 
 function random(seed) {
@@ -72,6 +72,21 @@ test("scan review picks the most uncertain editable stickers", () => {
   assert.deepEqual(reviewStickers(3, doubt), [6, 3, 1, 0]);
   assert.deepEqual(reviewStickers(2, doubt.slice(0, 24)), [4, 6, 3, 1]);
   assert.deepEqual(reviewStickers(3, new Float32Array(54).fill(0.54)), []);
+});
+
+test("matte red and orange stay distinct on cubes with a black side", () => {
+  const colours = [[60, 55, 50], [115, 42, 36], [55, 110, 61], [175, 151, 99], [136, 65, 40], [50, 70, 110]];
+  const palette = ["#24252b", ...STICKERS.slice(1)];
+  for (const n of [2, 3]) {
+    const model = new CubeModel(n);
+    const truth = model.applyAll(model.solved(), model.parse("R U F2 D' B2 R2 L U' B L2 U2 F' D2 B'"));
+    const samples = Array.from(truth, (colour) => colours[colour]);
+    const { sorted, made } = assembleScan(n, samples);
+    assert.equal(made.kind, "taken");
+    const read = named(n, sorted, arrange(n, made.labels, made));
+    assert.ok(oppositeCentres(read.palette));
+    assert.deepEqual(Array.from(read.facelets, (colour) => read.palette[colour]), Array.from(truth, (colour) => palette[colour]));
+  }
 });
 
 test("what the outside of a cube says: real cubes pass, broken ones do not", () => {

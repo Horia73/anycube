@@ -550,9 +550,7 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   border-radius: 50%;
   background: var(--ok);
 }
-/* What is being read from each cell: a mark in its middle, in the page's
-   own colour for it, the sticker itself showing round it. Where the reading
-   could as well be another colour the mark is a ring. */
+/* The colour read from each cell, with the sticker visible around the mark. */
 .cam-grid i::after {
   content: "";
   width: 36%;
@@ -560,11 +558,6 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   border-radius: 28%;
   background: currentColor;
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.95), 0 0 0 3.5px rgba(0, 0, 0, 0.6);
-}
-.cam-grid i.unsure::after {
-  background: none;
-  border: 4px dashed currentColor;
-  box-sizing: border-box;
 }
 .stage.scanning .stage-tools,
 .stage.scanning .view-cube,

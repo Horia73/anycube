@@ -41,12 +41,14 @@ import { CubeModel } from "./cube-model.js";
 
 // The page's sticker colours, in face order U R F D L B.
 export const STICKERS = ["#f4f4ef", "#d92b3a", "#1faa59", "#f7d038", "#f58220", "#2f6fde"];
+const BLACK_STICKER = "#24252b";
 
 // The three opposite pairs of the standard sticker colours, in any orientation.
 export function oppositeCentres(palette) {
+  const slot = (colour) => colour === BLACK_STICKER ? 0 : STICKERS.indexOf(colour);
   return palette.slice(0, 3).every((colour, face) => {
-    const k = STICKERS.indexOf(colour);
-    return k >= 0 && palette[face + 3] === STICKERS[(k + 3) % 6];
+    const k = slot(colour);
+    return k >= 0 && slot(palette[face + 3]) === (k + 3) % 6;
   });
 }
 
@@ -68,7 +70,10 @@ function toLab([r, g, b]) {
 // nearly independent of the light. Used to find the page colour nearest a
 // group of stickers, where the group's mean has little noise left.
 export function feature(rgb) {
-  const [L, a, b] = toLab(rgb);
+  return labFeature(toLab(rgb));
+}
+
+function labFeature([L, a, b]) {
   return [L * 0.25, (100 * a) / (L + 60), (100 * b) / (L + 60)];
 }
 
@@ -500,9 +505,21 @@ export function classify(samples, n) {
 export function named(n, sorted, labels, doubt = sorted.doubt, second = sorted.second) {
   const nn = n * n;
   const groupColour = sorted.colours;
+  // A dark neutral group can be the black side of a cube. Compare its
+  // lightness to the other colours so dim lighting alone keeps white white.
+  const lab = groupColour.map(toLab);
+  const black = lab.map(([L, a, b], i) => {
+    if (L > 35 || Math.hypot(a, b) > 18) return false;
+    const other = lab.filter((_, k) => k !== i).map(([light]) => light).sort((p, q) => p - q);
+    return L <= other[2] - 8;
+  });
   // The page colour nearest each group, each used once.
   const reference = STICKERS.map((hex) => feature(hexToRgb(hex)));
-  const look = bestMatch(groupColour.map((c) => reference.map((r) => distance(feature(c), r))));
+  const blackReference = feature(hexToRgb(BLACK_STICKER));
+  const look = bestMatch(lab.map((c, i) => {
+    const measured = labFeature(c);
+    return reference.map((r, k) => distance(measured, k === 0 && black[i] ? blackReference : r));
+  }));
   // Red and orange are told apart by each other, not by the page's two: of
   // the two groups taken for them, the orange is the one nearer yellow in
   // hue and the stronger. (A camera can show a cube's orange as a bright
@@ -530,7 +547,7 @@ export function named(n, sorted, labels, doubt = sorted.doubt, second = sorted.s
   const palette = new Array(6);
   const seen = new Array(6);
   for (let k = 0; k < 6; k++) {
-    palette[name[k]] = STICKERS[look[k]];
+    palette[name[k]] = look[k] === 0 && black[k] ? BLACK_STICKER : STICKERS[look[k]];
     seen[name[k]] = groupColour[k].map(Math.round);
   }
   return { facelets, doubt, second: Int8Array.from(second, (k) => name[k]), palette, seen };

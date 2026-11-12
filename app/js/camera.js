@@ -23,7 +23,7 @@
 // picture (README, "Not done") would keep the feed and the detector and
 // put a session that follows moves in the place of the six steps.
 
-import { cellColour, guess, learn, similarReading, STICKERS } from "./colour.js";
+import { cellColour, guess, learn, similarReading } from "./colour.js";
 import { findFace, FACE_SCORE } from "./detect.js";
 
 // Names from the user's starting position. In facelet order the front is
@@ -42,8 +42,8 @@ export const SCAN_STEPS = [
   { face: 4, signs: ["round"], text: "Rotate the cube a quarter turn counterclockwise as seen from above. The captured face moves to your left." },
   { face: 5, signs: ["round"], text: "Another quarter turn the same way. Keep the top on top." },
   { face: 1, signs: ["round"], text: "And once more the same way." },
-  { face: 0, via: 2, signs: ["round", "up"], text: "Round once more, then tip the top away from you, towards the camera." },
-  { face: 3, via: 2, signs: ["down", "down"], text: "Tip back through the starting position until the bottom faces the camera." },
+  { face: 0, via: { face: 2 }, signs: ["round", "up"], text: "Round once more, then tip the top away from you, towards the camera." },
+  { face: 3, via: { face: 5, upsideDown: true }, signs: ["up", "up"], text: "Keep tipping the same way, two quarter turns, until the bottom faces the camera." },
 ];
 
 // The small drawings: the face held to the camera, and an arrow for how
@@ -54,7 +54,6 @@ const FACE = '<rect x="11" y="9" width="18" height="18" rx="3.5"/>';
 const SIGNS = {
   hold: `${FACE}<circle class="head" cx="20" cy="18" r="2.6"/>`,
   round: `${FACE}<path d="M5 31c8 6 22 6 29 1"/>${HEAD(35, 31.5, -32)}`,
-  down: `${FACE}<path d="M34 4c6 7 6 19 1 26"/>${HEAD(34.5, 31, 122)}`,
   up: `${FACE}<path d="M34 32c6 -7 6 -19 1 -26"/>${HEAD(34.5, 5, -122)}`,
 };
 
@@ -337,10 +336,7 @@ export class CameraScanner {
     return { corners: face.corners.map(([x, y]) => [x / look, y / look]), cells: face.cells, at: performance.now() };
   }
 
-  // Draws what was found over the picture: the outline of the face and, on
-  // each sticker, a mark in the page's own colour for what is being read
-  // there (a ring where it could as well be another colour), the sticker
-  // itself showing round it.
+  // Draw the detected face and the camera's reading over each sticker.
   #mark() {
     const box = this.over;
     const size = Math.round(box.clientWidth * Math.min(window.devicePixelRatio || 1, 2));
@@ -369,7 +365,6 @@ export class CameraScanner {
     const part = 0.18; // half the mark, as a share of a sticker
     for (let r = 0; r < n; r++) {
       for (let c = 0; c < n; c++) {
-        const read = guess(found.cells[r * n + c], found.seen);
         const [u, v] = [(c + 0.5) / n, (r + 0.5) / n];
         ctx.beginPath();
         [[-1, -1], [1, -1], [1, 1], [-1, 1]].forEach(([du, dv], i) => {
@@ -377,23 +372,14 @@ export class CameraScanner {
           i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
         });
         ctx.closePath();
-        const unsure = read.doubt > 0.7;
-        ctx.setLineDash([]);
         ctx.lineWidth = Math.max(5, size / 130);
         ctx.strokeStyle = "rgba(0,0,0,0.6)";
         ctx.stroke();
         ctx.lineWidth = Math.max(3, size / 200);
         ctx.strokeStyle = "#ffffff";
         ctx.stroke();
-        if (unsure) {
-          ctx.setLineDash([size / 90, size / 90]);
-          ctx.strokeStyle = STICKERS[read.colour];
-          ctx.stroke();
-          ctx.setLineDash([]);
-        } else {
-          ctx.fillStyle = STICKERS[read.colour];
-          ctx.fill();
-        }
+        ctx.fillStyle = css(found.cells[r * n + c]);
+        ctx.fill();
       }
     }
   }
@@ -406,8 +392,6 @@ export class CameraScanner {
     }
     // A face lost for a moment (a blur, a hand in the way) is kept for that moment.
     this.found = face ?? (this.found && performance.now() - this.found.at < 350 ? this.found : null);
-    // The colours as this cube has them: from the faces captured and the one in the picture now.
-    if (face) face.seen = this.#colours(face.cells);
     this.#mark();
     this.frame.classList.toggle("found", !!this.found);
     const say = this.found ? "Cube found" : "Looking for the cube. Or hold a face inside the grid.";
@@ -415,17 +399,7 @@ export class CameraScanner {
     const colours = sampleGrid(this.video, this.n, this.scratch);
     if (!colours) return;
     this.live = colours;
-    const seen = this.#colours(colours);
-    // Each cell of the grid carries a mark in the page's own colour for what
-    // is being read under it (the page's red over a sticker read as red),
-    // broken where the reading could as well be another colour; the sticker
-    // itself shows round the mark. The grid turns with the picture when
-    // that is mirrored.
-    [...this.grid.children].forEach((cell, i) => {
-      const read = guess(colours[i], seen);
-      cell.style.color = STICKERS[read.colour];
-      cell.classList.toggle("unsure", read.doubt > 0.7);
-    });
+    [...this.grid.children].forEach((cell, i) => (cell.style.color = css(colours[i])));
   }
 
   // What `guess` is to go by: the stickers captured so far and those in the picture now.
