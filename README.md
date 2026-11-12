@@ -20,7 +20,7 @@
 <p align="center">
   <a href="https://anycube.agenticweb.ro"><b>Try it in the browser</b></a> ·
   <a href="#results">Results</a> ·
-  <a href="#install">Install</a> ·
+  <a href="#install-local">Install local</a> ·
   <a href="#usage">Usage</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="bench/README.md">Benchmarks</a> ·
@@ -92,7 +92,9 @@ Measured on an Apple M1 Pro (10 cores, 16 GB) on the fixed scrambles in
 run held at once, tables included. Other solvers
 on the same scrambles: [`bench/README.md`](bench/README.md).
 
-## Install
+<a name="install"></a>
+
+## Install local
 
 One command, on macOS and Linux:
 
@@ -107,6 +109,24 @@ own directories and nothing needs `sudo`. Building needs Rust: if it is not
 installed, the installer stops and names the one command that installs it.
 `--uninstall` after the same line (`... | sh -s -- --uninstall`) removes it
 all. On Windows, or by hand: `cargo build --release` in a clone.
+
+### Install the web app (PWA)
+
+Open [anycube.agenticweb.ro](https://anycube.agenticweb.ro) in one of these
+browsers. You can install it straight from the browser without Rust.
+
+- On **iPhone or iPad** in Safari, tap **Share → Add to Home Screen** (look
+  under **More** if needed). Enable **Open as Web App** if shown, then tap
+  **Add**.
+- On **Mac** in Safari (macOS Sonoma 14 or later), choose **File → Add to
+  Dock**, then click **Add**.
+- On **Windows** in Edge, choose **⋯ → More tools → Apps →
+  Install this site as an app**. In Chrome, choose **⋮ → Cast, save, and share →
+  Install page as app**.
+
+The web app needs internet access to open. It solves 2×2×2 and 3×3×3 on your
+device and uses the server for 4×4×4 through 7×7×7. The local solver above
+runs offline.
 
 ## Usage
 
