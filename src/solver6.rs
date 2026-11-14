@@ -545,7 +545,6 @@ impl Inner6 {
         if first == 0 && accept(&[]) {
             return vec![Vec::new()];
         }
-        let (count, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
         for depth in first.max(1)..=first + 10 {
             if std::env::var_os("CUBE6_TRACE").is_some() {
                 eprintln!("    step 2 depth {}", depth);
@@ -555,24 +554,15 @@ impl Inner6 {
                 .filter(|r| r.0 <= depth)
                 .flat_map(|r| (0..self.moves2.len()).map(move |i| (r.1, i)))
                 .collect();
-            let found: Vec<Vec<u8>> = jobs
-                .par_iter()
-                .flat_map_iter(|&(wings, i)| {
-                    let mut run = Run2 {
-                        s6,
-                        inner: self,
-                        matched,
-                        accept,
-                        cap,
-                        count: &count,
-                        stop: &stop,
-                        out: Vec::new(),
-                        path: [0; 32],
-                    };
-                    run.dfs(&Node2 { wings, a, b }, i, depth, 0);
-                    run.out
-                })
-                .collect();
+            // The first `cap` in a mixed order of the jobs: the same every
+            // run, and not all of one labelling.
+            let mixed = crate::search::mixed_order(jobs.len());
+            let found = crate::search::InOrder::run(jobs.len(), cap, |job, order| {
+                let (wings, i) = jobs[mixed[job]];
+                let mut run = Run2 { s6, inner: self, matched, accept, job, order, out: Vec::new(), path: [0; 32] };
+                run.dfs(&Node2 { wings, a, b }, i, depth, 0);
+                run.out
+            });
             if !found.is_empty() {
                 return found;
             }
@@ -820,9 +810,9 @@ struct Run2<'a> {
     inner: &'a Inner6,
     matched: bool,
     accept: &'a (dyn Fn(&[u8]) -> bool + Sync),
-    cap: usize,
-    count: &'a AtomicUsize,
-    stop: &'a AtomicBool,
+    /// Its number among the searches of this depth, and the results of all of them (`InOrder`).
+    job: usize,
+    order: &'a crate::search::InOrder,
     out: Vec<Vec<u8>>,
     path: [u8; 32],
 }
@@ -846,14 +836,13 @@ impl Run2<'_> {
         if rem == 1 {
             if (self.accept)(&self.path[..=depth]) {
                 self.out.push(self.path[..=depth].to_vec());
-                if self.count.fetch_add(1, Relaxed) + 1 >= self.cap {
-                    self.stop.store(true, Relaxed);
+                if self.order.add(self.job) {
                     return true;
                 }
             }
             return false;
         }
-        if self.stop.load(Relaxed) {
+        if self.order.over(self.job) {
             return true;
         }
         for j in 0..self.inner.moves2.len() {

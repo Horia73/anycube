@@ -907,6 +907,11 @@ struct Node<N> {
 struct Search<'a> {
     e5: &'a Edges5,
     run: &'a Run,
+    /// Its number among the searches that run side by side, and the
+    /// results of all of them: the cap is kept in their order (`InOrder`),
+    /// so that what a phase returns is the same every run.
+    job: usize,
+    order: &'a crate::search::InOrder,
     path: [u8; 40],
     out: Vec<Vec<u8>>,
     ticks: u32,
@@ -916,11 +921,8 @@ impl Search<'_> {
     /// Records the path as a solution; true if this search should end.
     fn found(&mut self, depth: usize) -> bool {
         self.out.push(self.path[..depth].to_vec());
-        let n = self.run.count.fetch_add(1, Relaxed) + 1;
-        if n >= self.run.limits.cap {
-            self.run.stop.store(true, Relaxed);
-        }
-        self.out.len() >= self.run.limits.per_node || n >= self.run.limits.cap
+        self.run.count.fetch_add(1, Relaxed);
+        self.order.add(self.job) || self.out.len() >= self.run.limits.per_node
     }
 
     /// True if the phase has been told to stop.
@@ -930,7 +932,7 @@ impl Search<'_> {
         if self.ticks & 1023 != 0 {
             return false;
         }
-        if self.run.stop.load(Relaxed) {
+        if self.run.stop.load(Relaxed) || self.order.over(self.job) {
             return true;
         }
         if self.run.count.load(Relaxed) >= self.run.limits.floor
@@ -1029,18 +1031,17 @@ impl Edges5 {
                 // The nodes with the least slack not yet searched at this total.
                 let est = nodes[high - 1].est;
                 let low = nodes[..high].partition_point(|n| n.est < est);
-                let found: Vec<Found> = nodes[low..high]
-                    .par_iter()
-                    .with_max_len(1)
-                    .flat_map_iter(|n| {
-                        let mut s = Search { e5: self, run: &run, path: [0; 40], out: Vec::new(), ticks: 0 };
-                        if !run.stop.load(Relaxed) {
-                            search(&mut s, n, total - n.cost);
-                        }
-                        run.nodes.fetch_add(s.ticks as u64, Relaxed);
-                        s.out.into_iter().map(move |moves| Found { start: n.start, moves })
-                    })
-                    .collect();
+                // No more than the cap in all, the first of them in the order of the nodes.
+                let (group, room) = (&nodes[low..high], limits.cap.saturating_sub(out.len()));
+                let found: Vec<Found> = crate::search::InOrder::run(group.len(), room, |job, order| {
+                    let n = &group[job];
+                    let mut s = Search { e5: self, run: &run, job, order, path: [0; 40], out: Vec::new(), ticks: 0 };
+                    if !run.stop.load(Relaxed) {
+                        search(&mut s, n, total - n.cost);
+                    }
+                    run.nodes.fetch_add(s.ticks as u64, Relaxed);
+                    s.out.into_iter().map(|moves| Found { start: n.start, moves }).collect()
+                });
                 if trace && !found.is_empty() {
                     eprintln!(
                         "    total {:2}, slack {}: {:6} starts, {:6} found, {:10} positions so far",
@@ -1053,7 +1054,7 @@ impl Edges5 {
                 }
                 out.extend(found);
                 high = low;
-                if out.len() >= limits.keep || run.stop.load(Relaxed) {
+                if out.len() >= limits.keep || out.len() >= limits.cap || run.stop.load(Relaxed) {
                     break 'totals;
                 }
                 if out.len() >= limits.floor.max(1) && limits.deadline.is_some_and(|d| Instant::now() > d) {

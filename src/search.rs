@@ -12,6 +12,7 @@
 use crate::stage6::skip54;
 use rayon::prelude::*;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 const NONE: u8 = 255;
 
@@ -60,6 +61,98 @@ impl Hasher for Mixer {
     fn write_u64(&mut self, x: u64) {
         self.0 = (self.0.rotate_left(23) ^ x).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     }
+}
+
+/// The first results of a search that runs as jobs side by side, in the
+/// order of the jobs: what the jobs would give run one after the other and
+/// stopped at `cap` results, whichever of them gets there first on the
+/// day. (Stopping all of them at the first `cap` results found anywhere
+/// gives other results every run.)
+///
+/// Each job reports its results as it finds them (`add`), in an order of
+/// its own that does not change, and stops when told to (`over`). The
+/// jobs' results put together in the order of the jobs and cut at `cap`
+/// are then the same every time: a job is only told to stop once it and
+/// the jobs before it have `cap` results between them, and none of its
+/// later ones could be among the first `cap`.
+///
+/// The jobs are started in their order, so that little is searched past
+/// the job that fills the cap. Whoever wants results that differ from each
+/// other gives many small jobs in a mixed order (`mixed_order`).
+pub struct InOrder {
+    cap: usize,
+    found: Vec<AtomicUsize>,
+    /// The results of all jobs so far.
+    total: AtomicUsize,
+    /// The first job that, with the ones before it, has `cap` results.
+    full: AtomicUsize,
+}
+
+impl InOrder {
+    /// Runs `jobs` jobs, each given its number and this, and returns the
+    /// first `cap` of their results.
+    pub fn run<T: Send>(jobs: usize, cap: usize, job: impl Fn(usize, &InOrder) -> Vec<T> + Sync) -> Vec<T> {
+        let order = InOrder {
+            cap,
+            found: (0..jobs).map(|_| AtomicUsize::new(0)).collect(),
+            total: AtomicUsize::new(0),
+            full: AtomicUsize::new(if cap == 0 { 0 } else { usize::MAX }),
+        };
+        let next = AtomicUsize::new(0);
+        let mut done: Vec<(usize, Vec<T>)> = (0..rayon::current_num_threads())
+            .into_par_iter()
+            .flat_map_iter(|_| {
+                let mut mine = Vec::new();
+                loop {
+                    let j = next.fetch_add(1, Relaxed);
+                    if j >= jobs || order.over(j) {
+                        break;
+                    }
+                    let out = job(j, &order);
+                    if !out.is_empty() {
+                        mine.push((j, out));
+                    }
+                }
+                mine
+            })
+            .collect();
+        done.sort_by_key(|x| x.0);
+        let mut all: Vec<T> = done.into_iter().flat_map(|x| x.1).collect();
+        all.truncate(cap);
+        all
+    }
+
+    /// A result of `job`; true if the job need not go on.
+    pub fn add(&self, job: usize) -> bool {
+        self.found[job].fetch_add(1, Relaxed);
+        // Until all the jobs together have `cap` results, no part of them has.
+        if self.total.fetch_add(1, Relaxed) + 1 >= self.cap {
+            let mut sum = 0;
+            for (i, found) in self.found.iter().enumerate() {
+                sum += found.load(Relaxed);
+                if sum >= self.cap {
+                    self.full.fetch_min(i, Relaxed);
+                    break;
+                }
+            }
+        }
+        self.over(job)
+    }
+
+    /// Whether `job` need not go on.
+    #[inline(always)]
+    pub fn over(&self, job: usize) -> bool {
+        job >= self.full.load(Relaxed)
+    }
+}
+
+/// The numbers below `n` in a fixed order that has nothing to do with
+/// their size: for `InOrder`, whose first results should not all come
+/// from the same corner of a search.
+pub fn mixed_order(n: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by_key(|&i| (mixed(&(i as u32), 0), i));
+    order
 }
 
 /// A problem for `beam`: a state and the moves allowed.
@@ -457,6 +550,31 @@ mod tests {
 
     fn score(n: &(i32, i32)) -> u32 {
         ((3 - n.0).abs() + (3 - n.1).abs()) as u32
+    }
+
+    /// Jobs that find their results at different speeds give the same
+    /// first results every time: those of the jobs in their order.
+    #[test]
+    fn the_first_results_of_jobs_side_by_side_are_those_of_the_jobs_in_order() {
+        for _ in 0..20 {
+            let found = InOrder::run(40, 10, |job, order| {
+                let mut out = Vec::new();
+                // Job 3 has two results, every job from 7 up three; the early ones are the slow ones.
+                let mine = if job == 3 { 2 } else if job >= 7 { 3 } else { 0 };
+                for i in 0..mine {
+                    std::thread::sleep(std::time::Duration::from_micros(if job < 10 { 300 } else { 1 }));
+                    if order.over(job) {
+                        break;
+                    }
+                    out.push((job, i));
+                    if order.add(job) {
+                        break;
+                    }
+                }
+                out
+            });
+            assert_eq!(found, [(3, 0), (3, 1), (7, 0), (7, 1), (7, 2), (8, 0), (8, 1), (8, 2), (9, 0), (9, 1)]);
+        }
     }
 
     #[test]

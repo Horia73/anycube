@@ -23,7 +23,7 @@ use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
 use crate::tables::{gen_stage, load_or_gen, load_or_gen_quiet, table_dir, BitPerm, Bytes, Ranks};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 const GOAL_RL: u32 = 0xFF_0000;
 const GOAL_UD: u32 = 0x00_00FF;
@@ -370,16 +370,31 @@ impl Stage6 {
         if h == 0 {
             return vec![Vec::new()];
         }
-        let (count, stop) = (AtomicUsize::new(0), AtomicBool::new(false));
+        // The searches below every two first moves, in a mixed order: the
+        // first `cap` solutions in that order are the same every run, and
+        // differ from the first move on.
+        let firsts: Vec<(u8, u8)> = (0..54u8).flat_map(|m| (0..54u8).filter(move |&m2| !skip54(m, m2)).map(move |m2| (m, m2))).collect();
+        let mixed = crate::search::mixed_order(firsts.len());
         for depth in h..=h + 14 {
-            let found: Vec<Vec<u8>> = (0..54u8)
-                .into_par_iter()
-                .flat_map_iter(|m| {
-                    let mut run = Run1 { s: self, cap, count: &count, stop: &stop, out: Vec::new(), path: [0; 32] };
-                    run.dfs(&root, m, depth, 0);
+            let found = match depth {
+                1 => crate::search::InOrder::run(54, cap, |job, order| {
+                    let mut run = Run1 { s: self, job, order, out: Vec::new(), path: [0; 32] };
+                    run.dfs(&root, job as u8, depth, 0);
                     run.out
-                })
-                .collect();
+                }),
+                _ => crate::search::InOrder::run(firsts.len(), cap, |job, order| {
+                    let (m, m2) = firsts[mixed[job]];
+                    let next = [self.perms[X_IN].apply(m, root[0]), self.perms[OBL_A].apply(m, root[1]), self.perms[OBL_B].apply(m, root[2])];
+                    // As `Run1::enter` judges a state with moves to spare.
+                    if self.h1(&next) > depth - 1 || (next[0] == GOAL_RL && next[1] == next[2]) {
+                        return Vec::new();
+                    }
+                    let mut run = Run1 { s: self, job, order, out: Vec::new(), path: [0; 32] };
+                    run.path[0] = m;
+                    run.dfs(&next, m2, depth - 1, 1);
+                    run.out
+                }),
+            };
             if !found.is_empty() {
                 return found;
             }
@@ -555,9 +570,9 @@ impl crate::search::Problem for Step34<'_> {
 
 struct Run1<'a> {
     s: &'a Stage6,
-    cap: usize,
-    count: &'a AtomicUsize,
-    stop: &'a AtomicBool,
+    /// The first move, and the results of all of them (`InOrder`).
+    job: usize,
+    order: &'a crate::search::InOrder,
     out: Vec<Vec<u8>>,
     path: [u8; 32],
 }
@@ -582,8 +597,7 @@ impl Run1<'_> {
         if rem == 1 {
             if done {
                 self.out.push(self.path[..=depth].to_vec());
-                if self.count.fetch_add(1, Relaxed) + 1 >= self.cap {
-                    self.stop.store(true, Relaxed);
+                if self.order.add(self.job) {
                     return true;
                 }
             }
@@ -592,7 +606,7 @@ impl Run1<'_> {
         if done {
             return false;
         }
-        if self.stop.load(Relaxed) {
+        if self.order.over(self.job) {
             return true;
         }
         // Both tables are larger than the cache: the states one move on are
