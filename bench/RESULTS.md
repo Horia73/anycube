@@ -1845,3 +1845,116 @@ Shorter on every size from 3 up but two: the 15x15x15 is the same and the
 of the same code differ by that much. The times are the same or lower,
 but for the 5x5x5 (0.58 s to 0.65 s); sizes 4 to 7 hold about 0.4 GB less,
 the table of 554 MB being gone.
+
+## Any size: why the even cubes took three times as long, and the last moves of a matching (2026-11-14, branch `even-faster`)
+
+An 8x8x8 took 12.6 s where a 9x9x9 took 3.6 s. Step by step on the first
+cubes of each set (`CUBEN_TRACE=1`), the 8x8x8 spent 5 to 18 s matching its
+one row of centres (`src/rings.rs`), 3 s staging, 1.7 s on the innermost
+ring as a 6x6x6 and 2.5 s on the edges; the 9x9x9 matched its two rows in
+1.7 s.
+
+The row of an even cube that is matched with all its columns in one search
+has four centres, that of an odd cube three. Of the eight choices of sign,
+tried one after the other, a beam of 30,000 states arrived for one in four
+or five on a row of four (0.5 s when it did, 1.5 to 2 s when it did not),
+and for three in four on a row of three. Which ones arrive does not follow
+the starting score or the width (100,000 states: three in ten, and not the
+same ones).
+
+What a search that does not arrive ends on: from about its 30th level to
+its 60th every state it holds has the score 1, one pair of centres of one
+column on one axis that a single separating turn (the half turn exactly as
+deep as the row) would exchange. That turn exchanges the centres of the row
+in every column and on both axes it cuts, so it undoes the rest; the score,
+a sum over the columns, cannot see that. From nine such states an
+exhaustive search found the way every time: 3 to 5 moves that part nothing,
+then the turn.
+
+So the matching of a short row is now (`Ring::whole`):
+
+- one beam search per choice of sign, all eight a level at a time;
+- on every level, the states with at most two pairs of centres left (48 per
+  choice) are tried for an ending: up to 5 moves that part nothing and one
+  separating turn, searched exhaustively with, per column, axis and turn, a
+  table of the moves that column needs by itself (`Ending`);
+- the shortest matching of all choices is kept, and the searches stop one
+  level after the first.
+
+Two pairs, because on one or two of the twenty 8x8x8 cubes no search ever
+holds a state with one pair left, whatever the sign: there the last turn
+exchanges two pairs in two columns at once. (Random staged cubes made with face turns and
+half turns from the solved cube, as `rowtest` makes them, never showed
+this; `rowtest --states` takes cubes from a file.)
+
+The states of a short row are kept as ranks (24 bytes where the general
+state is 192), and the scores of all the moves from a state are the sum of
+one row of a table per column and axis.
+
+Row of four centres, random staged cubes (`anycube rowtest --size 8 --row 1`):
+
+| | Matched in one search | Moves | Seconds |
+|---|---|---:|---:|
+| Before: the choices one after the other (12 rows) | 8 of 12, the rest from the middle outwards | 32.8 | 5 to 18 on the cubes of the set |
+| Now (60 rows) | 60 of 60 | 28.6 | 0.7 |
+
+What the numbers of the new search are worth, 60 rows of four, moves:
+
+| Changed | Values | Moves |
+|---|---|---|
+| Pairs left where an ending is tried | 1, **2**, 3 | 30.8, 28.6, 27.8 (a third more time) |
+| Moves of an ending before its turn | 3, 4, **5**, 6 | 30.6, 29.6, 28.6, 28.5 (a third more time) |
+| States tried per choice and level | **48**, 200 | 28.6, 28.4 |
+| Levels after the first matching | 0, **1**, 2, 4 | 28.7, 28.7, 28.6, 28.6 |
+| States per level (in an earlier form of the search) | 2,000, 5,000, 10,000, **30,000** | 38.4, 38.2, 34.4, 29.2 |
+| Choices dropped when behind by so many half moves | 4, 6, 8, 12, **never** | 30.0, 29.0, 29.0, 28.8, 28.6 |
+
+A row of five centres (odd cubes from 9x9x9) is searched the same way now:
+18 of 20 rows in one search, 42.6 moves, where the way from the middle
+outwards took 54.7. A row of six is not: 1 or 2 rows in 10.
+
+The innermost ring of an even cube, as a 6x6x6 (`Solver6::inner_joint`):
+one beam search from up to 64 splits of the wings at once, before the six
+searches of one split each. On the 20 cubes of the 8x8x8 set:
+
+| | Found on | Moves | Seconds |
+|---|---|---:|---:|
+| Six searches, 100,000 states each (as before) | 20 of 20 | 23.05 | 1.3 |
+| One search from 6 splits, 100,000 states | 16 | 23.50 | 0.20 |
+| One search from 16 splits, 200,000 states | 17 | 23.00 | 0.36 |
+| One search from 64 splits, 200,000 states (now, the six searches where it finds nothing) | 17 | 22.71 | 0.34 |
+
+A beam that finds nothing there ends, as its comment says, one 3-layer half
+turn short with every pair of obliques made: the same kind of ending as the
+rows have, not yet searched exactly.
+
+Whole solves on the fixed sets (`anycube row`), the binary of `origin/main`
+(e6ba6b1) and the new one run one after the other for each size. Other
+sessions kept the machine busy throughout (load average 10 to 16), so the
+seconds are longer than a release would measure and only the two columns
+side by side mean anything; an 8x8x8 set run alone, on a quiet machine, came
+out at 3.7 s per cube (staging 1.7, the row 0.7, the innermost ring 0.6,
+edges 0.7).
+
+| Size | Cubes | Moves before | Moves now | Seconds before | Seconds now | Slowest before | Slowest now |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 20 | 233.50 | 228.10 | 13.10 | 3.82 | 19.83 | 7.00 |
+| 9 | 20 | 313.90 | 301.40 | 4.10 | 4.15 | 12.62 | 12.90 |
+| 10 | 20 | 401.20 | 396.35 | 13.07 | 6.22 | 26.81 | 14.29 |
+| 11 | 5 | 509.60 | 503.80 | 6.28 | 6.59 | 11.12 | 11.70 |
+| 12 | 5 | 619.40 | 608.20 | 19.66 | 11.13 | 29.27 | 16.24 |
+| 13 | 5 | 757.60 | 743.20 | 15.56 | 15.56 | 22.85 | 24.04 |
+| 14 | 5 | 867.00 | 875.60 | 23.29 | 16.35 | 27.27 | 22.24 |
+
+The even sizes take a half to a third of the time. The odd sizes take the
+same and are 6 to 14 moves shorter, by the row of five. The 14x14x14 is 9
+moves longer on its five cubes, which is what two runs of one version
+differ by on an even size (its staging is not repeatable yet).
+
+What an even cube still pays that an odd one does not: the first step of
+its staging is the exact search of the 6x6x6 (0.5 to 1 s, three cubes of
+nine moves each), its second axis starts with a beam search for each
+candidate where the 7x7x7 steps have one for all, and the innermost ring
+takes 0.6 s. The 4x4x4 and the 6x6x6 have solvers of their own and are as
+they were: the 4x4x4 runs to its clock of 4 s, and two thirds of a 6x6x6
+are the 5x5x5 searches of its 64 candidates.
