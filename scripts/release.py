@@ -36,7 +36,7 @@ BEGIN, END = "<!-- releases:begin -->", "<!-- releases:end -->"
 
 def scrambles(n):
     """The scramble file of a size and how many of its cubes are solved."""
-    old = {4: ("scrambles-1000.txt", 100), 5: ("scrambles555-200.txt", 200),
+    old = {4: ("scrambles-1000.txt", 100), 5: ("scrambles555-200.txt", 100),
            6: ("scrambles666-100.txt", 20), 7: ("scrambles777-100.txt", 20)}
     if n in old:
         name, count = old[n]

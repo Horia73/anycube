@@ -385,7 +385,7 @@ impl SolverN {
             let layers = [0, k, mid, last - k, last];
             let sub = g.sub_facelets(&w.f, &layers);
             // Without a clock: the same cube gives the same solution however busy the machine is.
-            let wide = Params5 { time_ms: 0, ..Params5::normal() };
+            let wide = Params5 { c_keep: 6000, time_ms: 0, ..Params5::normal() };
             let moves = if k > 1 {
                 self.six.outer.reduce(&sub, &wide)?
             } else {

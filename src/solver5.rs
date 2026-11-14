@@ -83,7 +83,7 @@ impl Params5 {
             stage_budget: 1_000_000,
             joint_extra: None,
             labellings: 16,
-            c_keep: 6000,
+            c_keep: 20000,
             p_keep: 700,
             e_keep: 100,
             pool: 100,

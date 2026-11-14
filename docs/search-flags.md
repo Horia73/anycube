@@ -32,7 +32,7 @@ only for a solution of 18 or fewer.
 | `--extra` | 2 | 3 | 3 | lengths of the first centre phase searched past its shortest |
 | `--a-budget` | 200000 | 1000000 | 10000000 | positions each of those lengths may take from the second on; a length that does not fit is searched in part; 0 is no limit |
 | `--labellings` | 8 | 16 | 16 | ways of splitting the wings tried per staging |
-| `--c-keep` | 2000 | 6000 | 20000 | results phase C aims for |
+| `--c-keep` | 2000 | 20000 | 20000 | results phase C aims for |
 | `--p-keep` | 300 | 700 | 2000 | results phase P aims for |
 | `--e-keep` | 50 | 100 | 400 | reduced cubes aimed for |
 | `--pool`, `--depth` | 30, 11 | 100, 11 | 400, 11 | reduced cubes whose 3x3x3 is searched past a quick solve, and the longest first phase of that search |
