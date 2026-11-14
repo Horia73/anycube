@@ -282,10 +282,19 @@ fn rowtest(args: &[String]) {
         (seed >> 33) as usize % n
     };
     let (mut found, mut total, mut ms) = (0usize, 0usize, 0.0);
+    // `--states`: staged cubes from a file instead, a line of 6·N·N digits each.
+    let given: Vec<Vec<u8>> = opt(args, "--states")
+        .map(|p| std::fs::read_to_string(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
+        .map(|text| text.lines().map(|l| l.trim().bytes().map(|b| b.wrapping_sub(b'0')).collect()).collect())
+        .unwrap_or_default();
+    let count = if given.is_empty() { count } else { given.len() };
     for trial in 0..count {
         let mut f = g.solved();
         for _ in 0..400 {
             g.apply(&mut f, staged[rnd(staged.len())]);
+        }
+        if let Some(state) = given.get(trial) {
+            f = state.clone();
         }
         let t = Instant::now();
         let result = ring.solve(&g, &f);

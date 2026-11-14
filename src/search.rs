@@ -19,7 +19,7 @@ const NONE: u8 = 255;
 /// order of their hashes, so that what the beam keeps of them is a sample;
 /// in the order of the states themselves it would be a cluster of similar
 /// ones. The sample depends on `salt`.
-fn mixed<N: Hash>(n: &N, salt: u32) -> u32 {
+pub(crate) fn mixed<N: Hash>(n: &N, salt: u32) -> u32 {
     let mut h = Mixer(0x9E37_79B9_7F4A_7C15 ^ salt as u64);
     n.hash(&mut h);
     (h.finish() >> 32) as u32
