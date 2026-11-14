@@ -647,20 +647,40 @@ impl Inner6 {
         salt: u32,
     ) -> Vec<Vec<u8>> {
         let root = self.node3(s6, f, inner);
-        let t = &solver.tabs;
-        let score = |n: &Node3| {
-            let mut halves = 0u32;
-            for axis in 0..3 {
-                let pat = |x: u32| self.rank8[((x >> (8 * axis)) & 255) as usize] as usize;
-                halves += self.joint[axis][(pat(n.centres) * 70 + pat(n.a)) * 70 + pat(n.b)] as u32;
-            }
-            let inner = (t.sigma[n.rank as usize] as u32).max(t.ct3[t.ct3_index(n.centres, n.parity)] as u32);
-            // In half moves, the inner cube weighing half as much again.
-            3 * inner + halves
-        };
         // No second try with other ties: a beam that fails here has run
         // onto a plateau that the others of the same start run onto as well.
-        crate::search::beam(&Reduce3 { inner: self, s6, solver }, &root, score, width, cap, 40, salt)
+        crate::search::beam(&Reduce3 { inner: self, s6, solver }, &root, |n| self.score3(solver, n), width, cap, 40, salt)
+    }
+
+    /// How the beam searches of step 3 rank states.
+    #[inline(always)]
+    fn score3(&self, solver: &Solver, n: &Node3) -> u32 {
+        let t = &solver.tabs;
+        let mut halves = 0u32;
+        for axis in 0..3 {
+            let pat = |x: u32| self.rank8[((x >> (8 * axis)) & 255) as usize] as usize;
+            halves += self.joint[axis][(pat(n.centres) * 70 + pat(n.a)) * 70 + pat(n.b)] as u32;
+        }
+        let inner = (t.sigma[n.rank as usize] as u32).max(t.ct3[t.ct3_index(n.centres, n.parity)] as u32);
+        // In half moves, the inner cube weighing half as much again.
+        3 * inner + halves
+    }
+
+    /// `reduce_beam` for several cubes in one search (`search::beam_roots`):
+    /// each with its inner cube and the moves it is behind the shortest.
+    /// The results are the shortest in total, each with the number of its cube.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reduce_beam_roots(
+        &self,
+        s6: &Stage6,
+        solver: &Solver,
+        cubes: &[(&[u8], Cube, usize)],
+        width: usize,
+        cap: usize,
+        salt: u32,
+    ) -> Vec<(usize, Vec<u8>)> {
+        let roots: Vec<(Node3, usize)> = cubes.iter().map(|(f, inner, late)| (self.node3(s6, f, inner), *late)).collect();
+        crate::search::beam_roots(&Reduce3 { inner: self, s6, solver }, &roots, |n| self.score3(solver, n), width, cap, 40, salt, &|_| true, 0)
     }
 
     /// Step 3: the shortest ways found (up to `cap`) from a cube with staged
@@ -1119,6 +1139,25 @@ impl Solver6 {
             }
         }
         out
+    }
+
+    /// Steps 2 and 3 from a staged cube with one beam search for several
+    /// splits at once (the most promising first, as `inner_steps` takes
+    /// them): up to `cap` results, the shortest in total that it finds.
+    /// Nothing if the beam runs onto its plateau, which one beam does more
+    /// often than the best of several.
+    pub(crate) fn inner_joint(&self, f1: &[u8], beam: usize, splits: usize, cap: usize) -> Vec<Partial> {
+        let found: Vec<(Vec<u8>, Vec<u8>)> = self.splits(f1, false).into_iter().take(splits).collect();
+        let least = found.iter().map(|x| x.0.len()).min().unwrap_or(0);
+        let cubes: Vec<(&[u8], Cube, usize)> = found.iter().map(|(sp, f2)| (&f2[..], self.inner_cube(f2), sp.len() - least)).collect();
+        let reds = self.inner.reduce_beam_roots(&self.s6, &self.solver4, &cubes, beam, cap, 0);
+        reds.into_iter()
+            .map(|(i, red)| {
+                let (sp, f2) = &found[i];
+                let moves: Vec<u8> = sp.iter().chain(red.iter()).copied().collect();
+                (moves, [0, sp.len(), red.len()], self.apply(f2, &red))
+            })
+            .collect()
     }
 
     /// Solves a cube given as 216 facelets (faces U R F D L B, row by row).

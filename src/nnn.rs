@@ -53,6 +53,10 @@ const SIX_BEAM: usize = 100_000;
 /// the shortest of more splits makes up for some of that.
 const SIX_SPLITS: usize = 6;
 
+/// Before that, one beam search from many splits at once, and its width.
+const JOINT_SPLITS: usize = 64;
+const JOINT_BEAM: usize = 200_000;
+
 pub struct SolverN {
     /// The 6x6x6 solver, whose parts are used one by one: its 4x4x4 and
     /// 5x5x5 solvers, its staging, and its inner steps.
@@ -355,7 +359,13 @@ impl SolverN {
             w.reaxis(half - 1, half - 1)?;
             let layers = [0, half - 2, half - 1, half, half + 1, last];
             let sub = g.sub_facelets(&w.f, &layers);
-            let found = self.six.inner_steps(&[], &sub, 0, SIX_BEAM, SIX_SPLITS);
+            // One search for many splits first: a sixth of the time of a
+            // search for each of a few, and as short where it finds
+            // anything, which is on five cubes in six.
+            let mut found = self.six.inner_joint(&sub, JOINT_BEAM, JOINT_SPLITS, 4);
+            if found.is_empty() {
+                found = self.six.inner_steps(&[], &sub, 0, SIX_BEAM, SIX_SPLITS);
+            }
             let best = found.iter().min_by_key(|c| c.0.len()).ok_or_else(|| none("reduction of the innermost ring", &layers))?;
             w.apply(&best.0, &[1, half - 1, half]);
             w.rehome(half - 1, half - 1)?;
