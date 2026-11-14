@@ -43,6 +43,8 @@ moves**.
 - **4x4x4 to 7x7x7**: a solver written for each size, tuned for length.
 - **8x8x8 and up**: one general solver that does not know the size. It treats
   groups of layers as smaller cubes and reuses the solvers above.
+- The same cube gives the same solution on every run: nothing in a solve
+  goes by the clock.
 - Every solution is applied to a full model of the cube and checked before it
   is printed.
 

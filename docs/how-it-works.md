@@ -13,6 +13,13 @@ where they fit in memory. Three things keep the solutions short:
 - **Every symmetry is used**: the cube may end in any orientation and the
   phases may run along any axis.
 
+The same cube gives the same solution on every run and on every machine.
+No solver stops by a clock (unless `--time` asks for one): what ends a
+search is a count of results or of positions. The searches run on all
+cores, and where they are cut short the count is kept in a fixed order of
+their parts (`search::InOrder`, `search::in_order_until`), not at whatever
+the threads had reached.
+
 ## Any size (`src/nnn.rs`)
 
 Some layers of a large cube, taken together, behave like a small cube: pick
@@ -110,6 +117,8 @@ Tsai's 8-step method) and now has three stages:
    1 and 2. An exact table over all 9.47 billion centre states makes the centre
    part of the search perfect. The last move is tested against the wings
    first, which rejects almost all of them without looking at the centres.
+   The phase ends when it has visited 30 million positions (and has an
+   endpoint) or collected 10,000 endpoints.
 2. **Phase 3** (`U D F B R2 L2 Uw2 Rw2 Fw2`): pair the 12 dedges and solve the
    centres, as in TPR, with an exact table of the pairing permutation.
 3. **3x3x3**: Kociemba's two-phase algorithm on the reduced cube, with an exact

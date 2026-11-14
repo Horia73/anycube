@@ -1929,12 +1929,9 @@ turn short with every pair of obliques made: the same kind of ending as the
 rows have, not yet searched exactly.
 
 Whole solves on the fixed sets (`anycube row`), the binary of `origin/main`
-(e6ba6b1) and the new one run one after the other for each size. Other
-sessions kept the machine busy throughout (load average 10 to 16), so the
-seconds are longer than a release would measure and only the two columns
-side by side mean anything; an 8x8x8 set run alone, on a quiet machine, came
-out at 3.7 s per cube (staging 1.7, the row 0.7, the innermost ring 0.6,
-edges 0.7).
+(e6ba6b1) and the new one run one after the other for each size, nothing
+else running. Of an 8x8x8 the 3.7 s are staging 1.7, the row 0.7, the
+innermost ring 0.6, edges 0.7.
 
 | Size | Cubes | Moves before | Moves now | Seconds before | Seconds now | Slowest before | Slowest now |
 |---:|---:|---:|---:|---:|---:|---:|---:|
@@ -1949,7 +1946,8 @@ edges 0.7).
 The even sizes take a half to a third of the time. The odd sizes take the
 same and are 6 to 14 moves shorter, by the row of five. The 14x14x14 is 9
 moves longer on its five cubes, which is what two runs of one version
-differ by on an even size (its staging is not repeatable yet).
+differed by on an even size (its staging was not repeatable; see the
+next section).
 
 What an even cube still pays that an odd one does not: the first step of
 its staging is the exact search of the 6x6x6 (0.5 to 1 s, three cubes of
@@ -1958,3 +1956,122 @@ candidate where the 7x7x7 steps have one for all, and the innermost ring
 takes 0.6 s. The 4x4x4 and the 6x6x6 have solvers of their own and are as
 they were: the 4x4x4 runs to its clock of 4 s, and two thirds of a 6x6x6
 are the 5x5x5 searches of its 64 candidates.
+
+## The same cube, the same solution; 4x4x4 and 6x6x6 in less time (2026-11-14, evening, branch `even-faster`)
+
+Two runs of the same cube gave different solutions: every 8x8x8 cube, one
+4x4x4 in three, one 5x5x5 in five (with or without its clock). Found by
+printing a fingerprint of the moves after every step and comparing runs.
+Five things, all of one kind (threads sharing a counter, and the result
+being what they had reached when it ran out), and two clocks:
+
+- the first step of the 6x6x6 staging, with which every even cube from
+  8x8x8 up begins, and the split of the inner wings (6x6x6, and the
+  innermost ring of the even cubes) stopped every thread at the first so
+  many solutions found anywhere. They now return the first in the order of
+  their jobs, the jobs started in that order (`search::InOrder`): many
+  small jobs in a mixed order, so that the solutions still differ from the
+  first move on. (Taking the first in the plain order of the search made
+  the 8x8x8 4 moves longer on six cubes: its solutions were all alike.)
+- the cap of the 5x5x5 edge phases: the same.
+- the staging of the 5x5x5 kept a staging if it was within 3 moves of the
+  shortest known when it was found. Now: within 3 of the shortest of all.
+- a level of that staging that turned out larger than planned ended at a
+  count of positions shared by the threads, on one cube in five. The count
+  is now kept in the order of the jobs (`search::in_order_until`).
+- the 3x3x3 of many reduced cubes (`Two3::finish`): each cube of a step was
+  searched for a solution within the best total of the moment, so the
+  cubes handed to the next step differed. Only the solutions that reach
+  the best total of their step are kept, which are found on every run.
+- the 4x4x4 ran by a clock (4 s, shared out between its phases) and the
+  5x5x5 had one (4 s, rarely reached). Neither has one now.
+
+Two runs of the new code, every solution compared move for move: 0 of 100
+4x4x4, 0 of 200 5x5x5, 0 of 20 each of 6x6x6, 7x7x7, 8x8x8, 9x9x9 and
+10x10x10 differ.
+
+### 4x4x4
+
+Where its 2.7 s went (60 cubes): joint phase 1.56 s, always to its share
+of the clock, 54 cubes in 60 (64 million positions, 6300 endpoints of the
+10,000 it may collect); phase 3 0.33 s; the 3x3x3 of the reductions 0.91 s
+(48 searches to a first phase of 13, see the section on the 3x3x3 above).
+
+The joint phase by itself, on a fixed piece of work (all sequences of up to
+13 moves for 8 cubes, 468 million positions): 49 million positions a second
+before, 61 million now. Where the wings are along the path is kept from one
+sequence to the next (it was worked out from the first move for every
+sequence one move from its end), and the entries of the exact centre table
+for all next moves are asked for before the first is read. Asking for the
+entries of the small near table ahead as well changed nothing.
+
+What ends the joint phase is now a budget of positions, counted in a fixed
+order of its jobs (one job for every two first moves, in a mixed order), so
+the endpoints are the same on every run and every machine. 100 cubes, no
+clock anywhere:
+
+| Joint phase, million positions | Moves | Seconds | Slowest |
+|---:|---:|---:|---:|
+| 1 (60 cubes) | 41.40 | 0.74 | 1.6 |
+| 10 (60 cubes) | 40.73 | 1.24 | 2.1 |
+| 20 | 40.59 | 1.47 | 3.1 |
+| **30** | **40.55** | **1.66** | 3.1 |
+| 45 | 40.52 | 1.90 | 3.5 |
+| 64 | 40.46 | 2.27 | 8.6 |
+| 150 (60 cubes) | 40.45 | 3.00 | 7.7 |
+| before: the clock | 40.42 to 40.44 | 2.70 to 2.81 | 4.1 to 4.8 |
+
+Every doubling is worth about 0.05 moves. The default is 30 million: a
+tenth of a move more than before in 1.7 s for 2.7 s. `--joint-nodes 64`
+is what the clock used to give, in 2.3 s. `--mode fast`: 41.37 in 0.28 s
+(41.42 in 0.29 s). `--mode full` has a budget of 400 million positions
+where it had 8 s: 40.00 on 8 cubes both ways, 14.5 s for 16.4 s.
+
+### 6x6x6
+
+Where its 7.6 s went (3 cubes): staging 0.7 to 1.3 s, the inner reduction
+2.9 s (twelve beam searches: six stagings, two splits each), then the
+5x5x5 of the candidates: phase P 1.1 to 2.1 s, phase E 1.2 to 1.6 s, the
+3x3x3 0.5 to 0.8 s.
+
+The inner reduction as one beam search for all the stagings and their
+splits (`Solver6::inner_joint_many`), each as many moves behind as it is
+longer than the shortest, the twelve searches where it finds nothing. 20
+cubes:
+
+| Inner reduction | Moves | Seconds |
+|---|---:|---:|
+| twelve searches of 100,000 states (as before) | 107.90 | 7.56 |
+| one of 100,000, 8 splits a staging, 16 results of two lengths | 108.00 | 6.00 |
+| one of 200,000, the same | 107.75 | 5.01 |
+| one of 300,000, the same | 107.80 | 5.68 |
+| one of 200,000, 16 splits a staging | 107.90 | 5.36 |
+| **one of 200,000, 32 results of three lengths** | **107.65** | **5.21** |
+
+In `--mode fast` it does not pay (110.75 in 3.3 s with 100,000 states,
+111.30 in 2.5 s with 50,000, against 110.80 in 3.3 s) and is left out.
+
+### Every size, old and new one after the other, nothing else running
+
+| Size | Cubes | Moves before | Moves now | Seconds before | Seconds now |
+|---:|---:|---:|---:|---:|---:|
+| 4 | 100 | 40.42 | 40.55 | 2.70 | 1.75 |
+| 5 | 200 | 67.28 | 67.34 | 0.85 | 0.70 |
+| 6 | 20 | 107.85 | 107.65 | 8.46 | 5.9 |
+| 7 | 20 | 152.25 | 152.25 | 3.54 | 3.5 to 3.9 |
+| 8 | 20 | 227.95, 228.50 | 227.35 | 3.8 to 4.0 | 3.8 to 4.5 |
+| 9 | 20 | 301.40 | 301.40 | 4.3 | 4.7 |
+| 10 | 20 | 397.20 | 400.40 | 7.9 | 7.2 to 8.7 |
+
+("Before" is the branch as of this morning's section, which had the
+8x8x8 at 3.8 s already.) The seconds of sizes 7 to 10 moved by a fifth
+between two runs of the same binary that evening, so their two columns are
+the same. The 10x10x10 is 3 moves longer on its 20 cubes, the 8x8x8 a move
+shorter: other solutions of the first staging step, no better or worse on
+the whole.
+
+A mistake to remember: for most of the day the load average of 10 to 16
+was taken for other sessions' work. It was this session's own benchmark,
+which keeps all ten cores busy by itself, and twice two of its own jobs
+running at once.
+
