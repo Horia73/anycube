@@ -146,6 +146,83 @@ impl InOrder {
     }
 }
 
+/// Jobs side by side whose results count only up to the job at which
+/// they add up to enough, in the order of the jobs: for a search with a
+/// budget that is to return the same every run. Every job is started in
+/// its order and runs to its end, returning its results and its weight
+/// (positions visited, say); `enough` is asked after each job in turn,
+/// with the weight and the number of results of the jobs up to it, and the
+/// first time it says yes the jobs after that one are stopped (they ask
+/// `Until::over`) and what they found is dropped. Returns the results that
+/// count, their weight, and how many jobs they are of (all of them, if the
+/// jobs were not cut short).
+///
+/// A budget that every thread counts down and that stops them all when
+/// it runs out is simpler, and what the threads have reached by then is
+/// different every run.
+pub fn in_order_until<T: Send>(
+    jobs: usize,
+    enough: impl Fn(u64, usize) -> bool + Sync,
+    job: impl Fn(usize, &Until) -> (Vec<T>, u64) + Sync,
+) -> (Vec<T>, u64, usize) {
+    struct Front {
+        done: Vec<Option<(u64, usize)>>,
+        at: usize,
+        weight: u64,
+        results: usize,
+        cut: bool,
+    }
+    let until = Until { stop_at: AtomicUsize::new(usize::MAX) };
+    let next = AtomicUsize::new(0);
+    let front = std::sync::Mutex::new(Front { done: vec![None; jobs], at: 0, weight: 0, results: 0, cut: false });
+    let mut parts: Vec<(usize, Vec<T>)> = (0..rayon::current_num_threads())
+        .into_par_iter()
+        .flat_map_iter(|_| {
+            let mut mine = Vec::new();
+            loop {
+                let j = next.fetch_add(1, Relaxed);
+                if j >= jobs || until.over(j) {
+                    break;
+                }
+                let (out, weight) = job(j, &until);
+                // The jobs done so far, as far as they are all done in their order.
+                let mut front = front.lock().unwrap();
+                front.done[j] = Some((weight, out.len()));
+                while !front.cut && front.at < jobs {
+                    let Some((weight, results)) = front.done[front.at] else { break };
+                    front.weight += weight;
+                    front.results += results;
+                    front.at += 1;
+                    if front.at < jobs && enough(front.weight, front.results) {
+                        front.cut = true;
+                        until.stop_at.fetch_min(front.at, Relaxed);
+                    }
+                }
+                drop(front);
+                mine.push((j, out));
+            }
+            mine
+        })
+        .collect();
+    parts.sort_by_key(|part| part.0);
+    let front = front.into_inner().unwrap();
+    let upto = if front.cut { front.at } else { jobs };
+    (parts.into_iter().filter(|part| part.0 < upto).flat_map(|part| part.1).collect(), front.weight, upto)
+}
+
+/// What a job of `in_order_until` asks whether to go on.
+pub struct Until {
+    stop_at: AtomicUsize,
+}
+
+impl Until {
+    /// Whether `job` need not go on: enough was found before it.
+    #[inline(always)]
+    pub fn over(&self, job: usize) -> bool {
+        job >= self.stop_at.load(Relaxed)
+    }
+}
+
 /// The numbers below `n` in a fixed order that has nothing to do with
 /// their size: for `InOrder`, whose first results should not all come
 /// from the same corner of a search.
@@ -206,6 +283,12 @@ pub fn fetch(table: &[u8], index: usize) {
     }
     #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
     let _ = (table, index);
+}
+
+/// `fetch` for an entry of a table of anything.
+#[inline(always)]
+pub fn fetch_at<T>(entry: &T) {
+    fetch(unsafe { std::slice::from_raw_parts(entry as *const T as *const u8, 1) }, 0);
 }
 
 /// States made and asked for (`Problem::prefetch`) before the first of them is scored.
@@ -574,6 +657,27 @@ mod tests {
                 out
             });
             assert_eq!(found, [(3, 0), (3, 1), (7, 0), (7, 1), (7, 2), (8, 0), (8, 1), (8, 2), (9, 0), (9, 1)]);
+        }
+    }
+
+    /// A budget kept in the order of the jobs cuts at the same job however
+    /// long each of them takes.
+    #[test]
+    fn a_budget_is_kept_in_the_order_of_the_jobs() {
+        for round in 0..20u64 {
+            let (found, weight, jobs) = in_order_until(
+                50,
+                |weight, _| weight >= 100,
+                |job, until| {
+                    // Slow and fast jobs in turn, differently every round.
+                    std::thread::sleep(std::time::Duration::from_micros((job as u64 * 37 + round * 11) % 5 * 100));
+                    if until.over(job) {
+                        return (Vec::new(), 0);
+                    }
+                    (vec![job], 9)
+                },
+            );
+            assert_eq!((found, weight, jobs), ((0..12).collect::<Vec<_>>(), 108, 12));
         }
     }
 

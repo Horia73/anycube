@@ -70,11 +70,12 @@ impl Params5 {
             pool: 30,
             depth: 11,
             deeper: Vec::new(),
-            time_ms: 800,
+            time_ms: 0,
         }
     }
 
-    /// Under five seconds per cube.
+    /// Under a second per cube on most, two on the slowest. No clock in any
+    /// mode: the same cube gives the same solution however busy the machine is.
     pub fn normal() -> Params5 {
         Params5 {
             staged: 1200,
@@ -88,7 +89,7 @@ impl Params5 {
             pool: 100,
             depth: 11,
             deeper: vec![(12, 30), (13, 8)],
-            time_ms: 4000,
+            time_ms: 0,
         }
     }
 

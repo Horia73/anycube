@@ -184,8 +184,8 @@ impl Two3 {
     /// `first` moves. Then, for each step `(depth, count)`, the `count` cubes with the shortest
     /// totals so far are searched to `depth`, each only for a solution that does not make
     /// the best total longer. Past `deadline` every cube takes the first solution there is and
-    /// the steps are left out. Returns a solution for every cube, in the order given; the
-    /// shortest total, and the first cube that has it, do not depend on the cores.
+    /// the steps are left out. Returns a solution for every cube, in the order given: the
+    /// same ones on every run (without a deadline).
     pub fn finish(
         &self,
         t: &T3,
@@ -217,8 +217,15 @@ impl Two3 {
                     Some((k, sol))
                 })
                 .collect();
+            // A cube was searched for a solution within the best total of
+            // the moment, which depends on which cubes were through by
+            // then: a solution that does not reach the best total of the
+            // step was found on some runs and not on others. Only the ones
+            // that reach it are found every time, and only they are kept,
+            // so that the next step starts from the same cubes on every run.
+            let best = best.into_inner();
             for (k, sol) in deeper {
-                if sol.len() < found[k].len() {
+                if cubes[k].0 + sol.len() <= best && sol.len() < found[k].len() {
                     found[k] = sol;
                 }
             }
