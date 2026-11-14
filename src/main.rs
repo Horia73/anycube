@@ -189,6 +189,7 @@ fn params6(args: &[String]) -> anycube::solver6::Params6 {
         finals: num("--finals", d.finals),
         budget: opt(args, "--budget").and_then(|s| s.parse().ok()).unwrap_or(d.budget),
         beam: num("--beam", d.beam),
+        joint: num("--joint", d.joint),
         outer,
     }
 }

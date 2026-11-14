@@ -658,7 +658,8 @@ impl Inner6 {
 
     /// `reduce_beam` for several cubes in one search (`search::beam_roots`):
     /// each with its inner cube and the moves it is behind the shortest.
-    /// The results are the shortest in total, each with the number of its cube.
+    /// The results are the shortest in total and those of `more` lengths
+    /// after them, up to `cap` of each, each with the number of its cube.
     #[allow(clippy::too_many_arguments)]
     pub fn reduce_beam_roots(
         &self,
@@ -668,9 +669,10 @@ impl Inner6 {
         width: usize,
         cap: usize,
         salt: u32,
+        more: usize,
     ) -> Vec<(usize, Vec<u8>)> {
         let roots: Vec<(Node3, usize)> = cubes.iter().map(|(f, inner, late)| (self.node3(s6, f, inner), *late)).collect();
-        crate::search::beam_roots(&Reduce3 { inner: self, s6, solver }, &roots, |n| self.score3(solver, n), width, cap, 40, salt, &|_| true, 0)
+        crate::search::beam_roots(&Reduce3 { inner: self, s6, solver }, &roots, |n| self.score3(solver, n), width, cap, 40, salt, &|_| true, more)
     }
 
     /// Step 3: the shortest ways found (up to `cap`) from a cube with staged
@@ -948,8 +950,19 @@ pub struct Params6 {
     /// States per level of the beam search that does step 3 otherwise; 0
     /// sends every cube the quick way.
     pub beam: usize,
+    /// States per level of one beam search of step 3 for all the stagings
+    /// of a hold and their splits at once (`inner_joint_many`), which is
+    /// tried first: where it finds anything, the searches of one staging
+    /// and split each are left out. 0 for those searches alone.
+    pub joint: usize,
     pub outer: Params5,
 }
+
+/// The joint search of step 3: splits taken of each staging, results kept
+/// per length, and lengths after the first.
+const JOINT_SPLITS: usize = 8;
+const JOINT_CAP: usize = 32;
+const JOINT_MORE: usize = 2;
 
 impl Params6 {
     /// A few seconds per cube. The 5x5x5 is the quick part, so it keeps
@@ -957,7 +970,7 @@ impl Params6 {
     pub fn fast() -> Params6 {
         // No clock: the same cube gives the same solution however busy the machine is.
         let outer = Params5 { p_keep: 1000, e_keep: 600, pool: 60, time_ms: 0, ..Params5::fast() };
-        Params6 { width: 4, first: 4, fan: 16, tries: 3, splits: 2, holds: 1, finals: 24, budget: 0, beam: 50_000, outer }
+        Params6 { width: 4, first: 4, fan: 16, tries: 3, splits: 2, holds: 1, finals: 24, budget: 0, beam: 50_000, joint: 0, outer }
     }
 
     /// Wider, and the 5x5x5 with more reductions and more 3x3x3 searches
@@ -971,7 +984,7 @@ impl Params6 {
     pub fn normal() -> Params6 {
         let outer =
             Params5 { c_keep: 4000, p_keep: 12_000, e_keep: 2400, pool: 240, deeper: vec![(12, 60), (13, 12)], time_ms: 0, ..Params5::normal() };
-        Params6 { width: 8, first: 8, fan: 32, tries: 6, splits: 2, holds: 1, finals: 64, budget: 0, beam: 100_000, outer }
+        Params6 { width: 8, first: 8, fan: 32, tries: 6, splits: 2, holds: 1, finals: 64, budget: 0, beam: 100_000, joint: 200_000, outer }
     }
 
     /// Wider everywhere, and no clock in the 5x5x5, whose last steps get
@@ -980,7 +993,7 @@ impl Params6 {
     /// cubes for less than a move.
     pub fn full() -> Params6 {
         let outer = Params5 { c_keep: 6000, p_keep: 18_000, e_keep: 9000, pool: 800, deeper: vec![(12, 200), (13, 24)], time_ms: 0, ..Params5::normal() };
-        Params6 { width: 16, first: 16, fan: 64, tries: 12, splits: 2, holds: 1, finals: 128, budget: 0, beam: 300_000, outer }
+        Params6 { width: 16, first: 16, fan: 64, tries: 12, splits: 2, holds: 1, finals: 128, budget: 0, beam: 300_000, joint: 0, outer }
     }
 }
 
@@ -1084,10 +1097,15 @@ impl Solver6 {
         }
         if out.is_empty() && beam > 0 {
             // The same step by beam search, from the most promising splits.
-            let t0 = crate::clock::cpu_ms();
+            let (t0, clock) = (crate::clock::cpu_ms(), std::time::Instant::now());
             let found = self.splits(f1, false);
             if std::env::var_os("CUBE6_TRACE").is_some() {
-                eprintln!("    splits: {} different cubes in {:.0} ms of processor", found.len(), crate::clock::cpu_ms() - t0);
+                eprintln!(
+                    "    splits: {} different cubes in {:.0} ms, {:.0} ms of processor",
+                    found.len(),
+                    clock.elapsed().as_secs_f64() * 1e3,
+                    crate::clock::cpu_ms() - t0
+                );
             }
             for (i, (sp, f2)) in found.into_iter().take(splits).enumerate() {
                 let t0 = crate::clock::cpu_ms();
@@ -1136,15 +1154,31 @@ impl Solver6 {
     /// Nothing if the beam runs onto its plateau, which one beam does more
     /// often than the best of several.
     pub(crate) fn inner_joint(&self, f1: &[u8], beam: usize, splits: usize, cap: usize) -> Vec<Partial> {
-        let found: Vec<(Vec<u8>, Vec<u8>)> = self.splits(f1, false).into_iter().take(splits).collect();
-        let least = found.iter().map(|x| x.0.len()).min().unwrap_or(0);
-        let cubes: Vec<(&[u8], Cube, usize)> = found.iter().map(|(sp, f2)| (&f2[..], self.inner_cube(f2), sp.len() - least)).collect();
-        let reds = self.inner.reduce_beam_roots(&self.s6, &self.solver4, &cubes, beam, cap, 0);
+        self.inner_joint_many(&[(Vec::new(), f1.to_vec())], beam, splits, cap, 0)
+    }
+
+    /// `inner_joint` for several stagings of one cube at once, each given
+    /// as its moves and the cube after them: one beam search from every
+    /// split of every staging, each as many moves behind as it is longer
+    /// than the shortest, so that the results are the shortest in total
+    /// (and those of `more` lengths after them, up to `cap` of each).
+    pub(crate) fn inner_joint_many(&self, stagings: &[(Vec<u8>, Vec<u8>)], beam: usize, splits: usize, cap: usize, more: usize) -> Vec<Partial> {
+        // (staging, split, cube after the split)
+        let found: Vec<(usize, Vec<u8>, Vec<u8>)> = stagings
+            .par_iter()
+            .enumerate()
+            .flat_map_iter(|(i, (_, f1))| self.splits(f1, false).into_iter().take(splits).map(move |(sp, f2)| (i, sp, f2)))
+            .collect();
+        let spent = |x: &(usize, Vec<u8>, Vec<u8>)| stagings[x.0].0.len() + x.1.len();
+        let least = found.iter().map(spent).min().unwrap_or(0);
+        let cubes: Vec<(&[u8], Cube, usize)> = found.iter().map(|x| (&x.2[..], self.inner_cube(&x.2), spent(x) - least)).collect();
+        let reds = self.inner.reduce_beam_roots(&self.s6, &self.solver4, &cubes, beam, cap, 0, more);
         reds.into_iter()
-            .map(|(i, red)| {
-                let (sp, f2) = &found[i];
-                let moves: Vec<u8> = sp.iter().chain(red.iter()).copied().collect();
-                (moves, [0, sp.len(), red.len()], self.apply(f2, &red))
+            .map(|(k, red)| {
+                let (i, sp, f2) = &found[k];
+                let staging = &stagings[*i].0;
+                let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
+                (moves, [staging.len(), sp.len(), red.len()], self.apply(f2, &red))
             })
             .collect()
     }
@@ -1166,10 +1200,25 @@ impl Solver6 {
             let wide = crate::stage6::Wide { first: p.first, fan: p.fan, ..crate::stage6::Wide::plain(p.width) };
             let staged = self.s6.stage_wide(&self.outer.stage, &held, &wide, 0..3);
             lap("staged");
-            for st in &staged[..staged.len().min(p.tries)] {
-                let found = self.inner_steps(&st.moves, &self.apply(&held, &st.moves), p.budget, p.beam, p.splits);
-                cands.extend(found.into_iter().map(|c| (hold, c)));
+            // Step 3 for all the stagings and their splits in one beam
+            // search first: on 20 cubes 107.65 moves in 5.2 s, where a
+            // search for each staging and split took 7.6 s for 107.90. The
+            // one search finds nothing on some cubes; they get the others.
+            let stagings: Vec<(Vec<u8>, Vec<u8>)> =
+                staged[..staged.len().min(p.tries)].iter().map(|st| (st.moves.clone(), self.apply(&held, &st.moves))).collect();
+            let mut found = match p.joint {
+                0 => Vec::new(),
+                beam => self.inner_joint_many(&stagings, beam, JOINT_SPLITS, JOINT_CAP, JOINT_MORE),
+            };
+            if trace && p.joint > 0 {
+                eprintln!("    joint: {} results of {:?} to {:?} moves", found.len(), found.first().map(|c| c.0.len()), found.last().map(|c| c.0.len()));
             }
+            if found.is_empty() {
+                for (moves, f1) in &stagings {
+                    found.extend(self.inner_steps(moves, f1, p.budget, p.beam, p.splits));
+                }
+            }
+            cands.extend(found.into_iter().map(|c| (hold, c)));
             lap("reduced");
         }
         cands.sort_by_key(|c| c.1 .0.len());
