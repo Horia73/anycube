@@ -135,6 +135,27 @@ Detail and numbers: the last section of `bench/RESULTS.md`.
 - More effort in the present phases buys tenths: full mode is 0.6 shorter
   (12 cubes) for three to seven times the positions searched.
 
+### 5x5x5, what more time buys (`five-tail`, 2026-11-14)
+
+Detail: the last section of `bench/RESULTS.md`.
+
+- Counted without the sequences that are one another rewritten, the
+  bounds are 35, 52, 75 and 99 moves for sizes 4 to 7 (not 29.5 and 47.8),
+  and a random cube is about that far. The solvers are at 1.16, 1.29,
+  1.44 and 1.54 times the bound; the best learned search published is at
+  1.26 and 1.68 for sizes 4 and 5 in its own metric.
+- More time buys 0.28 moves for every doubling, whichever widths it is
+  spent on, with no knee from 0.7 s to 3.9 s. The default keeps three times
+  as many results of phase C (a tenth of a move for 30 ms) and nothing
+  that costs more.
+- The larger cubes gain nothing from wider phases C: their 5x5x5 steps
+  get one staging to choose from.
+- The centres staged in one step would not pay even if it were fast:
+  the shortest stagings are too few to choose from.
+- The first 25 moves (to the end of phase C) are 2 to 3 moves longer than
+  what exists (`known5 --base split`), the largest loss measured and the
+  only one in a stretch with all moves.
+
 ### 6x6x6 (`six-faster`)
 
 - Half of a beam search's time was one read of a large table per state.

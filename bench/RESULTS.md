@@ -2259,3 +2259,156 @@ was taken for other sessions' work. It was this session's own benchmark,
 which keeps all ten cores busy by itself, and twice two of its own jobs
 running at once.
 
+
+## 5x5x5: what more time buys, and why (2026-11-14, night, branch `five-tail`)
+
+Asked: what would take 10 to 20% off the 5x5x5. Nothing found does; this
+section is the measurement of what the present solver gives for more time,
+so that the question need not be asked of it again. No code of the solver
+changed (a trace of the first centre phase was added, `CUBE5_TRACE`).
+
+### The bound, counted exactly
+
+The bounds in the sections above divide the logarithm of the positions by
+the logarithm of the number of moves (36 for the 5x5x5), which counts the
+same cube several times: two turns of one axis in either order, a turn and
+its continuation. Counting only sequences that are not one another
+rewritten (the growth is 20.73 a move for the 4x4x4 and 28.12 for the
+5x5x5, as in the section on the structure above):
+
+| Size | Positions | Bound, moves | Default mode | Ratio |
+|---:|---:|---:|---:|---:|
+| 3 | 4.33e19 | 18 | 18.13 | 1.01 |
+| 4 | 7.40e45 | 35 | 40.55 | 1.16 |
+| 5 | 2.83e74 | 52 | 67.34 | 1.29 |
+| 6 | 1.57e116 | 75 | 107.65 | 1.44 |
+| 7 | 1.95e160 | 99 | 152.25 | 1.54 |
+
+A random cube is about that far and no nearer: So Hirata's estimate
+(arXiv 2404.07337, growth rates 20.67 and 28.08) has nearly all positions
+reached at 36 moves for the 4x4x4 and at 53 for the 5x5x5, and puts God's
+number at 41 and 58. So 10% off the 5x5x5 (60.6) would put it where the
+4x4x4 is, and 20% off (53.9) is the optimum.
+
+For comparison, the shortest published solutions by a learned search
+(CayleyPy, arXiv 2502.13266, beams of 2^24 states): 46.51 on the 4x4x4 and
+92.16 on the 5x5x5 in single-layer quarter turns with nothing fixed, where
+the same count gives bounds of 37 and 55: 1.26 and 1.68 times the bound.
+
+### Where a second goes
+
+`CUBE5_TRACE=1`, first cubes of the set, default mode, wall time and
+processor time:
+
+| Step | Wall | Processor |
+|---|---:|---:|
+| centres (1200 stagings) | 0.18 s | 1.6 s |
+| phase C | 0.07 s | 0.6 s |
+| phase P | 0.04 s | 0.3 s |
+| phase E | 0.05 s | 0.4 s |
+| 3x3x3 of the reductions | 0.17 to 0.34 s | 1.5 to 2.6 s |
+
+The first centre phase visits about a million positions a second on one
+core at its long lengths (20 million positions of length 13 in 20 s of
+processor on the third cube): every position looks up its thirty or so
+neighbours, the survivors once more in the table near the goal (64 MB and
+256 MB, by their smallest image under 16 symmetries). The reductions at
+the shortest length are few (1 to 13 on these cubes), a hundred at the
+next, and the 3x3x3 picks among them.
+
+### What more time buys
+
+No clock in any of this; seconds are of one run each, the machine doing
+nothing else. First 40 cubes:
+
+| Settings | Moves | Seconds |
+|---|---:|---:|
+| default | 67.45 | 0.66 |
+| `--c-keep 20000` | 67.35 | 0.74 |
+| `--p-keep 2000 --e-keep 400` | 67.48 | 1.08 |
+| `--pool 400 --deeper 12:100,13:24` | 67.38 | 1.38 |
+| `--deeper 12:100,13:24,14:4` | 67.33 | 2.36 |
+| `--a-budget 10000000 --staged 4000` | 67.10 | 2.20 |
+| `--extra 4 --a-budget 3000000 --staged 4000` | 67.18 | 1.92 |
+| the last but one with `--c-keep 20000 --deeper 12:100,13:24` | 66.93 | 3.30 |
+| `--mode full` | 66.73 | 3.86 |
+
+All 200 cubes (the default took 0.85 s in this run, 0.70 s when it was
+recorded):
+
+| Settings | Moves | Seconds |
+|---|---:|---:|
+| default | 67.335 | 0.85 |
+| `--c-keep 20000` | 67.235 | 0.82 |
+| `--c-keep 60000` | 67.185 | 0.85 |
+| `--c-keep 20000 --labellings 32` | 67.235 | 0.80 |
+| `--c-keep 20000 --staged 2400` | 67.180 | 0.79 |
+| `--c-keep 60000 --staged 2400` | 67.110 | 0.94 |
+| `--c-keep 60000 --staged 2400 --a-budget 3000000` | 66.915 | 1.47 |
+| `--c-keep 20000 --staged 2400 --a-budget 3000000` | 66.985 | 1.39 |
+| the same without the step `13:8` of the 3x3x3 | 67.170 | 1.19 |
+| the same with `--p-keep 400 --e-keep 60` | 67.055 | 1.44 |
+| `--mode fast` | 68.590 | 0.17 |
+| `--mode fast --c-keep 8000` | 68.555 | 0.19 |
+
+- There is no knee. From the default to the full mode the time is 5.8
+  times as long and the solutions 0.73 shorter: 0.28 moves for every
+  doubling, whichever widths the time is spent on. Read as chance: the
+  solutions of a cube are draws from a spread of about one move (the
+  first 40 cubes are 65 to 69 long), and twice as many draws reach a
+  little further into its tail. By that reading six moves off would be
+  the best of some 10^10 times as many.
+- The widths of P and E give nothing, as on 2026-11-11. What gives most
+  per second is the first centre phase (its budget and the stagings kept),
+  and it is what costs: a second and a half for 0.35.
+- One thing is nearly free: three times as many results of phase C
+  (`--c-keep 20000`). Old and new binary one after the other, three times,
+  first 100 cubes: 67.45 in 0.675 s and 67.34 in 0.705 s; each change by
+  itself on the same cubes: twice the stagings 67.45 in 0.72 to 0.75 s
+  (nothing), both 67.32 in 0.763 s. **The default mode now keeps 20,000
+  results of phase C**: a tenth of a move for 30 ms. Nothing that doubles
+  the time was taken into the default.
+- The larger cubes do not gain from it, and why: their 5x5x5 steps get
+  the centres staged, one staging where a 5x5x5 of its own has 1,200, so
+  phase C has nothing more to choose from. With 20,000 there as well, 20
+  cubes each: 7x7x7 152.25 (the same), 9x9x9 301.25 against 301.40, 8x8x8
+  227.10 against 227.35 in 4.27 s against 3.95 s. They keep 6,000 (the
+  7x7x7 outer cube and the general solver name it now), and sizes 6 to 9
+  give the same lengths as before on every cube compared.
+
+### Why the centres in one step would not pay either
+
+The solutions chosen have centres of 18.1 moves where the shortest
+staging in hand is 16.75 (40 cubes): the shortest staging does not win,
+because there are few of it. Stagings of length L in one exact search
+number about 28^L over the 9e19 states of the centres: 2 at 14 moves, 56
+at 15, 1,600 at 16, 44,000 at 17. To be chosen from like the 1,200 of
+today they are needed by the thousand, so two lengths past the optimum,
+and one length is 28 times the work of the one before (340 s for the
+optimum alone, recorded above). A staging that is shorter but the only
+one of its kind loses in the phases after it what it won.
+
+### Cubes a known number of moves from the end of phase C
+
+`anycube known5 --walk K --base split`: a cube as phase C leaves it
+(60 random moves of the 20 that keep the wing halves apart), then K
+random moves of all 36, the first of them not one of the 20. A way of K
+moves to the end of phase C exists. 12 cubes each, default mode, the
+shortest way to the end of phase C that the solver has (`CUBE5_TRACE`):
+
+| Walk | Exists | Shortest found |
+|---:|---:|---:|
+| 14 | 14 | 16.50 |
+| 17 | 17 | 21.25 |
+| 20 | 20 | 22.17 |
+| 23 | 23 | 22.25 |
+| random cubes (40) | about 20 by the count (19.3) | 23.20 |
+
+At 23 moves the walk is no longer the short way, so a random cube is
+about 20 to 21 moves from the end of phase C and the three phases find 23.2
+(and the solution chosen spends 25.2 there, for the choice it leaves the
+later phases). These first moves are where the solver is furthest from
+what exists, 2 to 3 moves, and they are the only stretch with all 36 moves
+in which a search could go on a learned estimate: it is a problem of
+65 nats (the logarithm of the count), the 3x3x3 is one of 45, and for
+that size learned searches are close to optimal. Not tried here.
