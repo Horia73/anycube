@@ -6,7 +6,7 @@ use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  anycube app   open the interface: a cube to scramble, paint, show to a camera, turn and solve (anycube app --help)\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube known5 --walk K [--moves all|h|g] [--count N] [--seed S] [--base reduced|solved] [search flags]   5x5x5 cubes K moves away from a reduced (or the solved) cube, the walk made of all moves, of those that keep the centres staged (h) or of those that keep the wing halves apart (g)\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  anycube app   open the interface: a cube to scramble, paint, show to a camera, turn and solve (anycube app --help)\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube known5 --walk K [--moves all|h|g] [--count N] [--seed S] [--base reduced|solved|split] [search flags]   5x5x5 cubes K moves away from a reduced (or the solved) cube, the walk made of all moves, of those that keep the centres staged (h) or of those that keep the wing halves apart (g)\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -1786,9 +1786,13 @@ fn known5(args: &[String]) {
     if walk == 0 {
         usage();
     }
-    let from_solved = match opt(args, "--base") {
-        None | Some("reduced") => false,
-        Some("solved") => true,
+    // `split`: a cube as phase C leaves it (centres staged, the wings of
+    // every edge in different halves and agreeing with their middle edge),
+    // so that the walk undone is a way to the end of phase C.
+    let (from_solved, from_split) = match opt(args, "--base") {
+        None | Some("reduced") => (false, false),
+        Some("solved") => (true, false),
+        Some("split") => (false, true),
         Some(_) => usage(),
     };
     let set: Vec<u8> = match opt(args, "--moves") {
@@ -1811,7 +1815,13 @@ fn known5(args: &[String]) {
     let mut hist = std::collections::BTreeMap::new();
     for i in 0..count {
         let mut seq: Vec<u8> = Vec::new();
-        while !from_solved && seq.len() < 40 {
+        while from_split && seq.len() < 60 {
+            let m = G_MOVES[rnd(G_MOVES.len())];
+            if seq.last().is_none_or(|&l| !skip_move(l, m)) {
+                seq.push(m);
+            }
+        }
+        while !from_solved && !from_split && seq.len() < 40 {
             let m = rnd(18) as u8;
             if seq.last().is_none_or(|&l| !skip_move(l, m)) {
                 seq.push(m);
@@ -1823,7 +1833,8 @@ fn known5(args: &[String]) {
         let base = seq.len();
         while seq.len() < base + walk {
             let m = set[rnd(set.len())];
-            if (seq.len() == base && m < 18 && !from_solved) || (seq.len() > base && skip_move(seq[seq.len() - 1], m)) {
+            let idle = if from_split { G_MOVES.contains(&m) } else { m < 18 && !from_solved };
+            if (seq.len() == base && idle) || (seq.len() > base && skip_move(seq[seq.len() - 1], m)) {
                 continue;
             }
             seq.push(m);
@@ -1848,7 +1859,13 @@ fn known5(args: &[String]) {
         count,
         walk,
         opt(args, "--moves").unwrap_or("all"),
-        if from_solved { "the solved cube" } else { "a reduced cube" }
+        if from_solved {
+            "the solved cube"
+        } else if from_split {
+            "a cube as phase C leaves it"
+        } else {
+            "a reduced cube"
+        }
     );
     println!(
         "found: centres {:.2}, edges {:.2}, reduction {:.2}, 3x3x3 {:.2}, total {:.2}",

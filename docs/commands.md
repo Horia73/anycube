@@ -10,7 +10,7 @@
 | `row <file> --size N` | solve a scramble file of any size: mean moves and seconds on one line |
 | `bench`, `bench5`, `bench6`, `bench7 <file>` | the same for 4x4x4 to 7x7x7 with the lengths of every step |
 | `benchn <file> --size N` | and for sizes from 8 up |
-| `known5 --walk K --moves all\|h\|g` | 5x5x5 cubes a known number of moves from a reduced cube (or the solved one, `--base solved`): what the solver finds against what exists |
+| `known5 --walk K --moves all\|h\|g` | 5x5x5 cubes a known number of moves from a reduced cube (or the solved one, `--base solved`; or a cube as phase C leaves it, `--base split`): what the solver finds against what exists |
 
 The row of one size in the results table, and the whole table for a release:
 
