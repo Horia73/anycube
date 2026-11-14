@@ -367,10 +367,13 @@ impl Stage5 {
         let stop = AtomicBool::new(false);
         let best = AtomicUsize::new(usize::MAX);
         let mut level_size = 1.0f64;
+        let trace = std::env::var_os("CUBE5_TRACE").is_some();
+        let t_all = Instant::now();
         for depth in first..=first + 12 {
             if optimum.is_some_and(|o| depth > o + extra) || stop.load(Relaxed) {
                 break;
             }
+            let t_depth = Instant::now();
             // A cube whose centres are staged as it comes (as the larger
             // cubes hand them over) has nothing to gain past one more move.
             if best.load(Relaxed) == 0 && optimum.is_some_and(|o| depth > o + 1) {
@@ -465,6 +468,9 @@ impl Stage5 {
                 }
                 level_size = (total.max(1) as f64 / (upto as f64 / 65536.0)).max(1.0);
             }
+            if trace {
+                eprintln!("    A depth {:2}: {:6.0} ms, {} kept so far, level size {:.0}, whole {}", depth, t_depth.elapsed().as_secs_f64() * 1e3, all.len(), level_size, whole);
+            }
             if capped.get() {
                 stop.store(true, Relaxed);
             }
@@ -476,6 +482,9 @@ impl Stage5 {
         // when it was found, which depends on what the other threads had
         // found by then; within `SLACK` of the shortest of all does not.
         let shortest = all.iter().map(|s| s.0).min().unwrap_or(0);
+        if trace {
+            eprintln!("    A searched in {:.0} ms, {} kept, shortest {}", t_all.elapsed().as_secs_f64() * 1e3, all.len(), shortest);
+        }
         all.retain(|s| s.0 <= shortest + SLACK);
         // Among stagings of one length, no frame or first move comes first.
         let mix = |a: &[u8]| a.iter().fold(0xCBF2_9CE4_8422_2325u64, |h, &m| (h ^ m as u64).wrapping_mul(0x100_0000_01B3));
