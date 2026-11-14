@@ -41,11 +41,14 @@ pub struct Params {
     pub exact_cap: usize,
     /// Search phases 1 and 2 as one phase (needs the 2.37 GB centre table).
     pub joint: bool,
-    /// Node budget of the joint phase once it has found an endpoint.
+    /// Positions the joint phase may visit once it has found an endpoint.
+    /// This, not a clock, is what ends it: the same cube then gives the
+    /// same solution on every run and every machine.
     pub joint_nodes: i64,
-    /// Soft time limit per cube in milliseconds: once a stage has something to
-    /// show it stops at its share of the limit. The first results of each
-    /// stage are always awaited, so a solve can run somewhat over.
+    /// Soft time limit per cube in milliseconds, 0 for none (the default):
+    /// with one, a stage that has something to show stops at its share of
+    /// the limit, and what it has by then is different every run. The first
+    /// results of each stage are always awaited, so a solve can run somewhat over.
     pub time_limit_ms: u64,
     /// One level past `extra3`, keep reductions whose 3x3x3 is within this many
     /// moves of a domino subgroup (0 = off) ...
@@ -70,8 +73,8 @@ impl Default for Params {
             exact_nodes: 0,
             exact_cap: 15,
             joint: true,
-            joint_nodes: 1_000_000_000,
-            time_limit_ms: 4000,
+            joint_nodes: 30_000_000,
+            time_limit_ms: 0,
             far_g: 0,
             far_k: 300,
             far_n: 20_000,
@@ -80,7 +83,7 @@ impl Default for Params {
 }
 
 impl Params {
-    /// About 0.35 s per cube on an M1 Pro.
+    /// About 0.3 s per cube on an M1 Pro.
     pub fn fast() -> Params {
         Params {
             n2: 300,
@@ -89,22 +92,20 @@ impl Params {
             first333: 10,
             deeper333: vec![(12, 24)],
             n3: 200,
-            time_limit_ms: 1000,
             ..Params::default()
         }
     }
 
-    /// About 16 s per cube: fifteen times as many endpoints as the default, plus an
-    /// exact 3x3x3 search over the reductions.
+    /// About 15 s per cube: twenty times the joint phase of the default, fifteen
+    /// times as many endpoints, and an exact 3x3x3 search over the reductions.
     pub fn full() -> Params {
         Params {
             n2: 150_000,
             k3: 150_000,
-            joint_nodes: 20_000_000_000,
+            joint_nodes: 400_000_000,
             exact_nodes: 60_000_000,
             exact_cap: 16,
             deeper333: vec![(12, usize::MAX), (13, 128), (14, 8)],
-            time_limit_ms: 20_000,
             ..Params::default()
         }
     }
@@ -228,7 +229,7 @@ impl Solver {
         let t_start = std::time::Instant::now();
         let limit = std::time::Duration::from_millis(p.time_limit_ms);
         let mut found: Vec<P2Cand> = if p.joint {
-            self.joint_endpoints(&variants, p, t_start + limit.mul_f64(0.4))?
+            self.joint_endpoints(&variants, p, (p.time_limit_ms > 0).then(|| t_start + limit.mul_f64(0.4)))?
         } else {
         // Phase 1: enumerate solutions by increasing length.
         let mut cands: Vec<P1Cand> = Vec::new();
@@ -330,7 +331,7 @@ impl Solver {
         'p3: loop {
             for len123 in found[0].value..=max_len12 + cap {
                 if first_len.is_some_and(|f| len123 > f + p.extra3)
-                    || (!reds.is_empty() && t_start.elapsed() > limit.mul_f64(0.6))
+                    || (!reds.is_empty() && p.time_limit_ms > 0 && t_start.elapsed() > limit.mul_f64(0.6))
                 {
                     break 'p3;
                 }
@@ -373,7 +374,7 @@ impl Solver {
         // One level further out, reductions are ten times as many and one move longer.
         // Keep only those from which the 3x3x3 is close to a domino subgroup: its
         // two-phase search then starts with a short first phase.
-        if let (Some(first), true) = (first_len, p.far_g > 0 && t_start.elapsed() < limit.mul_f64(0.5)) {
+        if let (Some(first), true) = (first_len, p.far_g > 0 && (p.time_limit_ms == 0 || t_start.elapsed() < limit.mul_f64(0.5))) {
             let level = first + p.extra3 + 1;
             let jobs: Vec<(usize, &P2Cand, u8)> = found[..k.min(p.far_k)]
                 .iter()
@@ -441,7 +442,7 @@ impl Solver {
         // Pass 1: two-phase search on every reduction, then deeper on the ones that came out
         // best. Past its share of the time limit each takes the first solution it finds.
         let reduced: Vec<(usize, C3)> = items.iter().map(|it| (it.len123, it.c3)).collect();
-        let two = self.two.finish(&self.t3, &reduced, p.first333, &p.deeper333, Some(t_start + limit.mul_f64(0.8)));
+        let two = self.two.finish(&self.t3, &reduced, p.first333, &p.deeper333, (p.time_limit_ms > 0).then(|| t_start + limit.mul_f64(0.8)));
         let mut best = (usize::MAX, 0usize, Vec::new());
         for (k, sol) in two.iter().enumerate() {
             let total = items[k].len123 + sol.len();

@@ -11,7 +11,8 @@ use crate::cube::{skip_move, tables as cube_tables, Cube};
 use crate::solver::{P2Cand, Params, Solver, Variant};
 use crate::tables::*;
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
+use std::sync::Mutex;
 
 #[derive(Clone, Copy)]
 struct Node {
@@ -33,18 +34,38 @@ struct Node {
 
 const UNKNOWN: u32 = u32::MAX;
 
+/// The centres one move on, and where the exact table has them (`Solver::joint_ahead`).
+#[derive(Clone, Copy)]
+struct Ahead {
+    rl: u32,
+    ud: u32,
+    at: usize,
+}
+
 struct Shared<'a> {
-    count: AtomicUsize,
-    limit: usize,
-    budget: AtomicI64,
-    stop: AtomicBool,
-    /// The node budget and the deadline only apply once this is true.
+    /// The searches of one length are jobs with numbers: those from this
+    /// number on need not go on (see `joint_endpoints`).
+    stop_at: AtomicUsize,
+    /// With a clock (`--time`): past this moment the search ends as soon as
+    /// it has an endpoint, wherever it has got to.
+    deadline: Option<std::time::Instant>,
     have_endpoint: &'a AtomicBool,
-    deadline: std::time::Instant,
+    timed_out: AtomicBool,
     /// Statistics for the debug output.
     staged: AtomicUsize,
     tried: AtomicUsize,
     by_rem: [AtomicUsize; 9],
+}
+
+/// The jobs of one length that are done, and what they add up to in
+/// their order: positions visited and endpoints found by all the jobs
+/// before `at`, which are the ones that count.
+struct Front {
+    done: Vec<Option<(u64, usize)>>,
+    at: usize,
+    spent: u64,
+    found: usize,
+    decided: bool,
 }
 
 /// A variant in another frame whose centres are staged by the same sequences
@@ -77,12 +98,19 @@ struct Ctx<'a> {
     partners: &'a [Partner],
     last_move: &'a LastMove,
     variant: usize,
+    /// Its number among the searches of this length.
+    job: usize,
     path: [u8; 32],
     out: Vec<P2Cand>,
     nodes: u64,
     /// Frames in which the sequence that just ended can be an endpoint (bit mask).
     frames_ok: u8,
     by_rem: [usize; 9],
+    /// Where the wings are after the first moves of the path, for as many
+    /// of them as `wings_known`: worked out when a sequence is one move
+    /// from its end, and kept for the sequences that begin the same way.
+    wings: [[u8; 24]; 33],
+    wings_known: usize,
 }
 
 const BATCH: u64 = 1 << 12;
@@ -145,70 +173,44 @@ impl Solver {
         out
     }
 
-    /// Searches below `node` with `rem` moves left. The upper levels of the tree fan out
-    /// over the thread pool; the deep, cheap end runs sequentially.
-    #[allow(clippy::too_many_arguments)]
-    fn joint_par(
-        &self,
-        shared: &Shared,
-        variants: &[Variant],
-        partners: &[Partner],
-        last_move: &LastMove,
-        variant: usize,
-        node: &Node,
-        rem: usize,
-        prefix: &[u8],
-    ) -> Vec<P2Cand> {
-        let last = prefix.last().copied().unwrap_or(255);
-        if rem <= 7 {
-            let mut ctx = Ctx {
-                solver: self,
-                shared,
-                variants,
-                partners,
-                last_move,
-                variant,
-                path: [0; 32],
-                out: Vec::new(),
-                nodes: 0,
-                frames_ok: 7,
-                by_rem: [0; 9],
-            };
-            ctx.path[..prefix.len()].copy_from_slice(prefix);
-            ctx.dfs(node, rem, last, prefix.len());
-            for (a, &n) in shared.by_rem.iter().zip(ctx.by_rem.iter()) {
-                a.fetch_add(n, Relaxed);
-            }
-            return ctx.out;
-        }
-        if shared.stop.load(Relaxed) {
-            return Vec::new();
-        }
-        let children: Vec<(u8, Node)> = P1_MOVES
-            .iter()
-            .filter(|&&m| last == 255 || !skip_move(last, m))
-            .filter_map(|&m| self.joint_step(node, m, rem - 1).map(|n| (m, n)))
-            .collect();
-        children
-            .par_iter()
-            .flat_map_iter(|(m, n)| {
-                let mut path = prefix.to_vec();
-                path.push(*m);
-                self.joint_par(shared, variants, partners, last_move, variant, n, rem - 1, &path)
-            })
-            .collect()
-    }
-
     /// The node after move `m`, if the centres can still be staged in `rem` more moves.
     #[inline(always)]
     fn joint_step(&self, n: &Node, m: u8, rem: usize) -> Option<Node> {
+        let ahead = self.joint_ahead(n, m, rem)?;
+        self.joint_arrive(n, m, rem, &ahead)
+    }
+
+    /// The first half of a step: where the centres are after move `m`, and
+    /// the entry that says how far that is asked for ahead (`search::fetch`).
+    /// Both tables are read at random and the exact one is a hundred times
+    /// the cache: a search that asks for the entries of all its next moves
+    /// before it reads the first waits for them together, not one after
+    /// the other. `None` if the move cannot be part of an endpoint.
+    #[inline(always)]
+    fn joint_ahead(&self, n: &Node, m: u8, rem: usize) -> Option<Ahead> {
         // A sequence that leaves the wing permutation odd is no endpoint in any frame.
-        let parity = n.parity ^ p2_flips_parity(m) as u8;
-        if rem == 0 && parity != 0 {
+        if rem == 0 && n.parity ^ p2_flips_parity(m) as u8 != 0 {
             return None;
         }
         let bp = &self.tabs.bp;
         let (rl, ud) = (bp.apply(m, n.rl), bp.apply(m, n.ud));
+        let at = if rem <= NEAR {
+            if !self.near.ahead(rl, ud) {
+                return None;
+            }
+            0
+        } else {
+            let at = self.ctab.index(&self.tabs.ranks, rl, ud);
+            self.ctab.fetch(at);
+            at
+        };
+        Some(Ahead { rl, ud, at })
+    }
+
+    /// The second half: the node, if the centres can still be staged in `rem` more moves.
+    #[inline(always)]
+    fn joint_arrive(&self, n: &Node, m: u8, rem: usize, ahead: &Ahead) -> Option<Node> {
+        let (rl, ud) = (ahead.rl, ahead.ud);
         let (d, closer, same) = if rem <= NEAR {
             // Close to the goal the small in-cache table answers exactly.
             match self.near.get(rl, ud) {
@@ -217,18 +219,19 @@ impl Solver {
             }
         } else {
             // The neighbour is at distance d-1, d or d+1; the table says which, modulo 3.
-            let v = self.ctab.get(self.ctab.index(&self.tabs.ranks, rl, ud));
+            let v = self.ctab.get(ahead.at);
             let d = n.d + (v + 3 - (n.d + 2) % 3) % 3 - 1;
             if d as usize > rem {
                 return None;
             }
             (d, UNKNOWN, UNKNOWN)
         };
+        let bp = &self.tabs.bp;
         Some(Node {
             rl,
             ud,
             r: bp.apply(m, n.r),
-            parity,
+            parity: n.parity ^ p2_flips_parity(m) as u8,
             d,
             closer,
             same,
@@ -237,12 +240,26 @@ impl Solver {
     }
 
     /// Endpoints of the joint phase, by increasing length, until `p.n2` are found
-    /// or the node budget is spent.
+    /// or the budget of positions is spent (and there is an endpoint).
+    ///
+    /// The same cube gives the same endpoints on every run and every
+    /// machine. A length is searched as a few thousand jobs, one for every
+    /// two first moves, in a mixed order; the jobs are started in that
+    /// order and every one runs to its end. The search stops after the
+    /// first job with which the jobs up to it, in their order, have spent
+    /// the budget or found `p.n2` endpoints, and only the endpoints of the
+    /// jobs up to that one are returned: a job that happened to be
+    /// finished early further on does not count. (Stopping every thread
+    /// when a counter they share runs out is simpler and returns what the
+    /// threads had got to that time.)
+    ///
+    /// With a `deadline` the search also ends there if it has an endpoint,
+    /// with whatever it has found: that result is not repeatable.
     pub(crate) fn joint_endpoints(
         &self,
         variants: &[Variant],
         p: &Params,
-        deadline: std::time::Instant,
+        deadline: Option<std::time::Instant>,
     ) -> Result<Vec<P2Cand>, String> {
         // Variants come in groups of six per frame. Only the first frame is searched;
         // every staged sequence is then also tried in its partner of the other two frames.
@@ -296,36 +313,103 @@ impl Solver {
             std::env::var("ANYCUBE_JOINT_MAXDEPTH").ok().and_then(|s| s.parse().ok());
         let have_endpoint = AtomicBool::new(false);
         let shared = Shared {
-            count: AtomicUsize::new(0),
-            limit: p.n2,
-            budget: AtomicI64::new(p.joint_nodes),
-            stop: AtomicBool::new(false),
-            have_endpoint: &have_endpoint,
+            stop_at: AtomicUsize::new(usize::MAX),
             deadline,
+            have_endpoint: &have_endpoint,
+            timed_out: AtomicBool::new(false),
             staged: AtomicUsize::new(0),
             tried: AtomicUsize::new(0),
             by_rem: Default::default(),
         };
+        let budget = p.joint_nodes.max(0) as u64;
         let mut found: Vec<P2Cand> = Vec::new();
+        let mut spent = 0u64;
         for depth in lower..=24 {
-            let parts: Vec<Vec<P2Cand>> = roots
-                .par_iter()
-                .enumerate()
-                .filter(|(_, root)| root.d as usize <= depth)
-                .map(|(vi, root)| self.joint_par(&shared, variants, &partners[vi], &last_move, vi, root, depth, &[]))
-                .collect();
-            found.extend(parts.into_iter().flatten());
-            if !found.is_empty() {
-                have_endpoint.store(true, Relaxed);
+            // One job for every two first moves that can still lead to staged centres.
+            let mut jobs: Vec<(usize, Vec<u8>, Node)> = Vec::new();
+            for (vi, root) in roots.iter().enumerate().filter(|(_, root)| root.d as usize <= depth) {
+                let mut level: Vec<(Vec<u8>, Node)> = vec![(Vec::new(), *root)];
+                for _ in 0..depth.min(2) {
+                    let mut next = Vec::new();
+                    for (path, n) in &level {
+                        let last = path.last().copied().unwrap_or(255);
+                        for &m in P1_MOVES.iter().filter(|&&m| last == 255 || !skip_move(last, m)) {
+                            if let Some(to) = self.joint_step(n, m, depth - path.len() - 1) {
+                                next.push((path.iter().copied().chain([m]).collect(), to));
+                            }
+                        }
+                    }
+                    level = next;
+                }
+                jobs.extend(level.into_iter().map(|(path, n)| (vi, path, n)));
             }
-            let late = shared.budget.load(Relaxed) < 0 || std::time::Instant::now() > deadline;
-            if found.len() >= p.n2 || (!found.is_empty() && late) {
+            let order = crate::search::mixed_order(jobs.len());
+            shared.stop_at.store(usize::MAX, Relaxed);
+            let next = AtomicUsize::new(0);
+            let front = Mutex::new(Front { done: vec![None; jobs.len()], at: 0, spent, found: found.len(), decided: false });
+            let mut parts: Vec<(usize, Vec<P2Cand>)> = (0..rayon::current_num_threads())
+                .into_par_iter()
+                .flat_map_iter(|_| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let job = next.fetch_add(1, Relaxed);
+                        if job >= jobs.len() || job >= shared.stop_at.load(Relaxed) {
+                            break;
+                        }
+                        let (vi, path, node) = &jobs[order[job]];
+                        let mut ctx = Ctx {
+                            solver: self,
+                            shared: &shared,
+                            variants,
+                            partners: &partners[*vi],
+                            last_move: &last_move,
+                            variant: *vi,
+                            job,
+                            path: [0; 32],
+                            out: Vec::new(),
+                            nodes: 0,
+                            frames_ok: 7,
+                            by_rem: [0; 9],
+                            wings: [variants[*vi].cube.ep; 33],
+                            wings_known: 0,
+                        };
+                        ctx.path[..path.len()].copy_from_slice(path);
+                        ctx.dfs(node, depth - path.len(), path.last().copied().unwrap_or(255), path.len());
+                        for (a, &n) in shared.by_rem.iter().zip(ctx.by_rem.iter()) {
+                            a.fetch_add(n, Relaxed);
+                        }
+                        // The jobs done so far, as far as they are all done in their order.
+                        let mut front = front.lock().unwrap();
+                        front.done[job] = Some((ctx.nodes, ctx.out.len()));
+                        while !front.decided && front.at < jobs.len() {
+                            let Some((nodes, ends)) = front.done[front.at] else { break };
+                            front.spent += nodes;
+                            front.found += ends;
+                            front.at += 1;
+                            if front.found >= p.n2 || (front.found > 0 && front.spent >= budget) {
+                                front.decided = true;
+                                shared.stop_at.fetch_min(front.at, Relaxed);
+                            }
+                        }
+                        drop(front);
+                        mine.push((job, ctx.out));
+                    }
+                    mine
+                })
+                .collect();
+            parts.sort_by_key(|part| part.0);
+            let front = front.into_inner().unwrap();
+            let timed_out = shared.timed_out.load(Relaxed);
+            // The jobs that count; past a deadline, whatever there is.
+            let upto = if timed_out { usize::MAX } else if front.decided { front.at } else { jobs.len() };
+            found.extend(parts.into_iter().filter(|part| part.0 < upto).flat_map(|part| part.1));
+            spent = front.spent;
+            if found.len() >= p.n2 || (!found.is_empty() && (spent >= budget || timed_out)) {
                 break;
             }
             if max_depth.is_some_and(|m| depth >= m) {
                 break;
             }
-            shared.stop.store(false, Relaxed);
         }
         if std::env::var_os("ANYCUBE_DEBUG").is_some() {
             eprintln!(
@@ -341,6 +425,12 @@ impl Solver {
 }
 
 impl Ctx<'_> {
+    /// Whether this search need not go on (`Shared::stop_at`).
+    #[inline(always)]
+    fn over(&self) -> bool {
+        self.job >= self.shared.stop_at.load(Relaxed)
+    }
+
     fn dfs(&mut self, n: &Node, rem: usize, last: u8, depth: usize) {
         if rem == 0 {
             self.leaf(n, depth);
@@ -349,12 +439,12 @@ impl Ctx<'_> {
         self.nodes += 1;
         self.by_rem[rem.min(8)] += 1;
         if self.nodes % BATCH == 0 {
-            let left = self.shared.budget.fetch_sub(BATCH as i64, Relaxed);
-            let late = left < 0 || std::time::Instant::now() > self.shared.deadline;
+            let late = self.shared.deadline.is_some_and(|d| std::time::Instant::now() > d);
             if late && self.shared.have_endpoint.load(Relaxed) {
-                self.shared.stop.store(true, Relaxed);
+                self.shared.timed_out.store(true, Relaxed);
+                self.shared.stop_at.store(0, Relaxed);
             }
-            if self.shared.stop.load(Relaxed) {
+            if self.over() {
                 return;
             }
         }
@@ -371,15 +461,15 @@ impl Ctx<'_> {
         let mut pairs = [(0u8, 0u8); 12];
         if rem == 1 {
             let ct = cube_tables();
-            let mut ep = self.variants[self.variant].cube.ep;
-            for &m in &self.path[..depth] {
-                let src = &ct.ep_src[m as usize];
-                let old = ep;
+            for k in self.wings_known..depth {
+                let src = &ct.ep_src[self.path[k] as usize];
+                let old = self.wings[k];
                 for i in 0..24 {
-                    ep[i] = old[src[i] as usize];
+                    self.wings[k + 1][i] = old[src[i] as usize];
                 }
             }
-            for (p, &piece) in ep.iter().enumerate() {
+            self.wings_known = depth;
+            for (p, &piece) in self.wings[depth].iter().enumerate() {
                 let c = (piece % 12) as usize;
                 if piece < 12 {
                     pairs[c].0 = p as u8;
@@ -388,15 +478,20 @@ impl Ctx<'_> {
                 }
             }
         }
+        // The moves worth trying, each with the frames it may end an endpoint
+        // in and its table entry asked for; then the steps themselves.
+        let mut tries = [(0u8, 0u8, Ahead { rl: 0, ud: 0, at: 0 }); 27];
+        let mut count = 0;
         for &m in &P1_MOVES {
             if (allowed >> m) & 1 == 0 || (last != 255 && skip_move(last, m)) {
                 continue;
             }
+            let mut ok = 7;
             if rem == 1 {
                 // An endpoint that ends with a phase-3 move is the previous endpoint plus
                 // a move phase 3 could make itself.
                 let lm = self.last_move;
-                let mut ok = lm.live[m as usize];
+                ok = lm.live[m as usize];
                 for f in 0..lm.frames {
                     if (ok >> f) & 1 == 1 {
                         let low = lm.to_low[m as usize][f];
@@ -408,12 +503,21 @@ impl Ctx<'_> {
                 if ok == 0 {
                     continue;
                 }
-                self.frames_ok = ok;
             }
-            if let Some(next) = self.solver.joint_step(n, m, rem - 1) {
+            if let Some(ahead) = self.solver.joint_ahead(n, m, rem - 1) {
+                tries[count] = (m, ok, ahead);
+                count += 1;
+            }
+        }
+        for &(m, ok, ahead) in &tries[..count] {
+            if let Some(next) = self.solver.joint_arrive(n, m, rem - 1, &ahead) {
+                if rem == 1 {
+                    self.frames_ok = ok;
+                }
                 self.path[depth] = m;
+                self.wings_known = self.wings_known.min(depth);
                 self.dfs(&next, rem - 1, m, depth + 1);
-                if self.shared.stop.load(Relaxed) {
+                if self.over() {
                     return;
                 }
             }
@@ -477,8 +581,5 @@ impl Ctx<'_> {
         let len = moves.len() as u8;
         self.out.push(P2Cand { variant, len1: len, moves: moves.to_vec(), cube, len12: len, value: len + dc.max(ds) });
         self.shared.have_endpoint.store(true, Relaxed);
-        if self.shared.count.fetch_add(1, Relaxed) + 1 >= self.shared.limit {
-            self.shared.stop.store(true, Relaxed);
-        }
     }
 }

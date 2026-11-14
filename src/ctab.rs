@@ -300,6 +300,14 @@ impl Ctab {
         (self.data[idx >> 2] >> ((idx & 3) * 2)) & 3
     }
 
+    /// Asks for the entry that `get` will read (`search::fetch`): the table
+    /// is a hundred times the cache, and an entry that is not asked for
+    /// ahead is a wait for memory.
+    #[inline(always)]
+    pub fn fetch(&self, idx: usize) {
+        crate::search::fetch(&self.data, idx >> 2);
+    }
+
     /// Exact distance, found by walking down to the goal.
     pub fn exact(&self, bp: &BitPerm, ranks: &Ranks, mut rl: u32, mut ud: u32) -> u8 {
         let mut d = 0u8;
@@ -451,6 +459,19 @@ impl Near {
             }
             i = (i + 1) & self.mask;
         }
+    }
+
+    /// False if the state is certainly not in the table. Otherwise its
+    /// slot is asked for (`search::fetch`), for the `get` that follows.
+    #[inline(always)]
+    pub fn ahead(&self, rl: u32, ud: u32) -> bool {
+        let key = (rl as u64) << 24 | ud as u64;
+        let bit = Self::filter_bit(key);
+        if (self.filter[bit >> 6] >> (bit & 63)) & 1 == 0 {
+            return false;
+        }
+        crate::search::fetch_at(&self.slots[self.slot(key)]);
+        true
     }
 
     /// The exact distance if it is at most `NEAR`, the moves that decrease it and

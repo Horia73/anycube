@@ -27,7 +27,7 @@ only for a solution of 18 or fewer.
 
 | Flag | fast | normal | full | Meaning |
 |---|---|---|---|---|
-| `--time` | 800 | 4000 | 0 | milliseconds the solve aims at; 0 is no limit |
+| `--time` | 0 | 0 | 0 | milliseconds the solve aims at; 0 is no limit. With a limit the steps stop by the clock, and the same cube gives another solution on another run |
 | `--staged` | 400 | 1200 | 4000 | centre stagings kept |
 | `--extra` | 2 | 3 | 3 | lengths of the first centre phase searched past its shortest |
 | `--a-budget` | 200000 | 1000000 | 10000000 | positions each of those lengths may take from the second on; a length that does not fit is searched in part; 0 is no limit |
@@ -45,9 +45,9 @@ only for a solution of 18 or fewer.
 | Flag | Meaning | Default |
 |---|---|---|
 | `--mode` | `fast`, `normal` or `full`; sets the flags below | normal |
-| `--time` | soft time limit per cube, in ms | 4000 |
+| `--time` | soft time limit per cube, in ms; with one, the same cube gives another solution on another run | 0 (none) |
 | `--n2` | joint-phase endpoints collected | 10000 |
-| `--joint-nodes` | node budget of the joint phase, in millions | 1000 |
+| `--joint-nodes` | positions the joint phase may visit once it has an endpoint, in millions: what ends it | 20 |
 | `--k3` | endpoints tried in phase 3 | 10000 |
 | `--n3` | reductions compared by total length | 2000 |
 | `--extra3` | moves past the shortest reduction to keep collecting | 1 |
@@ -59,6 +59,12 @@ only for a solution of 18 or fewer.
 | `--exact-cap` | longest 3x3x3 solution the exact search looks for | 15 |
 | `--far-g` | also keep longer reductions this close to a domino subgroup | 0 (off) |
 
-`--mode full` collects fifteen times as many endpoints and adds the exact
-3x3x3 search (`src/opt3.rs`), which scans the reductions for 3x3x3 solutions
-of up to 16 moves that the two-phase search missed.
+`--mode full` gives the joint phase twenty times the positions, collects
+fifteen times as many endpoints and adds the exact 3x3x3 search
+(`src/opt3.rs`), which scans the reductions for 3x3x3 solutions of up to 16
+moves that the two-phase search missed.
+
+No mode runs by a clock: the joint phase ends when its budget of positions
+is spent, counted in a fixed order of its searches, so the same cube gives
+the same solution on every run and every machine. On a slower machine a
+solve takes longer and is no worse.
