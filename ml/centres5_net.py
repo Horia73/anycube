@@ -15,6 +15,7 @@ Usage:
   python ml/centres5_net.py train --bin ./target/release/anycube --work DIR [--width 512 --blocks 2]
   python ml/centres5_net.py eval --bin ./target/release/anycube --work DIR
   python ml/centres5_net.py tune --work DIR --name exact [--init net] [--width 512 --blocks 2]
+  python ml/centres5_net.py report --bin ./target/release/anycube --work DIR --names net,exact
 """
 import argparse, glob, os, struct, subprocess, time
 import numpy as np
@@ -62,8 +63,8 @@ class Net(nn.Module):
         return self.out(h).squeeze(1)
 
 
-def dump(args, count, seed, path, kmax=None):
-    subprocess.run([args.bin, "centres5-dump", "--count", str(count), "--kmin", "1", "--kmax", str(kmax or args.kmax),
+def dump(args, count, seed, path, kmax=None, kmin=1):
+    subprocess.run([args.bin, "centres5-dump", "--count", str(count), "--kmin", str(kmin), "--kmax", str(kmax or args.kmax),
                     "--seed", str(seed), "--out", path], check=True, stderr=subprocess.DEVNULL)
     return np.fromfile(path, dtype=np.uint8).reshape(-1, REC)
 
@@ -157,11 +158,15 @@ class Turns:
         return torch.cat([axes.to(torch.uint8), rec[:, 48:49], dist.to(torch.uint8), rec[:, 57:]], dim=1)
 
 
+FAR = 13.0
+
+
 def target(rec):
     """The distance a record stands for: exact up to 11; a cube further than 11 after a walk
-    of 12 is at 12, and after a longer walk it is taken for 13."""
+    of 12 is at 12, and after a longer walk it is taken for 13 (`--far`: for the length of
+    its walk, if that is less)."""
     lab = rec[:, 57].float()
-    return torch.where(lab >= 100, torch.clamp(lab - 100, max=13.0), lab)
+    return torch.where(lab >= 100, torch.clamp(lab - 100, max=FAR), lab)
 
 
 def tune(args):
@@ -216,7 +221,7 @@ def tune(args):
     print("distance   cubes   estimate       mean error")
     for v in sorted(set(lab)):
         p = pred[lab == v]
-        want = min(v - 100, 13) if v >= 100 else v
+        want = min(v - 100, FAR) if v >= 100 else v
         name = f"{v:3d}     " if v < 100 else f">11, K {v - 100:2d}"
         print(f"{name}  {len(p):6d}   {p.mean():5.2f} +- {p.std():4.2f}   {np.abs(p - want).mean():5.2f}")
     far = pred[lab > 112]
@@ -238,6 +243,49 @@ def held_out(net, val, dev):
         pred = torch.cat([net(features(rec[s:s + 65536])) for s in range(0, len(val), 65536)])
         loss = nn.functional.mse_loss(pred, target(rec)).item()
     return loss, pred.cpu().numpy()
+
+
+def report(args):
+    """For each network of `--names`: its estimate for cubes K moves away, for cubes at a known
+    distance (DIR/h-*.bin, records no network was trained on) and for random cubes (a walk of
+    60 moves), and how the three overlap: the share of random cubes that look as near as the
+    median cube of a row, and the share of the row that a search keeping one cube in 13 or one
+    in 27 of random cubes would keep."""
+    dev = device()
+    tmp = os.path.join(args.work, "report.bin")
+    walks = dump(args, 1_600_000, 7, tmp, kmax=20)
+    far = dump(args, 200_000, 8, tmp, kmax=60, kmin=60)
+    os.remove(tmp)
+    held = np.concatenate([np.fromfile(f, dtype=np.uint8).reshape(-1, REC) for f in sorted(glob.glob(os.path.join(args.work, "h-*.bin")))])
+
+    def said(net, raw):
+        with torch.no_grad():
+            return torch.cat([net(features(torch.as_tensor(raw[s:s + 65536], device=dev))).cpu()
+                              for s in range(0, len(raw), 65536)]).numpy()
+
+    for name in args.names.split(","):
+        ck = torch.load(os.path.join(args.work, f"{name}.pt"), map_location=dev)
+        net = Net(ck["width"], ck["blocks"]).to(dev)
+        net.load_state_dict(ck["state"])
+        net.eval()
+        rnd = np.sort(said(net, far))
+        share = lambda v: np.searchsorted(rnd, v, side="right") / len(rnd)
+        print(f"\n{name}: {sum(p.numel() for p in net.parameters())} weights; random cubes {rnd.mean():.2f} +- {rnd.std():.2f}")
+        pred, k = said(net, walks), walks[:, 57].astype(int)
+        print("K     estimate       mean error   random cubes as near as the median, as the 90th percentile")
+        for kk in sorted(set(k)):
+            p = pred[k == kk]
+            print(f"{kk:2d}   {p.mean():5.2f} +- {p.std():4.2f}   {np.abs(p - kk).mean():5.2f}        "
+                  f"{share(np.quantile(p, 0.5)):9.2e}  {share(np.quantile(p, 0.9)):9.2e}")
+        pred, lab = said(net, held), held[:, 57].astype(int)
+        lab = np.where(lab > 112, 113, lab)
+        t13, t27 = np.quantile(rnd, 1 / 13), np.quantile(rnd, 1 / 27)
+        print("distance  cubes   estimate       random cubes as near as the median   kept at one in 13, one in 27")
+        for v in sorted(set(lab)):
+            p = pred[lab == v]
+            row = {112: "12", 113: ">11, walk of 13 to 16"}.get(v, str(v))
+            print(f"{row:22s} {len(p):6d}  {p.mean():5.2f} +- {p.std():4.2f}   {share(np.quantile(p, 0.5)):9.2e}"
+                  f"    {(p <= t13).mean() * 100:5.1f}%  {(p <= t27).mean() * 100:5.1f}%")
 
 
 def evaluate(args):
@@ -266,9 +314,11 @@ def evaluate(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["train", "eval", "tune"])
+    ap.add_argument("mode", choices=["train", "eval", "tune", "report"])
+    ap.add_argument("--names", default="net")
     ap.add_argument("--init", default=None)
     ap.add_argument("--take", type=float, default=1.0)
+    ap.add_argument("--far", type=float, default=13.0)
     ap.add_argument("--near", type=int, default=7)
     ap.add_argument("--near-share", type=float, default=0.3)
     ap.add_argument("--bin", default="./target/release/anycube")
@@ -282,4 +332,5 @@ if __name__ == "__main__":
     ap.add_argument("--blocks", type=int, default=2)
     ap.add_argument("--lr", type=float, default=2e-3)
     a = ap.parse_args()
-    {"train": train, "eval": evaluate, "tune": tune}[a.mode](a)
+    FAR = a.far
+    {"train": train, "eval": evaluate, "tune": tune, "report": report}[a.mode](a)

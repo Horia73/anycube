@@ -160,26 +160,39 @@ Detail: the last section of `bench/RESULTS.md`.
 
 Detail: the last section of `bench/RESULTS.md`.
 
+- **The shortest staging of the centres is 16 moves on most cubes, not 14
+  or 15.** An exact search stopped at 15 moves (`centres5 --max 15`, two
+  to seven minutes a cube) finds a staging on one of the first eight
+  cubes and proves the other seven have none. The default mode is 0.6 of
+  a move from the optimum there (16.63 against 15.88 to 16.13) and has
+  the optimum on four of the eight. The count that gave 14 takes every
+  move sequence for a different cube; near the goal most are not.
+- The same count gives the 19.3 moves to the end of phase C from which a
+  loss of 2 to 3 moves was read. It needs the same check before anything
+  is built on it.
 - A beam search with all 36 moves on a small network's estimate of the
-  moves left stages the centres in 16.93 moves at a width of 100,000 and
-  16.33 at a million (two phases: 16.75), in 15 s and 118 s a cube where
-  the two phases take 0.24 s, 16.53 in 1.4 s with ten times their
-  positions and 16.28 in 22 s with a hundred times. In the solver the
-  stagings of the widest beam are worth 0.68 moves; the full mode gets as
-  much in 4 s. Not kept in any mode.
+  moves left stages the centres in 18.05, 17.48, 16.93, 16.65 and 16.33
+  moves at widths from 10,000 to a million, each three times the one
+  before (two phases: 16.75 in 0.24 s). A million takes 118 s a cube and
+  is within a quarter of a move of the optimum where that is known; the
+  two phases with a hundred times their positions give 16.28 in 22 s. In
+  the solver the stagings of the widest beam are worth 0.68 moves; the
+  full mode gets as much in 4 s. Not kept in any mode.
+- Too small, or the wrong idea: neither. The network was not too small
+  (0.3 to 14.4 million weights: the same error for each K, 3 points more
+  cubes kept, no shorter beam at the same width, a twenty-seventh of the
+  speed), nor the data (a quarter of it gives the same). The width
+  mattered up to a million (0.3 moves for every three times) and three
+  million gave the same lengths on the three cubes run: the cube ends
+  the curve, not the machine.
 - The length of a random walk is a poor label here: 24 of the 36 moves
   leave staged centres staged, half the cubes K moves away are nearer than
   K, and one in ten is within 11 moves after a walk of 16.
 - Exact distances up to 11 moves are cheap to label with (a search bounded
-  by the tables, milliseconds a cube). They set the estimate's scale right
-  and order cubes no better: a cube 10 moves away is put before a far one
-  82 times in 100 whatever the labels, the amount of data or the
-  symmetries, 83 with four times the weights, 75 by the sum of the table
-  distances alone.
-- What the network lacks is what the tables lack: how the two orbits
-  hinder each other. The shorter stagings it does find carry through to
-  the solution, so the loss before the end of phase C is real and still
-  open.
+  by the tables, milliseconds a cube) and make the beam 0.75 shorter at a
+  width of 100,000. Against a random cube the estimate is sure up to 9
+  moves, keeps a cube at 10 or 11 seven to nine times in ten and one at
+  12 half the time: from 12 on the search is blind.
 
 ### 6x6x6 (`six-faster`)
 

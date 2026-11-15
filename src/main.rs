@@ -1907,18 +1907,20 @@ fn centres5(args: &[String]) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (limit, extra, time) = (num("--limit", usize::MAX), num("--extra", 0), num("--time", 0));
+    // `--max L`: no staging longer than L is looked for, so a cube with none takes one search of that length.
+    let (skip, max_len) = (num("--skip", 0), num("--max", 30));
     let t0 = Instant::now();
     let c5 = Centres5::load();
     eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
     let g = &tables5().geometry;
-    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit).enumerate() {
+    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).enumerate().skip(skip).take(limit) {
         let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = g.solved();
         g.apply_seq(&mut f, &scramble);
         let cube = Cube5::from_facelets(&f).unwrap_or_else(|e| fail(&e));
         let t = Instant::now();
         let deadline = (time > 0).then(|| t + std::time::Duration::from_millis(time as u64));
-        let sols = c5.stage(&cube, &Budget { max_len: 30, extra, cap: 100_000, deadline });
+        let sols = c5.stage(&cube, &Budget { max_len, extra, cap: 100_000, deadline });
         let ms = t.elapsed().as_secs_f64() * 1e3;
         for s in &sols {
             let mut c = cube;
