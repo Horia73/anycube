@@ -3038,3 +3038,259 @@ mode cannot have it. Not started.
 ```bash
 ./target/release/anycube labellings5 --count 20000
 ```
+
+## 5x5x5: a search with all 36 moves to the end of phase C (2026-11-15, an experiment)
+
+Asked: by the levels of the section before a random cube is about 20
+moves from the end of phase C and the solver finds 23.2. Can a search
+with all 36 moves from the cube straight to the end of phase C, in place
+of the two centre phases and phase C, win those moves back, and at what
+cost. Set beforehand: a success is a mean of 21.5 or less on random
+cubes at two minutes a cube or less; a failure is 22.5 or more at a beam
+of a million.
+
+**Verdict: it fails. With the estimate of the first try a beam of a
+million finds a way for one random cube in six, of 25 moves, in 438 s a
+cube. With a network that reads the whole cube, trained on 480 million
+cubes, a beam of 10,000 finds one for 8 cubes in 20, of 28 to 30 moves.
+The solver finds 23.2 on every cube in under a second.** On cubes with a
+known way to the end of phase C the search does find it: nearly always
+up to 12 moves with the first estimate, up to 14 with the network, half
+the time at 16. A random cube is at 20. Letting the network choose only the first
+moves and the solver do the rest loses as well: 69.65 moves against
+67.35 with six moves chosen, 67.95 with three.
+
+What moved the result and what did not, which is what tells "the idea
+fails" from "the try was too small":
+
+- The width of the beam: from 10,000 to 100,000 is worth one to two
+  moves of reach (a way no longer than the walk for 11 and 17 cubes in
+  20 at 12 moves, 6 and 10 at 14, 1 and 4 at 16). A million gave no more
+  on the ten cubes tried (4 in 10 at 14).
+- The estimate: reading the whole cube instead of four numbers is worth
+  about two moves of reach (at a width of 10,000 it does what the table
+  does at 100,000), and forty times the training cubes, in a network
+  twice as wide, two more. By how far each sees, the cubes are most of
+  that and the width of the network little; on the same 12 million cubes
+  the wide one is worse.
+- Training on what the search itself found: nothing, in one round.
+- From the best of these to a random cube there are still four moves of
+  reach to find, and the lengths found on random cubes are 5 to 7 moves
+  over the solver's, not near it.
+
+Nothing in any mode changed. What stays: `src/split5.rs`, the commands
+`split5-beam`, `split5-data`, `split5-hybrid`, and `ml/split5_net.py`.
+The times below were taken while other runs shared the machine (M1 Pro,
+10 cores); they are good to a factor of two.
+
+### The search
+
+A beam: level by level every cube kept is moved in every way, the same
+cube kept once (a 64-bit key of what the end of phase C depends on), and
+the `width` cubes that the estimate puts nearest are kept. The cube is
+searched in three frames, one for each axis. The end is exact: a cube
+whose centres are within three moves of staged is looked up, under the
+labellings of the wings that its middle edges allow, in the whole levels
+of `levels5` (2,141,600 cubes at three moves), and the way is finished
+down those levels. What the exact centre distances say cannot end sooner
+than the shortest way found is dropped. Every way found is applied to
+the cube and checked to end phase C.
+
+A first version kept cubes under a labelling of the wings, starting from
+all 2,048 on each axis. It failed by construction: at the start all the
+labellings of a cube look alike, the beam fills with the wrong ones, and
+it found the way for 5 cubes in 20 at eight moves and none at 14 (width
+10,000). The beam holds cubes since, and the labelling is chosen at the
+end.
+
+The test cubes: a cube as phase C leaves it, then a walk of K moves, the
+first not one that keeps the goal, none undoing or reordering the one
+before (as `known5 --base split`). On 60 such cubes the solver finds
+8.33 at K = 8, 12.00 at 11, 16.30 at 14, 20.13 at 17.
+
+### The first estimate: a table of four numbers
+
+For cubes a walk of K from the goal, the mean K by: the exact moves that
+stage each centre orbit alone (two numbers), the classes of wings with
+both wings in one half, and the classes whose low wing does not agree
+with the flip of their middle edge. 8 million walks of 1 to 22 moves.
+
+How far it sees (`--see`): the share of cubes K moves from the goal that
+the estimate puts nearer than all but one in 28 random cubes (20,000
+cubes of each).
+
+| K | 8 | 10 | 12 | 14 | 16 | 18 | 20 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Mean estimate | 9.44 | 12.00 | 13.79 | 15.02 | 15.82 | 16.32 | 16.66 |
+| Share put that near | 100% | 81.1% | 60.3% | 43.4% | 31.1% | 22.6% | 17.1% |
+
+(Random cubes: 17.59, one in 28 below 15.37.)
+
+On 20 cubes of each walk, whole levels to three moves: cubes with a way
+found, and their mean (which flatters: the cubes not found are the hard
+ones).
+
+| Walk | Width 10,000 | Width 100,000 | Width 1,000,000 |
+|---:|---|---|---|
+| 8 | 20, 7.80 | 20, 7.70 | |
+| 10 | 19, 9.95, 0.3 s | 20, 9.65, 0.7 s | |
+| 12 | 14, 12.64, 1.0 s | 20, 12.25, 1.7 s | |
+| 14 | 11, 15.73, 1.1 s | 16, 15.19, 5.2 s | 9 of 10, 16.11, 48 s |
+| 16 | 2, 19.50, 1.3 s | 10, 17.20, 9.4 s | |
+
+A way no longer than the walk: 11 and 17 cubes in 20 at 12 moves, 6 and
+10 at 14 (4 in 10 at a million), 1 and 4 at 16. When the short way is
+lost the search finds a much longer one or none.
+
+Whole levels to four moves (55.5 million cubes) instead of three, width
+100,000: 20, 17 and 11 cubes found at walks of 12, 14 and 16 (12.20,
+15.77, 17.18) in 8, 58 and 104 s a cube: the same cubes at ten times the
+time, the lookups under 230 labellings being what costs.
+
+Random cubes (the first of `bench/scrambles555-200.txt`), ways of up to
+30 moves:
+
+| Width | Cubes with a way | Lengths | Time a cube |
+|---:|---:|---|---:|
+| 10,000 | 0 of 20 | | 1.7 s |
+| 100,000 | 2 of 20 | 25, 27 | 25 s |
+| 100,000, whole levels to four | 4 of 20 | 23, 25, 26, 26 | 264 s |
+| 1,000,000 | 1 of 6 | 25 | 438 s |
+
+### A network that reads the whole cube
+
+Inputs, 1,058 of which 85 are on: the kind of the centre at each of the
+48 centre positions (U/D, R, L, F/B), the wing in each of the 24 wing
+positions, the middle edge and its flip in each of the 12 slots, the
+parity of the wings. Three hidden layers, the label is the length of
+the walk (0 to 24). Trained by `ml/split5_net.py` on the GPU of the Mac;
+the solver reads the weights and evaluates the network on the processor.
+
+That the walk's length is a fair label even far out: a cube 17 moves
+from the goal is far more likely the end of a walk of 17 than of one of
+22, since a walk of 22 can end on any cube. What flattened beyond 12
+moves in the table above was the four numbers, not the label.
+
+| Network | Cubes trained on | Time | Share put that near at K = 12 | 14 | 16 | 18 | 20 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| the table of four numbers | 8 million | | 60.3% | 43.4% | 31.1% | 22.6% | 17.1% |
+| 512, 256, 64 (0.7 million weights) | 12 million, 12 times | 11 min | 94.5% | 84.5% | 70.9% | 57.5% | 44.8% |
+| 1024, 512, 128 (1.7 million) | 12 million, 14 times | 15 min | 91.8% | 80.0% | 65.3% | 52.2% | 39.9% |
+| 512, 256, 64 | 480 million, once | 46 min | 97.4% | 89.7% | 77.2% | 63.3% | 49.8% |
+| 1024, 512, 128 | 480 million, once | 59 min | 98.0% | 91.5% | 79.6% | 66.0% | 52.0% |
+
+On walks never trained on the last two are off by 1.82 and 1.77 moves.
+The wide network on 12 million cubes read many times learned them by
+heart: more cubes are what helps, the size of the network little.
+
+The search with it, 20 cubes of each walk: cubes with a way no longer
+than the walk (cubes with any way).
+
+| Walk | Table, width 100,000 | Network of 12 million, 1,000 | 10,000 | Network of 480 million (wide), 1,000 | 10,000 |
+|---:|---|---|---|---|---|
+| 14 | 10 (16) | 7 (10) | 11 (15), 11 s | 12 (16) | 18 (20), 17 s |
+| 16 | 4 (10) | 2 (5) | 3 (10), 14 s | 4 (9) | 10 (15), 26 s |
+| 18 | | | | 0 (3) | 2 (7), 30 s |
+
+The small network at a width of 10,000 does what the table does at
+100,000; the one trained on 480 million cubes does at 16 moves what the
+small one does at 14.
+
+Random cubes, width 10,000, ways of up to 30 moves: the small network
+finds one for 3 cubes in 20 (29, 30, 30; 24 s a cube), the wide one of
+480 million for 8 in 20 (28, 29 and six of 30; 30 s a cube).
+
+### Trained on its own searches
+
+The idea: what the search with the network finds is a better lesson than
+the walks. 1,280 searches at a width of 1,000 with the small network, on
+160 cubes of each walk from 10 to 17; a way no longer than the walk was
+found for 143, 125, 99, 60, 48, 26, 13 and 6 of them. Kept as training
+records: the cubes of those ways with the moves left (6,400), and 64
+cubes of every level of every search, half those the network put
+nearest, with the moves they have left at least (843,200; a cube d
+moves into a search of a cube D moves away has D - d left at least; D
+is the way found, or the walk less two where none was). A lower bound
+costs only where the network says less. Four more epochs on the 12
+million walks and these records four times over.
+
+| | Before | After |
+|---|---:|---:|
+| Share put that near at K = 14, 16, 20 | 84.5%, 70.9%, 44.8% | 84.0%, 70.5%, 44.4% |
+| A way no longer than the walk, walk 14, width 1,000 and 10,000 | 7, 11 | 7, 11 |
+| The same, walk 16 | 2, 3 | 3, 4 |
+
+Nothing moved. What the records say of the network before: of the cubes
+its searches kept, 17% were said nearer than they can be, by 1.1 moves
+on average; after, 8% by 0.5, and the estimate of every cube 0.2 to 0.5
+higher, those on the way found as well. It learned an offset. Its real
+error is the other way: the cubes on the way found with 10 to 13 moves
+left are said 1.3 moves farther than they are, which puts them behind
+the rest of the beam, and of those there are few to learn from. One
+round and a small one; it gives no sign.
+
+### The network for the first moves, the solver for the rest
+
+`split5-hybrid`: a beam of 10,000 with the network keeps, after `depth`
+moves, the 64 cubes it puts nearest; the solver (default mode,
+`solve_any`) solves whichever of them gives the shortest total. Against
+the solver alone and against 64 cubes reached by random moves of the
+same number. 20 random cubes; every solution applied to the cube.
+
+| | To the end of phase C | Solution |
+|---|---:|---:|
+| the solver alone | 25.15 | 67.35 |
+| 3 moves by the network of 12 million | 25.35 | 67.95 |
+| 3 random moves | 26.30 | 68.15 |
+| 6 moves by the network of 12 million | 27.60 | 69.75 |
+| 6 moves by the network of 480 million | 27.30 | 69.65 |
+| 6 random moves | 28.90 | 71.35 |
+
+(To the end of phase C: of the solution chosen, which is not the
+shortest way there. With 64 cubes to start from the solver stages each
+in 18 ways and not 1,200; the random moves carry the same handicap.)
+
+The network chooses better than chance, by 1.7 moves in six, and the
+solver alone is 2.3 better still: of six moves spent 3.7 are progress.
+The cube is 20 moves from the goal and at 19 and 20 the network puts
+the right cube among the nearest half the time, six times in a row.
+
+### What a larger machine would change
+
+The same was tried on the 4x4x4 on 2026-11-11 (a network of 4.4 million
+weights on 192 million cubes, a beam on it alone): reductions of 27 to
+30 moves for a minority of cubes against the solver's 23. Here: 28 to 30
+for 8 cubes in 20 against 23.2. Forty times the cubes moved the reach by
+two moves on cubes with a known way and left random cubes where they
+were. The published searches of this kind (CayleyPy, arXiv 2502.13266)
+give 8 billion training cubes for their results, 17 times more than
+here, say that more stop helping, and at a beam of 16.7 million their
+4x4x4 solutions still get 1.5 moves shorter for four times the width
+(61.9, 58.1, 54.7, 51.9, 50.4 from 65,536 to 16.7 million, in their
+metric). So a few hours of a large GPU would buy perhaps two more moves
+of reach where four are missing, and a search that needs that GPU for
+every cube.
+
+### Commands
+
+```
+anycube split5-beam --walk 14 --count 20 --widths 10000,100000        # the table, cubes with a known way
+anycube split5-beam --walk 14 --count 10 --widths 1000000
+anycube split5-beam --walk 14 --count 20 --widths 100000 --cap 80000000   # whole levels to four
+anycube split5-beam bench/scrambles555-200.txt --limit 20 --widths 10000,100000 --max 30
+anycube split5-beam bench/scrambles555-200.txt --limit 6 --widths 1000000 --max 30
+anycube split5-beam --walk 1 --count 1 --see [--net net.bin]          # how far the estimate sees
+
+anycube split5-data --count 12000000 --kmax 24 --seed 1 --out walks.bin
+ml/split5_net.py --data walks.bin --out net0.bin --epochs 12
+ml/split5_net.py --data fresh.bin --fresh target/release/anycube --out net-fresh.bin --sizes 1024,512,128 --epochs 40
+anycube split5-beam --walk 16 --count 20 --widths 1000,10000 --net net-fresh.bin
+anycube split5-beam bench/scrambles555-200.txt --limit 20 --widths 10000 --max 30 --net net-fresh.bin
+
+for K in 10 11 12 13 14 15 16 17; do
+  anycube split5-beam --walk $K --count 160 --seed $((100+K)) --widths 1000 --net net0.bin --dump found-$K.bin --take 64
+done
+ml/split5_net.py --data walks.bin found-*.bin --repeat 4 --init net0.bin --out net1.bin --epochs 4 --rate 3e-4
+
+anycube split5-hybrid bench/scrambles555-200.txt --limit 20 --net net-fresh.bin --depth 6 --width 10000 --keep 64
+```

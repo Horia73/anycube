@@ -224,9 +224,44 @@ Detail: the last section of `bench/RESULTS.md`.
   finds the way that exists two times in three up to 11 moves, is 2.3
   moves longer at 14 and 3 at 17.
 - A search with all 36 moves to the end of phase C is where those 3
-  moves are. By the experiment on the centres it would cost minutes a
-  cube (an estimate that sees 12 moves ahead, a beam of a million for a
-  goal at 16; this one is at 20): a mode of its own. Not started.
+  moves are. Tried the same day (next): it does not reach them.
+
+### 5x5x5, a search with all 36 moves to the end of phase C (2026-11-15, an experiment)
+
+Detail: the last section of `bench/RESULTS.md`.
+
+- **It fails.** A beam search from the cube straight to the end of
+  phase C (`split5-beam`, exact over the last three moves) finds the way
+  on cubes that are up to 12 to 16 moves from it and not on random
+  cubes, which are at 20: one cube in six at a beam of a million with
+  the first estimate (25 moves, 438 s), 8 in 20 at 28 to 30 moves with
+  the best network. The solver finds 23.2 on all in under a second.
+- What a beam needs is an estimate that tells the cubes one move nearer
+  from the rest, at every length. Read off cubes a known walk from the
+  goal (`--see`): a table of four numbers does so for 43% of the cubes
+  at 14 moves and 17% at 20; a network that reads the whole cube for
+  85% and 45%; the same on forty times the cubes (480 million, each
+  seen once) for 92% and 52%. In the search that is two moves of reach
+  each time. More cubes help, a wider network hardly, and a wider one
+  on the same cubes learns them by heart.
+- Do not label the cubes by anything but the length of the walk: it is a
+  fair label as far as 19 moves (a cube 17 moves away is far more often
+  the end of a walk of 17 than of 22). What flattened past 12 moves was
+  the table's four numbers.
+- Did not work: starting from every labelling of the wings (the beam
+  fills with wrong ones; keep cubes, choose the labelling at the end);
+  whole levels to four moves at the end instead of three (the same
+  cubes, ten times the time); training the network on what its own
+  searches found, one round (the network's error is not that it takes
+  far cubes for near ones, but that it takes the cubes on the short way
+  for 1.3 moves farther than they are); the network for the first three
+  or six moves and the solver for the rest (`split5-hybrid`: 67.95 and
+  69.65 against 67.35; of six moves chosen 3.7 are progress, of six
+  random ones 2.0).
+- The 4x4x4 gave the same picture on 2026-11-11 (a network on 192
+  million cubes: reductions of 27 to 30 against 23). By these figures a
+  larger machine would move the reach by a move or two where four are
+  missing; not tried.
 
 ### 6x6x6 (`six-faster`)
 

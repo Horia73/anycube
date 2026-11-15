@@ -45,7 +45,7 @@ pub trait Space: Sync {
 }
 
 #[inline(always)]
-fn mix(words: &[u64]) -> u64 {
+pub(crate) fn mix(words: &[u64]) -> u64 {
     let mut h = 0x9E37_79B9_7F4A_7C15u64;
     for &w in words {
         h = (h ^ w).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
@@ -120,11 +120,11 @@ impl Space for Centres {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SState {
     /// U/D centres, R/L centres, R centres.
-    x: [u32; 3],
-    t: [u32; 3],
-    low: u32,
-    flip: u16,
-    odd: bool,
+    pub x: [u32; 3],
+    pub t: [u32; 3],
+    pub low: u32,
+    pub flip: u16,
+    pub odd: bool,
 }
 
 pub struct Split {
@@ -148,8 +148,13 @@ impl Split {
     /// What phase C sees of a cube with the wings labelled as they are.
     pub fn of(c: &Cube5) -> SState {
         let masks = |col: &[u8; 24]| {
-            let mask = |f: &dyn Fn(u8) -> bool| (0..24).fold(0u32, |m, i| m | (f(col[i]) as u32) << i);
-            [mask(&|c| c % 3 == 0), mask(&|c| c % 3 == 1), mask(&|c| c == 1)]
+            let mut m = [0u32; 3];
+            for (i, &c) in col.iter().enumerate() {
+                m[0] |= ((c % 3 == 0) as u32) << i;
+                m[1] |= ((c % 3 == 1) as u32) << i;
+                m[2] |= ((c == 1) as u32) << i;
+            }
+            m
         };
         SState {
             x: masks(&c.c4.ct),
@@ -158,6 +163,20 @@ impl Split {
             flip: (0..11).fold(0, |m, s| m | (c.mid.eo[s] as u16) << s),
             odd: c.c4.wing_parity() == 1,
         }
+    }
+}
+
+impl Split {
+    /// What phase C sees of a cube under a labelling of its wings: bit c of
+    /// `lab` set makes the high wing of class c the low one.
+    pub fn labelled(c: &Cube5, lab: u16) -> SState {
+        let mut s = Split::of(c);
+        s.low = (0..24).fold(0, |m, p| {
+            let e = c.c4.ep[p];
+            m | ((((e / 12) as u16 ^ (lab >> (e % 12))) & 1 == 0) as u32) << p
+        });
+        s.flip = (0..11).fold(0, |m, sl| m | ((c.mid.eo[sl] as u16 ^ (lab >> c.mid.ep[sl])) & 1) << sl);
+        s
     }
 }
 
@@ -248,6 +267,14 @@ pub struct Whole<S> {
     pub sizes: Vec<u64>,
     seen: Vec<Seen>,
     last: Vec<S>,
+}
+
+impl<S> Whole<S> {
+    /// How many moves from the goal a cube of the whole levels is.
+    #[inline(always)]
+    pub fn depth(&self, key: u64) -> Option<u8> {
+        self.seen[shard(key)].get(&key).copied()
+    }
 }
 
 /// Levels from the goal, each made whole, for as long as the next one is

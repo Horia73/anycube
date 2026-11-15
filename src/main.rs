@@ -49,6 +49,9 @@ fn main() {
         Some("centres5-beam") => centres5_beam(&args[1..]),
         Some("centres5-walks") => centres5_walks(&args[1..]),
         Some("levels5") => levels5(&args[1..]),
+        Some("split5-beam") => split5_beam(&args[1..]),
+        Some("split5-data") => split5_data(&args[1..]),
+        Some("split5-hybrid") => split5_hybrid(&args[1..]),
         Some("labellings5") => labellings5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
         Some("known5") => known5(&args[1..]),
@@ -2111,6 +2114,272 @@ fn levels5(args: &[String]) {
         // 2048 labellings of the wings on each of three axes.
         Some("split") => run(&Split::new(), args, 6144.0),
         _ => usage(),
+    }
+}
+
+/// `split5-beam <scrambles>` or `split5-beam --walk K`: the shortest way to
+/// the end of phase C that a beam search with all 36 moves finds, on a
+/// scramble file or on cubes a known walk from the end of phase C.
+fn split5_beam(args: &[String]) {
+    use anycube::c5::tables5;
+    use anycube::cube::skip_move;
+    use anycube::edges5::G_MOVES;
+    use anycube::split5::Tools;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let widths: Vec<usize> =
+        opt(args, "--widths").unwrap_or("10000").split(',').map(|v| v.parse().unwrap_or_else(|_| usage())).collect();
+    let (cap, walks, kmax) = (num("--cap", 3_000_000), num("--train", 8_000_000), num("--kmax", 22));
+    let (walk, count, seed, max_len) = (num("--walk", 0), num("--count", 40), num("--seed", 7), num("--max", 26));
+    let g = &tables5().geometry;
+    let mut cubes: Vec<Vec<u8>> = Vec::new();
+    if walk > 0 {
+        // As `known5 --base split`: a cube as phase C leaves it, then the walk.
+        for i in 0..count {
+            let mut state = (seed as u64) << 32 ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+            let mut rnd = |n: usize| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as usize % n
+            };
+            let mut seq: Vec<u8> = Vec::new();
+            while seq.len() < 60 {
+                let m = G_MOVES[rnd(G_MOVES.len())];
+                if seq.last().map_or(true, |&l| !skip_move(l, m)) {
+                    seq.push(m);
+                }
+            }
+            while seq.len() < 60 + walk {
+                let m = rnd(36) as u8;
+                if (seq.len() == 60 && G_MOVES.contains(&m)) || (seq.len() > 60 && skip_move(seq[seq.len() - 1], m)) {
+                    continue;
+                }
+                seq.push(m);
+            }
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &seq.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            cubes.push(f);
+        }
+    } else {
+        let Some(path) = args.first() else { usage() };
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+        for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(num("--limit", usize::MAX)) {
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &g.parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+            cubes.push(f);
+        }
+    }
+    let t = Instant::now();
+    let mut tools = Tools::load(cap, walks, kmax);
+    if let Some(path) = opt(args, "--net") {
+        tools.net = Some(anycube::split5::Net::load(path).unwrap_or_else(|e| fail(&e)));
+    }
+    eprintln!("ready in {:.1} s: whole levels {:?}", t.elapsed().as_secs_f64(), tools.near.sizes);
+    // `--dump`: what the searches that end teach, as training records: the
+    // cubes of the way found with the moves left, and `--take` cubes of every
+    // level with the moves they have left at least if the way is the shortest.
+    let take = num("--take", 64);
+    let mut dump = opt(args, "--dump").map(|path| {
+        std::io::BufWriter::new(std::fs::File::create(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e))))
+    });
+    if args.iter().any(|a| a == "--see") {
+        // How far the estimate sees: for cubes a walk of K from the goal, the
+        // share whose estimate is below that of all but one in 28 random cubes.
+        let sample = |k: usize| -> Vec<f32> {
+            (0..20_000u64)
+                .into_par_iter()
+                .map(|i| tools.estimate(&anycube::split5::walk(k, &mut anycube::split5::lcg(k as u64 * 1_000_003 + i)).0))
+                .collect()
+        };
+        let mut random = sample(60);
+        random.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let cut = random[random.len() / 28];
+        println!("random cubes: estimate {:.2}, one in 28 below {:.2}", random.iter().sum::<f32>() / random.len() as f32, cut);
+        for k in 4..=20 {
+            let est = sample(k);
+            let mean = est.iter().sum::<f32>() / est.len() as f32;
+            let kept = est.iter().filter(|&&e| e < cut).count() as f64 / est.len() as f64;
+            println!("walk {:2}: estimate {:5.2}, kept {:5.1}%", k, mean, 100.0 * kept);
+        }
+        return;
+    }
+    for &width in &widths {
+        let t = Instant::now();
+        let (mut sum, mut found, mut scored) = (0usize, 0usize, 0u64);
+        let mut hist = std::collections::BTreeMap::new();
+        for (i, f) in cubes.iter().enumerate() {
+            let roots = anycube::split5::frames(f).unwrap_or_else(|e| fail(&e));
+            let (way, n, kept) = tools.search(&roots, width, max_len, if dump.is_some() { take } else { 0 });
+            scored += n;
+            if let Some(w) = &way {
+                let mut c = roots[w.frame];
+                c.apply_seq(&w.moves);
+                if !tools.ended(&c) {
+                    fail(&format!("cube {}: the way found does not end phase C", i));
+                }
+            }
+            if let Some(out) = dump.as_mut() {
+                use anycube::split5::{inputs, record};
+                use std::io::Write;
+                // A way no longer than the walk is taken for the shortest. Where
+                // the search found none, or a longer one, the cube is taken to be
+                // within two moves of its walk.
+                let (far, shortest) = match &way {
+                    Some(w) if walk == 0 || w.moves.len() <= walk => (w.moves.len(), true),
+                    _ => (walk.saturating_sub(2), false),
+                };
+                if let (Some(w), true) = (&way, shortest) {
+                    let mut c = roots[w.frame];
+                    for j in 0..=far {
+                        out.write_all(&record(&inputs(&c), (far - j) as f32, false)).unwrap();
+                        if j < far {
+                            c.apply(w.moves[j]);
+                        }
+                    }
+                }
+                for k in kept.iter().filter(|k| (k.level as usize) < far) {
+                    out.write_all(&record(&k.on, (far - k.level as usize) as f32, true)).unwrap();
+                }
+            }
+            if let Some(w) = way {
+                sum += w.moves.len();
+                found += 1;
+                *hist.entry(w.moves.len()).or_insert(0usize) += 1;
+            }
+        }
+        println!(
+            "width {:8}: {} of {} cubes, shortest way {:.3}, {:.1} s a cube, {:.1} million cubes scored a cube   {:?}",
+            width,
+            found,
+            cubes.len(),
+            sum as f64 / found.max(1) as f64,
+            t.elapsed().as_secs_f64() / cubes.len() as f64,
+            scored as f64 / cubes.len() as f64 / 1e6,
+            hist
+        );
+    }
+}
+
+/// `split5-data --count N --out FILE`: training records for the network of
+/// `split5-beam --net`: cubes a walk of 0 to `--kmax` moves from the end of
+/// phase C, with the length of the walk.
+fn split5_data(args: &[String]) {
+    use anycube::split5::{inputs, lcg, record, walk, RECORD};
+    use std::io::Write;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (count, kmax, seed) = (num("--count", 10_000_000), num("--kmax", 24), num("--seed", 1));
+    let Some(path) = opt(args, "--out") else { usage() };
+    let mut out =
+        std::io::BufWriter::new(std::fs::File::create(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e))));
+    const CHUNK: usize = 1 << 20;
+    for from in (0..count).step_by(CHUNK) {
+        let bytes: Vec<u8> = (from..(from + CHUNK).min(count))
+            .into_par_iter()
+            .flat_map_iter(|i| {
+                let k = i % (kmax + 1);
+                let (cube, _) = walk(k, &mut lcg((seed as u64) << 40 ^ i as u64));
+                record(&inputs(&cube), k as f32, false)
+            })
+            .collect();
+        debug_assert_eq!(bytes.len() % RECORD, 0);
+        out.write_all(&bytes).unwrap();
+    }
+}
+
+/// `split5-hybrid <scrambles> --net FILE`: the network chooses the first
+/// `--depth` moves and the solver does the rest. A beam of `--width` keeps
+/// the `--keep` cubes the network puts nearest the end of phase C after
+/// that many moves; the solver solves whichever of them gives the shortest
+/// total. Against the solver alone, and against as many cubes reached by
+/// random moves of the same number.
+fn split5_hybrid(args: &[String]) {
+    use anycube::c5::tables5;
+    use anycube::cube::skip_move;
+    use anycube::solver5::{Params5, Solver5};
+    use anycube::split5::{frames, lcg, Net, Tools};
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (width, depth, keep) = (num("--width", 10_000), num("--depth", 6), num("--keep", 64));
+    let params = match opt(args, "--mode") {
+        Some("fast") => Params5::fast(),
+        Some("full") => Params5::full(),
+        Some("normal") | None => Params5::normal(),
+        _ => usage(),
+    };
+    let g = &tables5().geometry;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let mut tools = Tools::load(100_000, 1_000_000, 22);
+    if let Some(path) = opt(args, "--net") {
+        tools.net = Some(Net::load(path).unwrap_or_else(|e| fail(&e)));
+    }
+    let solver = Solver5::load();
+    let to_orig: Vec<Vec<usize>> = [vec![], vec![0, 1], vec![0, 1, 0, 1]].iter().map(|t| g.frame_moves(t)).collect();
+    // The moves to the end of phase C and the whole solution.
+    let mut sums = [[0usize; 2]; 3];
+    let mut secs = [0f64; 3];
+    let mut n = 0;
+    for (i, scr) in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(num("--limit", usize::MAX)).enumerate() {
+        let mut f = g.solved();
+        g.apply_seq(&mut f, &g.parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+        let roots = frames(&f).unwrap_or_else(|e| fail(&e));
+        let mut rnd = lcg(i as u64 + 77);
+        let mut line = format!("cube {:3}:", i);
+        for kind in 0..3 {
+            let t = Instant::now();
+            // The moves spent before the solver starts, in the moves of the cube.
+            let firsts: Vec<Vec<usize>> = match kind {
+                0 => vec![vec![]],
+                1 => tools.starts(&roots, width, depth, keep).into_iter().map(|(fr, mv)| mv.iter().map(|&m| to_orig[fr][m as usize]).collect()).collect(),
+                _ => (0..keep)
+                    .map(|_| {
+                        let mut seq: Vec<usize> = Vec::new();
+                        while seq.len() < depth {
+                            let m = rnd(36);
+                            if seq.last().map_or(true, |&l| !skip_move(l as u8, m as u8)) {
+                                seq.push(m);
+                            }
+                        }
+                        seq
+                    })
+                    .collect(),
+            };
+            let cubes: Vec<(Vec<u8>, usize)> = firsts
+                .iter()
+                .map(|seq| {
+                    let mut c = f.clone();
+                    g.apply_seq(&mut c, seq);
+                    (c, seq.len())
+                })
+                .collect();
+            let (which, sol) = solver.solve_any(&cubes, &params).unwrap_or_else(|e| fail(&e));
+            let mut check = cubes[which].0.clone();
+            g.apply_seq(&mut check, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            if !g.is_solved(&check) {
+                fail(&format!("cube {}: not solved", i));
+            }
+            let first = firsts[which].len();
+            let to_c = first + sol.lens[0] + sol.lens[1] + sol.lens[2];
+            sums[kind][0] += to_c;
+            sums[kind][1] += first + sol.moves.len();
+            secs[kind] += t.elapsed().as_secs_f64();
+            line += &format!("  {:2} {:2}", to_c, first + sol.moves.len());
+        }
+        n += 1;
+        println!("{}", line);
+    }
+    let n = n.max(1) as f64;
+    for (kind, name) in ["the solver alone", "the network's cubes", "cubes by random moves"].iter().enumerate() {
+        println!(
+            "{:22}: to the end of phase C {:.3}, solution {:.3}, {:.1} s a cube",
+            name,
+            sums[kind][0] as f64 / n,
+            sums[kind][1] as f64 / n,
+            secs[kind] / n
+        );
     }
 }
 

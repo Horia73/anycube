@@ -37,6 +37,8 @@ pub mod search;
 pub mod solver;
 pub mod solver5;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod split5;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod solver6;
 pub mod solver7;
 pub mod stage5;
