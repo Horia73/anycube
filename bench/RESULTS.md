@@ -2832,3 +2832,209 @@ python ml/centres5_net.py report --work W --names k,exact
 ```bash
 ./target/release/anycube centres5-beam bench/scrambles555-200.txt --limit 40 --net W/exact.bin --widths 10000,100000,1000000 --out W/found
 ```
+
+## 5x5x5: how far a cube is from the end of phase C, counted level by level (2026-11-15, an experiment)
+
+Asked: the section before found the count two moves short for the
+centres (14 against 16) and left open whether the same count is as far
+out for the end of phase C, where it read 19.3 moves against the 23.2
+the solver finds, a loss of 2 to 3 moves on which a search with all 36
+moves to the end of phase C would be built.
+
+**Verdict: there the count is 0.8 of a move short, not two. By the
+levels a random cube is about 20 moves from the end of phase C (19.8 at
+least) and the solver finds 23.2, so the 3 moves are there.** The centres alone account for 0.6 of
+them. What makes the difference between the two goals is measured below:
+with only the centres to tell cubes apart, one sequence in six leads to
+a cube already counted at every length (the levels grow 23.2 times a
+move where the sequences grow 28.12); with the wings and the middle
+edges in the picture nearly every sequence is a cube of its own (27.2 at
+seven moves and rising).
+
+Nothing in any mode changed. What stays is the instrument:
+`src/levels5.rs` and the commands `levels5` and `labellings5`.
+
+### The levels
+
+`anycube levels5 --goal centres|split`: the cubes at each number of
+moves from a goal, with all 36 moves. The first levels are made whole
+(every cube kept by a 64-bit key). The next are estimated from random
+descents: from a cube of the last whole level one child a level deeper
+is taken at random, and so on, the weight multiplied by the number of
+such children and divided by the number of parents the chosen child has;
+how deep a cube is, a few moves past the whole levels, is found by
+trying every path back to them. The mean weight after j steps is the
+size of level j past the whole ones (a test makes a whole level both
+ways, and a run that stopped the whole levels at five gave 33,258,110
+± 0.9% for the sixth, which is 33,464,710).
+
+"Sequences" is what the count takes for different cubes: the sequences
+of that length in which no move undoes or reorders the one before, from
+every goal cube.
+
+The centres staged (one goal cube among 1.79e20: the axis of the centre
+at each of the 48 positions and the parity of the wings); whole to six
+moves, 6,000 descents for the rest, 73 s:
+
+| Moves | Cubes | Growth | Sequences | Cubes a sequence |
+|---:|---:|---:|---:|---:|
+| 1 | 6 | 6.00 | 36 | 0.167 |
+| 2 | 147 | 24.50 | 1,026 | 0.143 |
+| 3 | 3,054 | 20.78 | 28,836 | 0.106 |
+| 4 | 65,550 | 21.46 | 810,890 | 0.081 |
+| 5 | 1,471,230 | 22.44 | 2.28e7 | 0.065 |
+| 6 | 33,464,710 | 22.75 | 6.41e8 | 0.052 |
+| 7 | 7.73e8 ± 0.5% | 23.09 | 1.80e10 | 0.043 |
+| 8 | 1.79e10 ± 0.9% | 23.19 | 5.07e11 | 0.035 |
+| 9 | 4.15e11 ± 1.1% | 23.16 | 1.43e13 | 0.029 |
+| 10 | 9.66e12 ± 1.4% | 23.29 | 4.01e14 | 0.024 |
+
+Six cubes at one move, not 36: 24 of the moves keep staged centres
+staged, and a wide quarter turn and its inverse leave the same axes
+everywhere. The growth then settles at 23.2 and stays there: of the
+sequences one move longer, one in six keeps ending on a cube that a
+sequence no longer has reached.
+
+The end of phase C for one labelling of the wings (432 goal cubes among
+4.86e33: the centres by axis and the R centres among those of the R/L
+axis, in each of the patterns the later phases can finish; the positions
+of the low wings; the flips of the middle edges; the parity of the
+wings). The state is the one phase C searches, with all 36 moves on it,
+and a test follows a cube through 400 random moves in both. Whole to
+four moves, 6,000 descents, 20 s:
+
+| Moves | Cubes | Growth | Sequences | Cubes a sequence |
+|---:|---:|---:|---:|---:|
+| 0 | 432 | | 432 | 1 |
+| 1 | 3,456 | 8.00 | 15,552 | 0.222 |
+| 2 | 86,400 | 25.00 | 443,230 | 0.195 |
+| 3 | 2,141,600 | 24.79 | 1.25e7 | 0.172 |
+| 4 | 55,506,744 | 25.92 | 3.50e8 | 0.158 |
+| 5 | 1.48e9 ± 0.4% | 26.68 | 9.85e9 | 0.150 |
+| 6 | 4.00e10 ± 0.6% | 27.00 | 2.77e11 | 0.144 |
+| 7 | 1.09e12 ± 0.8% | 27.24 | 7.79e12 | 0.140 |
+
+Here the growth climbs towards that of the sequences and the share lost
+stops falling: what is lost is lost in the first moves (20 of the 36
+moves keep the goal; a quarter turn of R or L and its inverse leave the
+same halves).
+
+### What the levels make of a random cube
+
+A cube has one goal for the centres, and 6,144 for the end of phase C:
+2,048 labellings of its wings on each of three axes. The share of random
+cubes within d moves is at most the goals times the cubes within d over
+all the cubes; the levels past the last measured one are taken to grow
+either as the sequences do or as the last level did.
+
+| | Centres | End of phase C |
+|---|---:|---:|
+| every sequence a different cube (the count) | 13.95 | 18.99 |
+| the levels, then 28.12 a move | 14.98 | 19.69 |
+| the levels, then as the last one grew (23.29, 27.24) | 15.60 | 19.78 |
+| share of cubes one move nearer than most, last row | 39% at 15 | 21% at 19 |
+| exact search, eight cubes (the section before) | 15.88 to 16.13, one in eight at 15 | |
+| the solver, default mode, 40 cubes | 16.75 | 23.20 |
+
+(The 19.3 of the earlier section was the count without the three axes;
+with them it is 19.0.)
+
+- On the centres the levels give 15.6 where the exact searches give 15.9
+  to 16.1: they explain 1.65 of the count's two moves, and are still 0.3
+  to 0.5 short (with 39% of the cubes at 15, one or none in eight has one
+  chance in nine).
+- For the end of phase C they give 19.8. If they are as far short there
+  as on the centres, a random cube is 20.1 to 20.3 moves away. No exact
+  search can say: the one that proved a cube has no staging of 15 moves
+  took four minutes, and each move more is 28 times that.
+- These are lower bounds on the distance in one more way: a cube's 6,144
+  goals are counted as so many separate chances. For the 2,048 labellings
+  they nearly are (next), and the three axes share the centres.
+
+### The labellings of a cube are separate chances
+
+`anycube labellings5`: 20,000 random cubes, and for each the exact
+number of moves of phase C its edges alone need under each of the 2,048
+labellings (the table of phase C). The share of labellings within d
+moves, the share of cubes that would have a labelling that near if the
+2,048 were independent, the share that have, and the number of
+independent labellings that share is worth:
+
+| Moves | Labellings within | Cubes if independent | Cubes | Worth |
+|---:|---:|---:|---:|---:|
+| 4 | 9.8e-7 | 0.20% | 0.20% | 2,050 |
+| 5 | 9.9e-6 | 2.0% | 1.9% | 1,914 |
+| 6 | 1.1e-4 | 20.3% | 16.8% | 1,667 |
+| 7 | 1.1e-3 | 89.6% | 70.8% | 1,114 |
+| 8 | 9.1e-3 | 100% | 99.2% | 523 |
+
+Where few cubes have a labelling that near, the 2,048 count in full;
+where one cube in five has, they are worth 1,670, which is 0.06 of a
+move. (The nearest labelling is 7.11 moves of phase C from its goal on
+average.)
+
+### The solver, with more stagings
+
+`CUBE5_TRACE=1 anycube bench5`, first 40 cubes: the shortest staging and
+the shortest way to the end of phase C that the solver has.
+
+| Stagings | Shortest staging | To the end of phase C | Solution |
+|---|---:|---:|---:|
+| 1,200 (default mode) | 16.750 | 23.200 | 67.350 |
+| 12,000, ten times the positions of the first centre phase | 16.525 | 22.825 | 66.975 |
+| 120,000, a hundred times, one length further | 16.275 | 22.500 | 66.325 |
+
+Every ten times the stagings is 0.3 to 0.4 of a move, and the last row
+took 38 s a cube (with other work on the machine). The three moves are
+not within reach of more of the same: the solver stages the centres first (16.75)
+and then needs 6.45 moves that keep them staged for the wings, where by
+the levels a way that does both at once is about 20 moves long.
+
+### Cubes a known walk from the end of phase C, 60 of each
+
+`anycube known5 --walk K --base split --count 60 --seed 7` (the table of
+the section on what more time buys had 12 of each). A way of K moves
+exists; the shortest way the solver has:
+
+| Walk | Shortest found | Found in K or fewer |
+|---:|---:|---:|
+| 8 | 8.33 | 50 of 60 |
+| 11 | 12.00 | 40 |
+| 14 | 16.30 | 25 |
+| 17 | 20.13 | 13 |
+| 20 | 21.80 | 10 |
+| 23 | 22.48 | 54 |
+| 26 | 22.75 | |
+| 30 | 22.97 | |
+| random cubes (40) | 23.20 | |
+
+Up to 11 moves away the solver finds the way that exists two times in
+three. At 14 it is 2.3 moves longer on average and at 17 three moves,
+with the way of 17 found on 13 cubes of 60: the loss grows with the
+distance and is 3 moves before the walks are as far as a random cube.
+From 20 on the walk is no longer the short way, and the cubes are not
+yet random ones at 30 (22.97 against 23.20): the centres of a walk stay
+nearer than those of a random cube for that long, as the section before
+found.
+
+### What follows
+
+The premise of a search with all 36 moves to the end of phase C holds:
+about 3 moves of the 67 are lost there, 0.6 of them on the centres. What
+the experiment on the centres says about its cost holds too: an estimate
+that sees 12 moves ahead, a beam of a million and two minutes a cube for
+a goal 16 moves away; this goal is 20 moves away. It would be a mode of
+its own, of minutes a cube, for a part of those 3 moves; the default
+mode cannot have it. Not started.
+
+```bash
+./target/release/anycube levels5 --goal centres --cap 40000000 --deeper 4 --samples 6000
+```
+
+```bash
+./target/release/anycube levels5 --goal split --cap 80000000 --deeper 3 --samples 6000
+```
+
+```bash
+./target/release/anycube labellings5 --count 20000
+```

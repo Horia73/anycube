@@ -168,8 +168,8 @@ Detail: the last section of `bench/RESULTS.md`.
   the optimum on four of the eight. The count that gave 14 takes every
   move sequence for a different cube; near the goal most are not.
 - The same count gives the 19.3 moves to the end of phase C from which a
-  loss of 2 to 3 moves was read. It needs the same check before anything
-  is built on it.
+  loss of 2 to 3 moves was read. Checked in the subsection after this
+  one: there the count is 0.8 short, and the loss is 3 moves.
 - A beam search with all 36 moves on a small network's estimate of the
   moves left stages the centres in 18.05, 17.48, 16.93, 16.65 and 16.33
   moves at widths from 10,000 to a million, each three times the one
@@ -193,6 +193,40 @@ Detail: the last section of `bench/RESULTS.md`.
   width of 100,000. Against a random cube the estimate is sure up to 9
   moves, keeps a cube at 10 or 11 seven to nine times in ten and one at
   12 half the time: from 12 on the search is blind.
+
+### 5x5x5, the distance to the end of phase C counted level by level (2026-11-15, an experiment)
+
+Detail: the last section of `bench/RESULTS.md`.
+
+- **By the levels a random cube is about 20 moves from the end of
+  phase C; the solver finds 23.2.** The 3 moves read from the count are there, 0.6 of them on
+  the centres. `levels5` counts the cubes at each number of moves from a
+  goal, whole levels first and a few more from random descents.
+- Why the count was two moves out for the centres and is 0.8 out here:
+  the levels of the centres grow 23.2 times a move at every length
+  measured (to 10 moves) where the sequences grow 28.12, so one sequence
+  in six keeps ending on a cube already reached. With the wings and
+  middle edges to tell cubes apart the levels grow 27.2 times at seven
+  moves and rising: what is lost is lost in the first moves.
+- The levels put the centres at 15.6 moves where the exact searches found
+  15.9 to 16.1, and the end of phase C at 19.8: at least that, 20.1 to
+  20.3 if as far short as on the centres. No exact search reaches 20 moves.
+- The 2,048 labellings of a cube's wings are separate chances of a short
+  phase C (`labellings5`, from the exact table): worth 1,900 or more where
+  few cubes have a labelling that near, 1,670 where one in five has.
+- More stagings do not get there: ten times as many shorten the way to
+  the end of phase C by 0.4 and a hundred times by 0.7 (23.2, 22.8,
+  22.5; the solution 67.35, 66.98, 66.33, the last at 38 s a cube). The loss is in staging the
+  centres first and moving the wings after with the moves that keep them
+  staged (16.75 and 6.45), where by the levels a way that does both at
+  once is about 20.
+- On cubes a known walk from the end of phase C (60 of each) the solver
+  finds the way that exists two times in three up to 11 moves, is 2.3
+  moves longer at 14 and 3 at 17.
+- A search with all 36 moves to the end of phase C is where those 3
+  moves are. By the experiment on the centres it would cost minutes a
+  cube (an estimate that sees 12 moves ahead, a beam of a million for a
+  goal at 16; this one is at 20): a mode of its own. Not started.
 
 ### 6x6x6 (`six-faster`)
 
