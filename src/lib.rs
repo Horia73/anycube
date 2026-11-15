@@ -26,6 +26,8 @@ pub mod joint;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod learned5;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod levels5;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod nnn;
 pub mod opt3;
 pub mod orbits;

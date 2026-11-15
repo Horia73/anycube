@@ -48,6 +48,8 @@ fn main() {
         Some("centres5-dump") => centres5_dump(&args[1..]),
         Some("centres5-beam") => centres5_beam(&args[1..]),
         Some("centres5-walks") => centres5_walks(&args[1..]),
+        Some("levels5") => levels5(&args[1..]),
+        Some("labellings5") => labellings5(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
         Some("known5") => known5(&args[1..]),
         Some("selftest5") => anycube::edges5::Edges5::load().self_test(),
@@ -2051,6 +2053,152 @@ fn centres5_dump(args: &[String]) {
 /// Experiment (`learned5`): how far a cube K random moves from staged
 /// centres really is. `--count` cubes for each K from `--kmin` to `--kmax`,
 /// each searched exactly up to K moves (`--cap` moves at most).
+/// `levels5 --goal centres|split`: how many cubes are d moves from the goal,
+/// whole levels first and a few more from random descents, and what that
+/// makes of the distance of a random cube.
+fn levels5(args: &[String]) {
+    use anycube::levels5::{estimate, sequences, shares, whole, Centres, Space, Split};
+    fn run<P: Space>(sp: &P, args: &[String], targets: f64) {
+        let num = |name: &str, default: usize| {
+            opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+        };
+        let (cap, deeper, samples, seed) = (num("--cap", 40_000_000), num("--deeper", 3), num("--samples", 2000), num("--seed", 1));
+        let targets = opt(args, "--targets").map_or(targets, |s| s.parse::<f64>().unwrap_or_else(|_| usage()));
+        let t = Instant::now();
+        let w = whole(sp, cap);
+        eprintln!("whole levels: {:.1} s", t.elapsed().as_secs_f64());
+        let t = Instant::now();
+        let (est, lookups) = estimate(sp, &w, deeper, samples, seed as u64);
+        eprintln!("descents: {:.1} s, {} cubes looked up", t.elapsed().as_secs_f64(), lookups);
+        let mut sizes: Vec<f64> = w.sizes.iter().map(|&n| n as f64).collect();
+        let errors: Vec<f64> = sizes.iter().map(|_| 0.0).chain(est.iter().map(|e| e.1)).collect();
+        sizes.extend(est.iter().map(|e| e.0));
+        let seq = sequences(40);
+        let goals = sizes[0];
+        println!("{} goal cubes among {:.3e}, {} goals a cube", goals, sp.size(), targets);
+        println!(" d            cubes   +-         growth   sequences     cubes a sequence");
+        for d in 0..sizes.len() {
+            let growth = if d > 0 { format!("{:6.2}", sizes[d] / sizes[d - 1]) } else { "      ".into() };
+            let err = if errors[d] > 0.0 { format!("{:4.1}%", 100.0 * errors[d] / sizes[d]) } else { "     ".into() };
+            println!("{:2} {:16.0}   {}   {}   {:12.4e}   {:.5}", d, sizes[d], err, growth, goals * seq[d], sizes[d] / (goals * seq[d]));
+        }
+        // From the last level on, each level a fixed number of times the one before.
+        let extend = |growth: f64| -> Vec<f64> {
+            let mut v = sizes.clone();
+            while v.len() <= 40 {
+                v.push(v[v.len() - 1] * growth);
+            }
+            v
+        };
+        let last = sizes.len() - 1;
+        let measured = sizes[last] / sizes[last - 1];
+        let count: Vec<f64> = seq.iter().map(|&c| goals * c).collect();
+        let rows = [
+            ("every sequence a cube".to_string(), shares(&count, sp.size(), targets)),
+            (format!("levels, then 28.12 a move"), shares(&extend(28.12), sp.size(), targets)),
+            (format!("levels, then {:.2} a move", measured), shares(&extend(measured), sp.size(), targets)),
+        ];
+        println!("share of random cubes within d moves, and the mean distance");
+        for (name, (p, mean)) in &rows {
+            let first = p.iter().position(|&v| v > 0.0005).unwrap_or(0);
+            let shown: Vec<String> =
+                (first..p.len()).take_while(|&d| d == first || p[d - 1] < 0.9995).map(|d| format!("{}: {:.3}", d, p[d])).collect();
+            println!("  {:28} mean {:.2}   {}", name, mean, shown.join("  "));
+        }
+    }
+    match opt(args, "--goal") {
+        Some("centres") => run(&Centres::new(), args, 1.0),
+        // 2048 labellings of the wings on each of three axes.
+        Some("split") => run(&Split::new(), args, 6144.0),
+        _ => usage(),
+    }
+}
+
+/// `labellings5`: whether the 2048 labellings of a cube's wings are 2048
+/// chances of a short phase C. For random cubes, the exact moves of phase C
+/// that the edges alone need under every labelling: the share of labellings
+/// within d moves, the share of cubes with one that near if the labellings
+/// were independent, and the share there is.
+fn labellings5(args: &[String]) {
+    use anycube::c5::Cube5;
+    use anycube::edges5::Edges5;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (count, seed) = (num("--count", 20_000), num("--seed", 1));
+    let e5 = Edges5::load();
+    let per_cube: Vec<([u32; 16], usize)> = (0..count)
+        .into_par_iter()
+        .map(|i| {
+            let mut state = (seed as u64) << 32 ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+            let mut rnd = |n: usize| {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (state >> 33) as usize % n
+            };
+            let mut cube = Cube5::solved();
+            for _ in 0..80 {
+                cube.apply(rnd(36) as u8);
+            }
+            // As `c_labellings` goes through them: one class changes per step.
+            let mut wings = [0u32; 12];
+            let mut mids = [0u16; 12];
+            let (mut mask, mut eo) = (0u32, 0u16);
+            for p in 0..24 {
+                let piece = cube.c4.ep[p];
+                wings[(piece % 12) as usize] |= 1 << p;
+                if piece < 12 {
+                    mask |= 1 << p;
+                }
+            }
+            for s in 0..12 {
+                mids[cube.mid.ep[s] as usize] = 1 << s;
+                eo |= (cube.mid.eo[s] as u16) << s;
+            }
+            let (mut hist, mut least, mut lab) = ([0u32; 16], 15usize, 0u16);
+            for i in 0..4096u32 {
+                if i > 0 {
+                    let c = i.trailing_zeros() as usize;
+                    lab ^= 1 << c;
+                    mask ^= wings[c];
+                    eo ^= mids[c];
+                }
+                if lab.count_ones() % 2 == 0 {
+                    let d = e5.c_dist(mask, (eo & 0x7FF) as usize) as usize;
+                    hist[d] += 1;
+                    least = least.min(d);
+                }
+            }
+            (hist, least)
+        })
+        .collect();
+    let mut all = [0u64; 16];
+    let mut least = [0u64; 16];
+    for (hist, l) in &per_cube {
+        for d in 0..16 {
+            all[d] += hist[d] as u64;
+        }
+        least[*l] += 1;
+    }
+    let (n, labs) = (count as f64, count as f64 * 2048.0);
+    println!("{} cubes; mean of the nearest labelling {:.3}", count, (0..16).map(|d| d as f64 * least[d] as f64).sum::<f64>() / n);
+    println!(" d   labellings within d   cubes if independent   cubes   labellings it is worth");
+    let (mut sum_all, mut sum_least) = (0u64, 0u64);
+    for d in 0..15 {
+        sum_all += all[d];
+        sum_least += least[d];
+        if sum_all == 0 {
+            continue;
+        }
+        let (f, seen) = (sum_all as f64 / labs, sum_least as f64 / n);
+        let free = -(2048.0 * (-f).ln_1p()).exp_m1();
+        let worth = if seen > 0.0 && seen < 1.0 { format!("{:.0}", (-seen).ln_1p() / (-f).ln_1p()) } else { "".into() };
+        println!("{:2}   {:.3e}             {:.5}                {:.5}   {}", d, f, free, seen, worth);
+        if seen >= 1.0 {
+            break;
+        }
+    }
+}
+
 fn centres5_walks(args: &[String]) {
     use anycube::learned5::Tools;
     let num = |name: &str, default: usize| {
