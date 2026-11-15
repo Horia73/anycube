@@ -289,6 +289,12 @@ impl Centres5 {
         (self.x.dist(&self.rank, &self.ranks, n.xr, n.xu), self.t.dist(&self.rank, &self.ranks, n.tr, n.tu))
     }
 
+    /// The same from the positions of the R/L and of the U/D centres of each orbit.
+    #[inline(always)]
+    pub fn bounds_of(&self, xr: u32, xu: u32, tr: u32, tu: u32) -> (u8, u8) {
+        (self.x.dist(&self.rank, &self.ranks, xr, xu), self.t.dist(&self.rank, &self.ranks, tr, tu))
+    }
+
     /// Stagings of a cube, shortest first: every one of the shortest length
     /// and of the next `extra` lengths, as far as the budget allows. Empty if
     /// none of at most `max_len` moves was found in time.

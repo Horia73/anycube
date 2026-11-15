@@ -45,6 +45,9 @@ fn main() {
         Some("bench7") => bench7(&args[1..]),
         Some("stage5") => stage5(&args[1..]),
         Some("centres5") => centres5(&args[1..]),
+        Some("centres5-dump") => centres5_dump(&args[1..]),
+        Some("centres5-beam") => centres5_beam(&args[1..]),
+        Some("centres5-walks") => centres5_walks(&args[1..]),
         Some("bench5") => bench5(&args[1..]),
         Some("known5") => known5(&args[1..]),
         Some("selftest5") => anycube::edges5::Edges5::load().self_test(),
@@ -1694,6 +1697,20 @@ fn bench5(args: &[String]) {
     let mut out = opt(args, "--out").map(|p| {
         std::io::BufWriter::new(std::fs::File::create(p).unwrap_or_else(|e| fail(&format!("{}: {}", p, e))))
     });
+    // Experiment (`learned5`): centre stagings found elsewhere, by the number
+    // of the cube, offered to the solver with its own (`--stagings FILE`) or
+    // in their place (`--stagings-only`).
+    let given: Option<std::collections::HashMap<usize, Vec<Vec<u8>>>> = opt(args, "--stagings").map(|path| {
+        let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+        let mut all: std::collections::HashMap<usize, Vec<Vec<u8>>> = std::collections::HashMap::new();
+        for line in text.lines() {
+            let (cube, moves) = line.split_once('\t').unwrap_or_else(|| fail("a line of the stagings file has no tab"));
+            let moves = g.parse_moves(moves).unwrap_or_else(|e| fail(&e));
+            all.entry(cube.parse().unwrap_or_else(|_| usage())).or_default().push(moves.into_iter().map(|m| m as u8).collect());
+        }
+        all
+    });
+    let given_only = args.iter().any(|a| a == "--stagings-only");
     for scr in text.lines().map(str::trim).filter(|l| !l.is_empty()).take(limit) {
         let scramble = g.parse_moves(scr).unwrap_or_else(|e| fail(&e));
         let mut f = g.solved();
@@ -1713,7 +1730,11 @@ fn bench5(args: &[String]) {
             n += 1;
             continue;
         }
-        let sol = solver.solve(&f, &p).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+        let sol = match &given {
+            Some(all) => solver.solve_from(&f, &p, all.get(&n).map_or(&[][..], |v| &v[..]), given_only),
+            None => solver.solve(&f, &p),
+        }
+        .unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
         let ms = t.elapsed().as_secs_f64() * 1e3;
         g.apply_seq(&mut f, &sol.moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
         if !g.is_solved(&f) {
@@ -1914,6 +1935,319 @@ fn centres5(args: &[String]) {
             sols.len(),
             ms
         );
+    }
+}
+
+/// Experiment (`learned5`): training data for an estimate of the moves that
+/// stage the centres of a 5x5x5. `--count` cubes, each K random moves from
+/// staged centres, K from `--kmin` to `--kmax`; a record of 58 bytes for each.
+///
+/// With `--exact D` the last byte is not K but the fewest moves that stage
+/// the cube, found by search if at most D (and at most K, which is known),
+/// or 100 + K if it takes more than D; and every cube on the way of a
+/// staging found gets a record too, with the moves it has left. `--syms`
+/// writes the 48 symmetries for the training to turn the cubes by: for
+/// each, where the 24 positions of the x orbit go, the same for the t
+/// orbit, and the axis each of the three axes becomes.
+fn centres5_dump(args: &[String]) {
+    use anycube::learned5::{Tools, RECORD};
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (count, kmin, kmax, seed) = (num("--count", 1_000_000), num("--kmin", 1), num("--kmax", 16), num("--seed", 1));
+    let t0 = Instant::now();
+    let tools = Tools::load();
+    if let Some(path) = opt(args, "--syms") {
+        let bytes: Vec<u8> = tools
+            .syms
+            .iter()
+            .flat_map(|s| s.px.iter().chain(&s.pt).map(|&p| p as u8).chain(s.axes.iter().map(|&a| a as u8)).collect::<Vec<u8>>())
+            .collect();
+        std::fs::write(path, bytes).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+        // For each symmetry a cube and its image, for the training to check how it turns cubes.
+        let mut state = 0x5EED_u64;
+        let mut rnd = |n: usize| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize % n
+        };
+        let check: Vec<u8> = (0..tools.syms.len())
+            .flat_map(|g| {
+                let s = tools.walk(&mut rnd, 12);
+                [tools.record(&s, 0), tools.record(&tools.image(&s, g), 0)].concat()
+            })
+            .collect();
+        std::fs::write(format!("{}.check", path), check).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+        if opt(args, "--out").is_none() {
+            return;
+        }
+    }
+    let out = opt(args, "--out").unwrap_or_else(|| usage());
+    if let Some(cap) = opt(args, "--exact").map(|s| s.parse::<usize>().unwrap_or_else(|_| usage())) {
+        let mut file = std::io::BufWriter::new(std::fs::File::create(out).unwrap_or_else(|e| fail(&format!("{}: {}", out, e))));
+        let mut written = 0usize;
+        for start in (0..count).step_by(1 << 14) {
+            let end = (start + (1 << 14)).min(count);
+            let chunk: Vec<Vec<[u8; RECORD]>> = (start..end)
+                .into_par_iter()
+                .map(|i| {
+                    let mut state = (seed as u64) << 32 ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+                    let mut rnd = |n: usize| {
+                        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                        (state >> 33) as usize % n
+                    };
+                    for _ in 0..4 {
+                        rnd(2);
+                    }
+                    let k = kmin + rnd(kmax - kmin + 1);
+                    let mut s = tools.walk(&mut rnd, k);
+                    match tools.exact(&s, k.min(cap)).0 {
+                        None => vec![tools.record(&s, (100 + k) as u8)],
+                        Some(path) => {
+                            let mut recs = Vec::with_capacity(path.len());
+                            for (j, &m) in path.iter().enumerate() {
+                                recs.push(tools.record(&s, (path.len() - j) as u8));
+                                s = tools.apply(&s, m);
+                            }
+                            recs
+                        }
+                    }
+                })
+                .collect();
+            for rec in chunk.iter().flatten() {
+                file.write_all(rec).unwrap();
+                written += 1;
+            }
+            file.flush().unwrap();
+        }
+        eprintln!("{} cubes, {} records in {:.1} s", count, written, t0.elapsed().as_secs_f64());
+        return;
+    }
+    let record = |i: usize| -> [u8; RECORD] {
+        let mut state = (seed as u64) << 32 ^ (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+        let mut rnd = |n: usize| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) as usize % n
+        };
+        // A few steps to separate neighbouring seeds.
+        for _ in 0..4 {
+            rnd(2);
+        }
+        let k = kmin + rnd(kmax - kmin + 1);
+        tools.record(&tools.walk(&mut rnd, k), k as u8)
+    };
+    let mut file = std::io::BufWriter::new(std::fs::File::create(out).unwrap_or_else(|e| fail(&format!("{}: {}", out, e))));
+    for start in (0..count).step_by(1 << 20) {
+        let end = (start + (1 << 20)).min(count);
+        let chunk: Vec<[u8; RECORD]> = (start..end).into_par_iter().map(&record).collect();
+        for rec in &chunk {
+            file.write_all(rec).unwrap();
+        }
+    }
+    eprintln!("{} records in {:.1} s", count, t0.elapsed().as_secs_f64());
+}
+
+/// Experiment (`learned5`): how far a cube K random moves from staged
+/// centres really is. `--count` cubes for each K from `--kmin` to `--kmax`,
+/// each searched exactly up to K moves (`--cap` moves at most).
+fn centres5_walks(args: &[String]) {
+    use anycube::learned5::Tools;
+    let num = |name: &str, default: usize| {
+        opt(args, name).map_or(default, |s| s.parse::<usize>().unwrap_or_else(|_| usage()))
+    };
+    let (count, kmin, kmax, cap, seed) = (num("--count", 200), num("--kmin", 1), num("--kmax", 11), num("--cap", 12), num("--seed", 1));
+    let tools = Tools::load();
+    println!("K    mean distance   as far as K   positions per cube   seconds per cube and core   distances");
+    for k in kmin..=kmax {
+        let t = Instant::now();
+        let found: Vec<(Option<usize>, u64, f64)> = (0..count)
+            .into_par_iter()
+            .map(|i| {
+                let mut state = (seed as u64) << 32 ^ ((k * 1_000_003 + i) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03;
+                let mut rnd = |n: usize| {
+                    state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    (state >> 33) as usize % n
+                };
+                for _ in 0..4 {
+                    rnd(2);
+                }
+                let s = tools.walk(&mut rnd, k);
+                let t = Instant::now();
+                let (path, nodes) = tools.exact(&s, k.min(cap));
+                (path.map(|p| p.len()), nodes, t.elapsed().as_secs_f64())
+            })
+            .collect();
+        let _ = t;
+        let mut hist = std::collections::BTreeMap::new();
+        for f in &found {
+            *hist.entry(f.0.map_or(99, |d| d)).or_insert(0usize) += 1;
+        }
+        let known: Vec<usize> = found.iter().filter_map(|f| f.0).collect();
+        println!(
+            "{:2}   {:6.2}          {:5.1}%        {:10.0}           {:8.4}                    {:?}",
+            k,
+            known.iter().sum::<usize>() as f64 / known.len().max(1) as f64,
+            known.iter().filter(|&&d| d == k).count() as f64 * 100.0 / count as f64,
+            found.iter().map(|f| f.1).sum::<u64>() as f64 / count as f64,
+            found.iter().map(|f| f.2).sum::<f64>() / count as f64,
+            hist
+        );
+    }
+}
+
+/// Experiment (`learned5`): the centres of the cubes of a scramble file
+/// staged by a beam search on the network `--net` (without it, on the sum
+/// of the exact distances), at each of `--widths`; with `--today`, by the
+/// two phases as the default mode runs them. Per cube: the shortest staging,
+/// and how many different ones of that length and of the next, first as the
+/// beam ends them, then with every way to make the last `--tail` moves
+/// (default 7, 0 for none). Every staging is made on the cube. `--out P`
+/// adds them to the file P-WIDTH.tsv (number of the cube, moves), which
+/// `bench5 --stagings` reads.
+fn centres5_beam(args: &[String]) {
+    use anycube::c5::{tables5, Cube5};
+    use anycube::learned5::{Net, State, Tools};
+    use anycube::solver5::Params5;
+    use anycube::stage5::Stage5;
+    let Some(path) = args.first() else { usage() };
+    let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+    let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
+    let (limit, skip, max_len, slack) = (num("--limit", 40), num("--skip", 0), num("--max", 19), num("--slack", 1));
+    let tail = num("--tail", 7);
+    let widths: Vec<usize> =
+        opt(args, "--widths").unwrap_or("10000").split(',').map(|v| v.parse().unwrap_or_else(|_| usage())).collect();
+    let today = args.iter().any(|a| a == "--today");
+    let t0 = Instant::now();
+    let tools = Tools::load();
+    let net = opt(args, "--net").map(|p| Net::load(p).unwrap_or_else(|e| fail(&e)));
+    eprintln!("tables ready in {:.2} s", t0.elapsed().as_secs_f64());
+    let g = &tables5().geometry;
+    let cubes: Vec<Vec<u8>> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .skip(skip)
+        .take(limit)
+        .map(|scr| {
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &g.parse_moves(scr).unwrap_or_else(|e| fail(&e)));
+            f
+        })
+        .collect();
+    // Makes every staging on the cube; returns the shortest length and the
+    // number of different cubes left by the stagings of that length and of the next.
+    // (0, 0, 0) for a cube with no staging found.
+    let check = |i: usize, f: &[u8], found: &[Vec<u8>]| -> (usize, usize, usize) {
+        let cube = Cube5::from_facelets(f).unwrap_or_else(|e| fail(&e));
+        let Some(shortest) = found.iter().map(|s| s.len()).min() else { return (0, 0, 0) };
+        let mut ends: Vec<(usize, Cube5)> = found
+            .par_iter()
+            .filter(|s| s.len() <= shortest + 1)
+            .map(|s| {
+                let mut c = cube;
+                c.apply_seq(s);
+                if !Stage5::is_staged(&c) {
+                    fail(&format!("cube {}: a result does not stage the centres", i));
+                }
+                (s.len(), c)
+            })
+            .collect();
+        ends.sort_by_key(|(len, c)| (*len, c.c4.ct, c.c4.ep, c.c4.cp, c.c4.co, c.t, c.mid.ep, c.mid.eo));
+        ends.dedup();
+        let at = ends.iter().filter(|e| e.0 == shortest).count();
+        (shortest, at, ends.len() - at)
+    };
+    let report = |name: &str, rows: &[(usize, usize, usize)], secs: f64| {
+        let cubes = rows.len();
+        let rows: Vec<(usize, usize, usize)> = rows.iter().copied().filter(|r| r.1 > 0).collect();
+        if rows.len() < cubes {
+            println!("{}: no staging found on {} of {} cubes; the rest:", name, cubes - rows.len(), cubes);
+        }
+        if rows.is_empty() {
+            return;
+        }
+        let rows = &rows[..];
+        let n = rows.len() as f64;
+        let mean = |k: usize| rows.iter().map(|r| [r.0, r.1, r.2][k]).sum::<usize>() as f64 / n;
+        let mut by: Vec<usize> = rows.iter().map(|r| r.2).collect();
+        by.sort();
+        let mut hist = std::collections::BTreeMap::new();
+        for r in rows {
+            *hist.entry(r.0).or_insert(0usize) += 1;
+        }
+        println!(
+            "{}: {} cubes, shortest staging {:.3} ({:?}); different stagings of that length {:.1}, one longer {:.1} (median {}, least {}); {:.2} s a cube",
+            name, rows.len(), mean(0), hist, mean(1), mean(2), by[by.len() / 2], by[0], secs / cubes as f64
+        );
+    };
+    if today {
+        // As the default mode, or with more of it: `--extra`, `--a-budget`, `--staged`.
+        let d = Params5::normal();
+        let p = Params5 {
+            stage_extra: num("--extra", d.stage_extra),
+            stage_budget: num("--a-budget", d.stage_budget as usize) as u64,
+            staged: num("--staged", d.staged),
+            ..d
+        };
+        let t = Instant::now();
+        let rows: Vec<(usize, usize, usize)> = cubes
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let found = tools.stage.stage(f, p.stage_extra, 100_000, p.staged, p.stage_budget, None).unwrap_or_else(|e| fail(&e));
+                let seqs: Vec<Vec<u8>> = found.into_iter().map(|s| s.moves).collect();
+                let row = check(i, f, &seqs);
+                eprintln!("cube {:3}: two phases, shortest {}, {} of that length, {} one longer, {} kept", i, row.0, row.1, row.2, seqs.len());
+                row
+            })
+            .collect();
+        report(
+            &format!("two phases, {} lengths past the shortest first phase, {} positions each, {} kept", p.stage_extra, p.stage_budget, p.staged),
+            &rows,
+            t.elapsed().as_secs_f64(),
+        );
+    }
+    if net.is_none() && today {
+        return;
+    }
+    for &width in &widths {
+        let t = Instant::now();
+        let rows: Vec<[(usize, usize, usize); 2]> = cubes
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                let root = State::of(&Cube5::from_facelets(f).unwrap_or_else(|e| fail(&e)));
+                let tc = Instant::now();
+                let (mut found, more, trace) = tools.beam(net.as_ref(), root, width, max_len, slack, tail);
+                let secs = tc.elapsed().as_secs_f64();
+                let row = check(i, f, &found);
+                found.extend(more);
+                if let Some(prefix) = opt(args, "--out") {
+                    use std::fs::OpenOptions;
+                    let path = format!("{}-{}.tsv", prefix, width);
+                    let file = OpenOptions::new().create(true).append(true).open(&path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
+                    let mut file = std::io::BufWriter::new(file);
+                    for s in &found {
+                        let names: Vec<String> = s.iter().map(|&m| g.move_name(m as usize)).collect();
+                        writeln!(file, "{}\t{}", skip + i, names.join(" ")).unwrap();
+                    }
+                }
+                // The same shortest length, unless the beam ended none itself.
+                let all = check(i, f, &found);
+                eprintln!(
+                    "cube {:3}: width {}, shortest {}, {} of that length, {} one longer; with the last moves every way {} and {}; {} scored, {:.1} s",
+                    i, width, row.0, row.1, row.2, all.1, all.2, trace.scored, secs
+                );
+                if args.iter().any(|a| a == "--trace") {
+                    eprintln!("    made, different, scored, kept per level: {:?}", trace.levels);
+                }
+                [row, all]
+            })
+            .collect();
+        let secs = t.elapsed().as_secs_f64();
+        report(&format!("beam of {}", width), &rows.iter().map(|r| r[0]).collect::<Vec<_>>(), secs);
+        if tail > 0 {
+            report(&format!("beam of {}, last {} moves every way", width, tail), &rows.iter().map(|r| r[1]).collect::<Vec<_>>(), secs);
+        }
     }
 }
 

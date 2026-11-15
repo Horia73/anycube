@@ -156,6 +156,31 @@ Detail: the last section of `bench/RESULTS.md`.
   what exists (`known5 --base split`), the largest loss measured and the
   only one in a stretch with all moves.
 
+### 5x5x5, the centres by a learned estimate (2026-11-15, an experiment)
+
+Detail: the last section of `bench/RESULTS.md`.
+
+- A beam search with all 36 moves on a small network's estimate of the
+  moves left stages the centres in 16.93 moves at a width of 100,000 and
+  16.33 at a million (two phases: 16.75), in 15 s and 118 s a cube where
+  the two phases take 0.24 s, 16.53 in 1.4 s with ten times their
+  positions and 16.28 in 22 s with a hundred times. In the solver the
+  stagings of the widest beam are worth 0.68 moves; the full mode gets as
+  much in 4 s. Not kept in any mode.
+- The length of a random walk is a poor label here: 24 of the 36 moves
+  leave staged centres staged, half the cubes K moves away are nearer than
+  K, and one in ten is within 11 moves after a walk of 16.
+- Exact distances up to 11 moves are cheap to label with (a search bounded
+  by the tables, milliseconds a cube). They set the estimate's scale right
+  and order cubes no better: a cube 10 moves away is put before a far one
+  82 times in 100 whatever the labels, the amount of data or the
+  symmetries, 83 with four times the weights, 75 by the sum of the table
+  distances alone.
+- What the network lacks is what the tables lack: how the two orbits
+  hinder each other. The shorter stagings it does find carry through to
+  the solution, so the loss before the end of phase C is real and still
+  open.
+
 ### 6x6x6 (`six-faster`)
 
 - Half of a beam search's time was one read of a large table per state.

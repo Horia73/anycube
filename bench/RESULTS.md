@@ -2412,3 +2412,244 @@ what exists, 2 to 3 moves, and they are the only stretch with all 36 moves
 in which a search could go on a learned estimate: it is a problem of
 65 nats (the logarithm of the count), the 3x3x3 is one of 45, and for
 that size learned searches are close to optimal. Not tried here.
+
+## 5x5x5: the centres by a beam search on a learned estimate (2026-11-15, night, an experiment)
+
+Asked: can a learned estimate of the distance lead a search with all 36
+moves to stage the centres in fewer moves than the two centre phases do,
+the first step towards the 2 to 3 moves the section above found lost
+before the end of phase C. Success was set at a shortest staging under
+16.0 on the first 40 cubes of `scrambles555-200.txt` with a few hundred
+different stagings one move longer; failure at more than 16.5 with a
+beam of a million.
+
+**Verdict: neither, and of no use as it is.** A beam of a million finds
+16.325 where the two phases find 16.750, and takes 118 s a cube to do
+it; the two phases with ten times their positions find 16.525 in 1.4 s
+and with a hundred times 16.275 in 22 s.
+The network cannot tell a cube 10 moves from staged from a far one
+often enough (82 times in 100), and neither exact labels, nor sixteen
+times the data, nor four times the weights, nor the 48 symmetries move
+that number. The second step (the same to the end of phase C) was not
+started. Nothing in any mode changed; what stays is the instrument:
+`src/learned5.rs`, `ml/centres5_net.py` and the commands `centres5-dump`,
+`centres5-walks` and `centres5-beam`.
+
+Staging the centres is a problem of 1.8e20 states (46.6 nats): by the
+count 14 moves, 15 on the one cube searched exactly (340 s, above).
+Today, the same 40 cubes (`centres5-beam --today`): shortest staging
+16.750 (one of 15, fourteen of 16, nineteen of 17, six of 18), 13.0
+different stagings of that length and 175.3 one longer (median 76,
+least 2) among the 1,200 kept, 0.24 s a cube.
+
+### The label K says little here
+
+As asked first: cubes K random moves from staged centres, K from 1 to
+16, no move undoing or continuing the one before; a residual network of
+305,409 weights (153 inputs, 256 wide, two blocks) sees the axis of the
+centre at each of the 48 positions, the parity of the wings and eight
+exact distances (each orbit staged alone, from `centres5`; for each
+axis and orbit its eight centres brought onto their faces), and is
+trained to say K: 30 passes of 8 million fresh cubes, 6.5 minutes on
+the graphics processor. On 1.6 million other cubes:
+
+| K | Estimate | Mean error | | K | Estimate | Mean error |
+|---:|---|---:|---|---:|---|---:|
+| 1 | 2.72 ± 0.08 | 1.72 | | 9 | 9.48 ± 2.48 | 2.06 |
+| 2 | 3.16 ± 0.63 | 1.16 | | 10 | 10.37 ± 2.48 | 2.04 |
+| 3 | 3.83 ± 1.05 | 1.06 | | 11 | 11.11 ± 2.38 | 1.90 |
+| 4 | 4.63 ± 1.41 | 1.32 | | 12 | 11.73 ± 2.21 | 1.67 |
+| 5 | 5.52 ± 1.71 | 1.54 | | 13 | 12.24 ± 2.01 | 1.45 |
+| 6 | 6.46 ± 1.95 | 1.69 | | 14 | 12.65 ± 1.81 | 1.49 |
+| 7 | 7.44 ± 2.15 | 1.82 | | 15 | 12.96 ± 1.63 | 2.04 |
+| 8 | 8.48 ± 2.35 | 1.98 | | 16 | 13.23 ± 1.44 | 2.77 |
+
+It cannot say 1 for K = 1, and the reason is in the moves: 24 of the 36
+leave staged centres staged (the face turns and the half turns of two
+layers), so a cube one random move away is staged two times in three.
+With the first move a quarter turn of two layers the near cubes come
+out right, and the rest does not (K to 20, since after 16 moves the
+walks are not yet mixed: the orbit tables read 8.8 and 8.2 there and
+9.0 and 8.6 after 20):
+
+| K | Estimate | Mean error | | K | Estimate | Mean error |
+|---:|---|---:|---|---:|---|---:|
+| 1 | 1.06 ± 0.01 | 0.06 | | 10 | 11.72 ± 2.57 | 2.56 |
+| 2 | 2.26 ± 0.23 | 0.29 | | 12 | 13.35 ± 2.42 | 2.35 |
+| 4 | 4.36 ± 0.73 | 0.61 | | 14 | 14.44 ± 2.16 | 1.81 |
+| 6 | 6.53 ± 1.22 | 1.04 | | 16 | 15.19 ± 1.88 | 1.47 |
+| 8 | 9.15 ± 1.96 | 1.85 | | 20 | 16.08 ± 1.44 | 3.92 |
+
+A network of 1,135,105 weights (512 wide, 40 passes) has the same
+errors to 0.05. They are not the network's: a cube K moves away is
+rarely K moves away (`centres5-walks`: 200 cubes for each K, each
+searched exactly with the tables as bounds; 100 for each K above 11,
+searched to 11 moves):
+
+| K | Mean distance | As far as K | | K | Within 11 moves |
+|---:|---:|---:|---|---:|---:|
+| 3 | 2.88 | 88% | | 12 | 54% |
+| 5 | 4.60 | 71% | | 13 | 44% |
+| 7 | 6.39 | 68% | | 14 | 21% |
+| 9 | 7.92 | 48% | | 15 | 20% |
+| 10 | 8.99 | 52% | | 16 | 10% |
+| 11 | 9.81 | 45% | | | |
+
+Half the cubes are nearer than their label, by as much as seven moves,
+and one cube in ten is within 11 moves after a walk of 16. The beam on
+these networks (`centres5-beam`, width 10,000, stagings of up to 20
+moves): on the walks of any moves no staging on 12 of the 40 cubes and
+18.79 on the rest; on the walks that start with a wide quarter turn none
+on 10 and 18.27 on the rest.
+
+### Exact distances as labels
+
+The search that measured the walks is cheap as far as 11 moves: 0.1 to
+11 ms for a cube that near, 20 to 50 ms to know that a cube is further.
+`centres5-dump --exact 11` writes, for walks of 8 to 16 moves, the exact
+distance if it is at most 11, and every cube on the way of the staging
+found with the moves it has left; a cube further than 11 after a walk
+of 12 is at 12, after a longer walk it is trained as 13. 400,000 walks
+gave 2,277,952 records in a quarter of an hour. Each record is turned by a random
+one of the 48 symmetries of the cube every time it is used (the
+distances are the same; `centres5-dump --syms`, checked in both
+programs). The network above (256 wide, trained on K first), 8 passes,
+on the 45,559 records held out:
+
+| Distance | Estimate | Mean error | Before a far cube |
+|---:|---|---:|---:|
+| 5 | 5.13 ± 0.34 | 0.23 | |
+| 6 | 6.31 ± 0.54 | 0.48 | |
+| 7 | 7.46 ± 0.65 | 0.68 | |
+| 8 | 8.40 ± 0.76 | 0.69 | 98.7% |
+| 9 | 9.42 ± 1.15 | 0.98 | 91.4% |
+| 10 | 10.16 ± 1.23 | 1.05 | 82.1% |
+| 11 | 10.63 ± 1.22 | 1.05 | 73.8% |
+| 12 | 11.40 ± 1.03 | 0.89 | 57.2% |
+| more than 11, walk of 14 | 11.55 ± 1.04 | | |
+| more than 11, walk of 16 | 11.76 ± 0.96 | | |
+
+The last column is what a search needs: how often a cube at that
+distance gets a lower estimate than a cube more than 12 away (one
+further than 11 after a walk of 13 to 16). It is where everything
+tried ends up:
+
+| Estimate | 9 | 10 | 11 |
+|---|---:|---:|---:|
+| largest of the eight table distances | 80.1% | 69.3% | 62.2% |
+| their sum | 84.0% | 75.2% | 68.3% |
+| network trained on K, 256 wide | 91.0% | 82.2% | 74.4% |
+| the same, 512 wide | 92.1% | 83.4% | 75.3% |
+| exact labels, 256 wide (the one searched with) | 91.4% | 82.1% | 73.8% |
+| on a sixteenth of the records | 91.3% | 82.0% | 73.9% |
+| on a quarter of them | 91.5% | 82.2% | 74.0% |
+| 512 wide (on the first 1.9 million records) | 91.9% | 82.8% | 74.0% |
+| 256 wide, four blocks, exact labels only | 89.8% | 80.0% | 72.5% |
+| the mean over the 48 images of the cube | 91.9% | 82.7% | 74.3% |
+
+- The exact labels set the scale right (the network trained on K says
+  12.9 for a cube at 10) and order the cubes no better.
+- The data is not what is missing: a sixteenth of it gives the same.
+  Nor is it noise: the 48 images of a cube get estimates 0.2 apart, and
+  their mean orders no better.
+- Four times the weights buy one point, and a search with them scores a
+  quarter as many cubes in the same time.
+- So the network is the tables and seven points: it does not find in the
+  positions what a search of ten thousand positions finds.
+
+### The beam
+
+`centres5-beam --net`: level by level the cubes are made with all moves,
+the same cube kept once, each scored by the larger of the network and
+its exact distances, the best kept. A cube with one axis in place is
+also ended by the exact table of the second centre phase, and what
+cannot end within a move of the shortest staging found is dropped by
+the exact distances. With exact labels, 40 cubes, each staging made on
+the cube; in brackets the count when the last seven moves are made in
+every way by exact search from the cubes the beam kept (free: under a
+tenth of a second):
+
+| | Shortest | Of that length | One longer | Seconds a cube |
+|---|---:|---:|---:|---:|
+| two phases, default mode | 16.750 | 13.0 | 175.3 (median 76) | 0.24 |
+| two phases, ten times the positions, 4,000 kept | 16.525 | 9.5 | 171.2 (median 75) | 1.40 |
+| two phases, a hundred times, one length further | 16.275 | 16.0 | 234.5 (median 133) | 22.48 |
+| beam of 10,000 (38 cubes; none within 20 on two) | 18.053 | 5.1 (27.4) | 27.7 (417.7) | 1.97 |
+| beam of 100,000 | 16.925 | 2.9 (10.6) | 20.9 (326.7, median 150) | 14.99 |
+| beam of 1,000,000 | 16.325 | 2.9 (9.5) | 23.3 (245.9, median 174) | 118.16 |
+
+Lengths at a million: three cubes of 15, twenty-two of 16, fourteen of
+17, one of 18. It scores 1.4 million cubes a second on the processor
+(the system's matrix product; the graphics processor is no faster for a
+network this small), 160 to 190 million a cube: the first four levels
+are whole, the fifth keeps one cube in 13, the next five one in 27.
+
+Every ten times the width is a move at first and 0.6 at the end, for
+ten times the time. The stagings are there in number once the last
+moves are searched exactly, so the second condition is met and the
+first is not: 16.325 is neither under 16.0 nor over 16.5. And the two
+phases reach the same place sooner: with `--extra 4 --a-budget
+100000000 --staged 4000` they are at 16.275 in a fifth of the time,
+with more stagings of the shortest length (two cubes of 15, twenty-five
+of 16, thirteen of 17).
+
+### In the solver
+
+The stagings of the beam (of the shortest length and one longer) given
+to the default mode with its own 1,200, the shortest 1,200 of all kept
+(`bench5 --stagings`), and alone (`--stagings-only`); 40 cubes, every
+solution checked on the sticker model:
+
+| Stagings | Moves | Centres | Edges | 3x3x3 |
+|---|---:|---:|---:|---:|
+| the solver's own (default mode) | 67.350 | 18.13 | 32.15 | 17.07 |
+| with those of the beam of 100,000 | 67.100 | 17.82 | 32.13 | 17.15 |
+| with those of the beam of 1,000,000 | 66.675 | 17.35 | 32.40 | 16.93 |
+| only those of the beam of 100,000 | 67.900 | 17.65 | 32.87 | 17.38 |
+| only those of the beam of 1,000,000 | 66.800 | 17.10 | 32.77 | 16.93 |
+
+0.68 moves for 118 s a cube. The full mode gets 0.63 for 3 s more
+(66.725 in 3.7 s on these cubes, measured again), and the exact search
+of the centres takes 340 s for the optimum itself. The shorter stagings do
+carry through (the staging chosen is 0.78 shorter and the solution
+0.68), so the count of the section above holds: a shorter way to the
+end of phase C would shorten the solution. This estimate is not that
+way.
+
+### What it would take
+
+For a staging of 15 moves a beam of a million has to keep a cube 10
+moves from staged at the fifth move, where it keeps one in 13, and one
+9 away at the sixth, where it keeps one in 27. Put before a single far
+cube 82 and 91 times in 100, such a cube is dropped too often; a beam
+ten times as wide makes up for it at ten times the cost. The
+tables hold what one orbit knows; what is missing is how the two
+orbits hinder each other, and a network of a few hundred thousand
+weights does not learn that from positions, whatever the labels. A
+table of both orbits near the goal is the exact form of the same
+knowledge and was counted above at several thousand million states.
+Not tried: networks of tens of millions of weights (they would score
+some thousands of cubes a second here, a beam of a few thousand), and
+estimates trained on their own searches.
+
+To make it again (the network is not in the repository):
+
+```bash
+./target/release/anycube centres5-dump --syms W/syms.bin
+```
+
+```bash
+./target/release/anycube centres5-dump --exact 11 --kmin 8 --kmax 16 --count 400000 --seed 11 --out W/x-11.bin
+```
+
+```bash
+python ml/centres5_net.py train --work W --name k --width 256 --blocks 2 --epochs 30 --kmax 20
+```
+
+```bash
+python ml/centres5_net.py tune --work W --name exact --init k --epochs 8 --batch 4096
+```
+
+```bash
+./target/release/anycube centres5-beam bench/scrambles555-200.txt --limit 40 --net W/exact.bin --widths 10000,100000,1000000 --out W/found
+```

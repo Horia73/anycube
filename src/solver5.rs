@@ -196,16 +196,28 @@ impl Solver5 {
     /// ways, such as the larger cubes: every step here chooses among all of
     /// them by total length.
     pub fn solve_any(&self, cubes: &[(Vec<u8>, usize)], p: &Params5) -> Result<(usize, Solution5), String> {
-        self.run(cubes, p, true)
+        self.run(cubes, p, true, None)
+    }
+
+    /// Experiment (`learned5`): as `solve`, with centre stagings found
+    /// elsewhere offered next to the solver's own, or alone with `only`.
+    pub fn solve_from(&self, facelets: &[u8], p: &Params5, given: &[Vec<u8>], only: bool) -> Result<Solution5, String> {
+        self.run(&[(facelets.to_vec(), 0)], p, true, Some((given, only))).map(|x| x.1)
     }
 
     /// The shortest reduction found: centres solved and edges whole, the
     /// 3x3x3 left as it comes. For callers that go on from there themselves.
     pub fn reduce(&self, facelets: &[u8], p: &Params5) -> Result<Vec<u8>, String> {
-        self.run(&[(facelets.to_vec(), 0)], p, false).map(|x| x.1.moves)
+        self.run(&[(facelets.to_vec(), 0)], p, false, None).map(|x| x.1.moves)
     }
 
-    fn run(&self, cubes: &[(Vec<u8>, usize)], p: &Params5, finish: bool) -> Result<(usize, Solution5), String> {
+    fn run(
+        &self,
+        cubes: &[(Vec<u8>, usize)],
+        p: &Params5,
+        finish: bool,
+        given: Option<(&[Vec<u8>], bool)>,
+    ) -> Result<(usize, Solution5), String> {
         let g = &tables5().geometry;
         let t0 = Instant::now();
         let until = |share: f64| (p.time_ms > 0).then(|| t0 + Duration::from_secs_f64(p.time_ms as f64 * share / 1e3));
@@ -286,6 +298,17 @@ impl Solver5 {
             all.truncate(p.staged);
             staged = all;
         }
+        if let Some((given, only)) = given {
+            let mut all: Vec<(usize, Staged)> =
+                given.iter().map(|moves| (0, Staged { len_a: moves.len(), moves: moves.clone() })).collect();
+            if !only {
+                all.append(&mut staged);
+            }
+            all.sort_by_key(|s| s.1.moves.len());
+            all.truncate(p.staged);
+            staged = all;
+            lap("given", staged.len(), staged.first().map_or(0, |s| s.1.moves.len()));
+        }
         // Phase C, along each axis.
         let from: Vec<Partial> = staged
             .iter()
@@ -339,7 +362,7 @@ impl Solver5 {
                     Ok((x.root, Solution5 { moves: x.moves.clone(), lens }))
                 }
                 None if p.time_ms == 0 => Err("no reduction found".to_string()),
-                None => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish),
+                None => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish, given),
             };
         }
         // The 3x3x3 that is left.
@@ -368,7 +391,7 @@ impl Solver5 {
             // A step cut short by the clock left the next one nothing to work with.
             return match p.time_ms {
                 0 => Err("no reduction found".to_string()),
-                _ => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish),
+                _ => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish, given),
             };
         };
         lap("3x3x3", 1, cubes[x.root].1 + x.moves.len() + sol3.len());
