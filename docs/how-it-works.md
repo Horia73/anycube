@@ -44,17 +44,24 @@ flowchart LR
   solvers); then the whole ring goes onto its faces in one step, as the x
   and t centres of a 5x5x5. Then, row by row from the rim inwards, every
   centre is made to agree in colour with the one under it
-  (`src/rings.rs`); the edge steps bring them home. A short row (up to
-  five centres: the last row of every cube, and the one before it on an
-  odd cube) is matched with all its columns at once: a beam search for
-  each of the eight ways the row may agree, a level at a time side by
-  side, and from the states with one or two pairs of centres left an exact
-  search of the last few moves, which the score of the beam cannot see.
-  A long row is matched from its middle
-  outwards, the columns done so far kept alike so that each step is a
-  search of the same small size whatever the length of the row. Should no
-  matching be found, the centres are brought home one step at a time
-  instead (`src/axes.rs`).
+  (`src/rings.rs`); the edge steps bring them home. A short row (three
+  centres, or four or five where it is the first row to be matched) is
+  matched with all its columns at once: a beam search for each of the
+  eight ways the row may agree, a level at a time side by side, and from
+  the states with one or two pairs of centres left an exact search of the
+  last few moves, which the score of the beam cannot see.
+  A longer row is done from its middle outwards. Its inner columns are
+  first made alike, two at a time: the same pattern in the row and the
+  same in the row under it, matched or not. Columns that are alike and are
+  not cut apart move alike, so however many they are they are one thing to
+  follow, and each step is a search of the same small size whatever the
+  length of the row (a beam search, with an exact search of its last moves
+  from the best states of every level). Then that one thing and the two
+  columns at the ends are matched as a row of three. The row under it is
+  left with its inner columns alike, which is half of every step of the
+  next row. Should no matching be found, the centres are brought home one
+  step at a time instead (`src/axes.rs`); no cube of the test sets needs
+  that.
 - Edges: orbit by orbit from the middle outwards, each a 5x5x5 whose middle
   edges are the stretch already joined (a 4x4x4 for the innermost wings of
   an even cube). The last one is the whole cube as a 5x5x5, solved to the end.

@@ -41,9 +41,13 @@ The 6x6x6 and 7x7x7 solvers add about 0.7 GB (`axes-*.bin`, `stage666-*.bin`,
 `stage777-*.bin`).
 
 Sizes from 8 up need no tables of their own size: they use the ones above,
-and twelve small ones for matching rows of centres (`ring-*.bin`, 24 MB
-each), which every size shares. With everything generated the directory
-holds about 8.1 GB.
+and fifteen small ones for matching rows of centres (`ring-*.bin`, 24 MB
+each, half a minute to make the larger kind), which every size shares:
+for the columns a step makes alike, what one axis needs over both rows,
+and what one row needs on two axes together. With everything generated
+the directory holds about 8.2 GB. (Twelve more of the same size are made
+only if a row is not matched that way and falls back on the older one;
+no cube of the test sets does.)
 
 `phase1-exact.bin` (554 MB), which releases up to v0.1.0 made for the 3x3x3
 step of every size, is no longer read and can be deleted.

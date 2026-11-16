@@ -34,24 +34,30 @@
 //! along with the turns that separate the row from the one under it, and
 //! the search has to bring them back.
 //!
-//! Three ways are tried:
+//! Four ways are tried:
 //!
-//! - all columns at once, a beam search whose score adds, over the columns
-//!   and the three axes, the exact number of half moves until the patterns
-//!   of a centre and the one under it agree, each move's cost shared
-//!   between the axes. The shortest, but it works on short rows only: all
-//!   columns hang together through the turns that separate the two rows,
-//!   and a sum over the columns does not see that. For the same reason it
-//!   does not arrive by itself, and its last moves are searched exactly
-//!   (`Ending`);
-//! - from the middle of the row outwards (`extend`), each step a search of
-//!   the same small size however long the row is. This is what makes rows
-//!   of any length possible;
+//! - all columns at once (`whole`), a beam search whose score adds, over
+//!   the columns and the three axes, the exact number of half moves until
+//!   the patterns of a centre and the one under it agree, each move's cost
+//!   shared between the axes. The shortest, but it works on short rows
+//!   only: all columns hang together through the turns that separate the
+//!   two rows, and a sum over the columns does not see that. For the same
+//!   reason it does not arrive by itself, and its last moves are searched
+//!   exactly (`Ending`). For a row of three, and for a row of four or five
+//!   that is the first to be matched;
+//! - the inner columns made alike from the middle of the row outwards, and
+//!   matched with the two ends in one search at the end (`alike`): each
+//!   step a search of the same small size however long the row is. This is
+//!   what every longer row is matched by, and what leaves the next row
+//!   half done;
+//! - from the middle outwards with every step's columns matched as well as
+//!   alike (`extend`), which is how long rows were done before: kept for a
+//!   row on which the way above finds nothing;
 //! - column by column with plain moves, the columns done before followed
 //!   and brought back: a last resort.
 
 use crate::cuben::Geometry;
-use crate::search::{beam_from, mixed, Problem};
+use crate::search::{beam_from, fetch, mixed, Problem};
 use crate::stage6::skip54;
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
@@ -82,6 +88,31 @@ const PATIENCE: usize = 8;
 const END: usize = 7;
 const END_BUDGET: u64 = 2_000_000;
 
+/// A step that makes columns alike (`Ring::alike`) is not asked to arrive
+/// either. On every level of its beam search the states with the lowest
+/// scores, so many of them, are tried for an exact ending of at most so
+/// many moves, but only where the tables do not ask for all but so many of
+/// them (most of the time of a step went on states that the bound allowed
+/// six moves and that had no ending that short); the search goes on for so
+/// many levels after the first ending. Should a step find none, endings
+/// longer by up to so many moves are looked for from the states that came
+/// nearest.
+const STARTS: usize = 16;
+const END_MOVES: usize = 6;
+const END_GAP: usize = 2;
+const END_LONGER: usize = 2;
+const END_MORE: usize = 2;
+/// The searches of a step, each tried if the one before found nothing: the
+/// ties it is run with, and how many times the usual width. (Other ties at
+/// the same width found an ending for three steps in seven, three times
+/// the width for the rest but one, which seven searches at up to three
+/// times the width did not finish and one at ten times did.)
+const TRIES: [(u32, usize); 3] = [(0, 1), (1000, 3), (2000, 10)];
+/// Levels on which the lowest score may stay where it is before a search
+/// of a step is given up for the next. An ending is found on the level
+/// that brings a lower score, or within three of it (150 searches).
+const STUCK: usize = 5;
+
 type Node = [u32; MAX];
 
 /// The tables kept as files, by fingerprint: whoever asks first makes or
@@ -91,6 +122,8 @@ static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u6
 
 pub struct Ring {
     row: usize,
+    /// The columns of the row that are followed, as columns of a face.
+    columns: Vec<usize>,
     /// How far from the nearer end of a face each column is.
     level: Vec<usize>,
     /// Moves of the cube: face turns, and half turns from `a + 1` layers deep to the middle.
@@ -102,7 +135,7 @@ pub struct Ring {
     rank8: [u8; 256],
     unrank8: Vec<u32>,
     /// Tables of `group_table` made so far.
-    tables: std::sync::Mutex<std::collections::HashMap<(usize, Vec<usize>, Vec<bool>, usize), std::sync::Arc<Bytes>>>,
+    tables: std::sync::Mutex<std::collections::HashMap<(usize, Vec<usize>, Vec<bool>, usize, bool), std::sync::Arc<Bytes>>>,
 }
 
 /// One step: the columns from some level to the middle.
@@ -123,12 +156,17 @@ fn axis_of(face: usize) -> usize {
 
 impl Ring {
     pub fn new(g: &Geometry, a: usize) -> Ring {
+        Ring::part(g, a, (a + 1..g.n - 1 - a).collect(), usize::MAX)
+    }
+
+    /// Some columns of row `a` only, and half turns no more than `deepest`
+    /// layers deep: the turns that cut none of the columns further in.
+    fn part(g: &Geometry, a: usize, columns: Vec<usize>, deepest: usize) -> Ring {
         let n = g.n;
         assert!(a >= 1 && 2 * a + 4 <= n, "a ring with another ring inside it");
-        let columns: Vec<usize> = (a + 1..n - 1 - a).collect();
         assert!(2 * columns.len() <= MAX, "the cube is too large for this table of centres");
         let moves: Vec<u8> = (0..g.move_count())
-            .filter(|m| m / 18 == 0 || (m % 3 == 1 && m / 18 >= a))
+            .filter(|m| m / 18 == 0 || (m % 3 == 1 && m / 18 >= a && m / 18 < deepest))
             .map(|m| u8::try_from(m).expect("move numbers fit a byte up to size 28"))
             .collect();
         // The four turned copies of a cell on each face, in the same order for every cell.
@@ -176,7 +214,7 @@ impl Ring {
             rank8[x as usize] = i as u8;
         }
         let level = columns.iter().map(|&c| c.min(n - 1 - c)).collect();
-        Ring { row: a, level, moves, cells, perms, rank8, unrank8, tables: Default::default() }
+        Ring { row: a, columns, level, moves, cells, perms, rank8, unrank8, tables: Default::default() }
     }
 
     /// The matching built from the middle of the row outwards, so that each
@@ -221,7 +259,7 @@ impl Ring {
                 .map(|&(i, axis)| {
                     let orbits: Vec<usize> = groups[i].iter().map(|x| x.0).collect();
                     let flips: Vec<bool> = groups[i].iter().map(|x| x.1 && signs[axis] == 1).collect();
-                    self.group_table(level, &ids, &places, &orbits, &flips, axis)
+                    self.group_table(level, &ids, &places, &orbits, &flips, axis, false)
                 })
                 .collect();
             let dist: Vec<[std::sync::Arc<Bytes>; 3]> =
@@ -229,7 +267,7 @@ impl Ring {
             let mut orbits: Vec<usize> = groups.iter().flatten().map(|x| x.0).collect();
             orbits.sort();
             orbits.dedup();
-            let grow = Grow { ring: self, ids, places, orbits, groups: groups.iter().map(|g| g.iter().map(|x| x.0).collect()).collect(), dist };
+            let grow = Grow { ring: self, ids, places, orbits, groups: groups.iter().map(|g| g.iter().map(|x| x.0).collect()).collect(), dist, twos: Vec::new(), cuts: Vec::new() };
             let from = self.node(&f).ok()?;
             let score = |n: &Node| grow.halves(n);
             let found = beam_from(&grow, std::slice::from_ref(&from), score, WIDTH, 1, 50, 0, &|_| true).into_iter().next();
@@ -253,8 +291,12 @@ impl Ring {
     /// For some orbits and one axis: half moves until their patterns agree
     /// (those marked taken as their opposites), with the moves given and
     /// each move's cost shared between the axes. Kept for the next cube.
-    fn group_table(&self, level: usize, ids: &[u8], places: &[usize], orbits: &[usize], flips: &[bool], axis: usize) -> std::sync::Arc<Bytes> {
-        let key = (level, orbits.to_vec(), flips.to_vec(), axis);
+    ///
+    /// `pairs`: of four orbits the first is to agree with the third and the
+    /// second with the fourth, and no more: two columns that are alike in
+    /// both rows, whether either is matched or not.
+    fn group_table(&self, level: usize, ids: &[u8], places: &[usize], orbits: &[usize], flips: &[bool], axis: usize, pairs: bool) -> std::sync::Arc<Bytes> {
+        let key = (level, orbits.to_vec(), flips.to_vec(), axis, pairs);
         if let Some(table) = self.tables.lock().unwrap().get(&key) {
             return table.clone();
         }
@@ -265,18 +307,69 @@ impl Ring {
             // named by what they are made from: rows, sizes and axes whose
             // orbits are moved alike share one file, and one copy in memory.
             4 => {
-                let print = fingerprint(&to, &costs, flips);
+                let print = fingerprint(&to, &costs, flips, pairs);
                 let slot = SHARED.lock().unwrap().entry(print).or_default().clone();
                 slot.get_or_init(|| {
                     let name = format!("ring-{:016x}.bin", print);
-                    std::sync::Arc::new(load_or_gen(&table_dir().join(name), size, || self.make_group_table(&to, &costs, flips)))
+                    std::sync::Arc::new(load_or_gen(&table_dir().join(name), size, || self.make_group_table(&to, &costs, flips, pairs)))
                 })
                 .clone()
             }
-            _ => std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips))),
+            _ => std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips, pairs))),
         };
         self.tables.lock().unwrap().insert(key, table.clone());
         table
+    }
+
+    /// For two orbits and two axes: the moves until the patterns of the two
+    /// agree on both axes, every move counted whole. A half turn changes
+    /// two axes at once, which the tables of one axis cannot see; this one
+    /// sees it for one pair of orbits. Kept as a file, like the others.
+    fn two_axes(&self, ids: &[u8], places: &[usize], x: usize, y: usize, axes: (usize, usize)) -> std::sync::Arc<Bytes> {
+        // Per move and axis: where it takes the two patterns, as one number.
+        let pair = |i: usize, axis: usize| -> Vec<u16> {
+            let shift = 8 * axis as u32;
+            let to = |orbit: usize, r: usize| self.rank8[(self.perms[orbit].apply(places[i] as u8, self.unrank8[r] << shift) >> shift) as usize] as u16;
+            (0..4900).map(|s| to(x, s / 70) * 70 + to(y, s % 70)).collect()
+        };
+        let mut moves: Vec<(Vec<u16>, Vec<u16>)> = (0..ids.len()).map(|i| (pair(i, axes.0), pair(i, axes.1))).collect();
+        moves.sort();
+        moves.dedup();
+        let still: Vec<u16> = (0..4900).collect();
+        moves.retain(|m| m.0 != still || m.1 != still);
+        let mut h = 0xcbf29ce484222325u64;
+        for b in moves.iter().flat_map(|m| m.0.iter().chain(&m.1)).flat_map(|x| x.to_le_bytes()).chain(*b"two") {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        let slot = SHARED.lock().unwrap().entry(h).or_default().clone();
+        slot.get_or_init(|| {
+            let name = format!("ring-{:016x}.bin", h);
+            std::sync::Arc::new(load_or_gen(&table_dir().join(name), 4900 * 4900, || {
+                let mut dist = vec![FAR; 4900 * 4900];
+                let mut level: Vec<u32> = (0..4900u32).map(|s| (s / 70 * 71) * 4900 + s % 70 * 71).collect();
+                for &s in &level {
+                    dist[s as usize] = 0;
+                }
+                let mut depth = 0;
+                while !level.is_empty() {
+                    depth += 1;
+                    let mut next = Vec::new();
+                    for &s in &level {
+                        let (a, b) = (s as usize / 4900, s as usize % 4900);
+                        for m in &moves {
+                            let t = m.0[a] as usize * 4900 + m.1[b] as usize;
+                            if dist[t] == FAR {
+                                dist[t] = depth;
+                                next.push(t as u32);
+                            }
+                        }
+                    }
+                    level = next;
+                }
+                dist
+            }))
+        })
+        .clone()
     }
 
     /// What the moves do to some orbits on one axis, and what each costs
@@ -315,7 +408,7 @@ impl Ring {
         moves.into_iter().unzip()
     }
 
-    fn make_group_table(&self, to: &[Vec<u32>], costs: &[usize], flips: &[bool]) -> Vec<u8> {
+    fn make_group_table(&self, to: &[Vec<u32>], costs: &[usize], flips: &[bool], pairs: bool) -> Vec<u8> {
         let (k, m) = (flips.len(), to.len());
         let size = 70usize.pow(k as u32);
         let mut dist = vec![FAR; size];
@@ -323,8 +416,20 @@ impl Ring {
         for r in 0..70 {
             let opposite = self.rank8[(!self.unrank8[r] & 255) as usize] as usize;
             let goal = (0..k).rev().fold(0, |at, o| at * 70 + if flips[o] { opposite } else { r });
-            dist[goal] = 0;
-            buckets[0].push(goal as u32);
+            if !pairs {
+                dist[goal] = 0;
+                buckets[0].push(goal as u32);
+            }
+        }
+        if pairs {
+            assert!(k == 4 && flips.iter().all(|&x| !x));
+            for x in 0..70 {
+                for y in 0..70 {
+                    let goal = x + 70 * y + 4900 * x + 343_000 * y;
+                    dist[goal] = 0;
+                    buckets[0].push(goal as u32);
+                }
+            }
         }
         let mut rows = vec![0usize; k];
         let mut d = 0;
@@ -454,53 +559,192 @@ impl Ring {
         })
     }
 
-    /// Moves of the cube after which, on each axis, every centre of the row
-    /// agrees with the one under it or every one is its opposite; from a
-    /// cube with staged centres.
+    /// The matching of a long row with its inner columns made alike first
+    /// and matched last.
     ///
-    /// Which of the two it is to be on each axis is chosen before the
-    /// search (a score that takes the nearer of the two at every state
-    /// keeps a beam undecided, and it then finds nothing on most cubes).
-    /// The eight choices are tried from the most promising one, with each
-    /// of the three ways in turn.
-    pub fn solve(&self, g: &Geometry, f: &[u8]) -> Result<Vec<u8>, String> {
-        let root = self.node(f)?;
+    /// Columns that are alike in both rows (the same pattern in the row,
+    /// the same in the row under it) and are not cut apart move alike,
+    /// whether they are matched or not. `extend` asks of every step that
+    /// the two columns it adds end up like the first one in both rows and
+    /// that the first one is matched again: five things. Here a step only
+    /// makes its columns like the first one, row for row (four things),
+    /// and the first column is not matched before the steps (one search
+    /// less). At the end all inner columns are one thing, and that and the
+    /// two columns at the ends of the row are a row of three, matched with
+    /// all its columns at once and an exact ending (`whole`), by the turns
+    /// that cut the ends only.
+    ///
+    /// What a row leaves behind helps the next one. The row under it has
+    /// its inner columns alike now, and they stay so through the last
+    /// search; they are the upper row of the next matching, whose steps
+    /// then start half done (19 moves a step where the first row of a cube
+    /// takes 26).
+    ///
+    /// A step is a beam search that is not asked to arrive (`Grow::arrive`).
+    /// The turns that cut the new columns off are the only moves that
+    /// change how they stand to the first one, and each changes two axes,
+    /// both rows and both new columns at once; what one axis needs by
+    /// itself (the tables of four orbits) says little about the last moves.
+    fn alike(&self, g: &Geometry, f: &[u8]) -> Option<Vec<u8>> {
+        let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let deepest = *self.level.iter().max().unwrap();
-        let all: Vec<usize> = (0..self.level.len()).collect();
+        let at = |level: usize| (0..self.level.len()).filter(|&k| self.level[k] == level).collect::<Vec<_>>();
+        let like = at(deepest)[0];
+        let steps: Vec<(usize, Grow)> = (self.row + 2..=deepest)
+            .rev()
+            .filter_map(|level| {
+                let new: Vec<usize> = at(level).into_iter().filter(|&k| k != like).collect();
+                (!new.is_empty()).then(|| (level, self.step(level, like, &new)))
+            })
+            .collect();
+        let mut f = f.to_vec();
+        let mut out: Vec<u8> = Vec::new();
+        for (level, grow) in &steps {
+            let from = self.node(&f).ok()?;
+            let found = grow.arrive(&from);
+            if trace {
+                eprintln!("      level {}: alike, {} moves to choose from, score {} -> {:?} moves", level, grow.ids.len(), grow.score(&from), found.as_ref().map(|m| m.len()));
+            }
+            let moves = found?;
+            g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            out.extend(moves);
+        }
+        // The last search: the inner columns as one, and the two ends,
+        // with the turns that cut the ends only.
+        let last: Vec<usize> = [like].into_iter().chain(at(self.row + 1)).map(|k| self.columns[k]).collect();
+        let part = Ring::part(g, self.row, last, self.row + 2);
+        let (moves, how) = part.together(&part.node(&f).ok()?)?;
+        if trace {
+            eprintln!("      the inner columns and the ends, {}: {} moves", how, moves.len());
+        }
+        out.extend(moves);
+        Some(out)
+    }
+
+    /// A step of `alike`: the columns `new` made like column `like` in both rows.
+    fn step(&self, level: usize, like: usize, new: &[usize]) -> Grow<'_> {
+        // Face turns and three depths of half turns: the one that parts
+        // the two rows, the one that cuts the new columns off, and one
+        // in between. The others in between do the same to these columns.
+        let depths = [self.row, self.row + 1, level];
+        let places: Vec<usize> = (0..self.moves.len()).filter(|&i| self.moves[i] < 18 || depths.contains(&(self.moves[i] as usize / 18))).collect();
+        let ids: Vec<u8> = places.iter().map(|&i| self.moves[i]).collect();
+        let groups: Vec<Vec<usize>> = new.iter().map(|&k| vec![2 * like, 2 * like + 1, 2 * k, 2 * k + 1]).collect();
+        let wanted: Vec<(usize, usize)> = (0..groups.len()).flat_map(|i| (0..3).map(move |axis| (i, axis))).collect();
+        let made: Vec<std::sync::Arc<Bytes>> =
+            wanted.par_iter().map(|&(i, axis)| self.group_table(level, &ids, &places, &groups[i], &[false; 4], axis, true)).collect();
+        let dist: Vec<[std::sync::Arc<Bytes>; 3]> = (0..groups.len()).map(|i| [made[3 * i].clone(), made[3 * i + 1].clone(), made[3 * i + 2].clone()]).collect();
+        let mut orbits: Vec<usize> = groups.iter().flatten().copied().collect();
+        orbits.sort();
+        orbits.dedup();
+        // What the half turns tie together, two axes at a time.
+        let pairs: Vec<(usize, usize)> = new.iter().flat_map(|&k| [(2 * like, 2 * k), (2 * like + 1, 2 * k + 1)]).collect();
+        let wanted: Vec<(usize, usize)> = (0..pairs.len()).flat_map(|i| (0..3).map(move |t| (i, t))).collect();
+        let made: Vec<std::sync::Arc<Bytes>> = wanted.par_iter().map(|&(i, t)| self.two_axes(&ids, &places, pairs[i].0, pairs[i].1, TWO[t])).collect();
+        let twos = (0..pairs.len()).map(|i| (pairs[i].0, pairs[i].1, [made[3 * i].clone(), made[3 * i + 1].clone(), made[3 * i + 2].clone()])).collect();
+        let cuts = ids.iter().map(|&m| m as usize / 18 == level).collect();
+        Grow { ring: self, ids, places, orbits, groups, dist, twos, cuts }
+    }
+
+    /// Per column and axis: half moves until the centre of the row and the
+    /// one under it agree, and until they are each other's opposite.
+    fn pair_tables(&self) -> Vec<[[Vec<u8>; 2]; 3]> {
         let every: Vec<usize> = (0..self.moves.len()).collect();
         let table = |k: usize, axis: usize| {
             [false, true].map(|opposite| {
                 pair_table(&self.moves, &every, &self.perms[2 * k], &self.perms[2 * k + 1], &self.rank8, &self.unrank8, axis, opposite)
             })
         };
-        let dist: Vec<[[Vec<u8>; 2]; 3]> = all.iter().map(|&k| [0, 1, 2].map(|axis| table(k, axis))).collect();
-        let step = |columns: Vec<usize>, signs: [usize; 3]| Step { ring: self, columns, dist: &dist, signs };
+        (0..self.level.len()).map(|k| [0, 1, 2].map(|axis| table(k, axis))).collect()
+    }
+
+    /// The eight choices of agreeing or being opposite on each axis, the
+    /// most promising first.
+    fn choices(&self, dist: &[[[Vec<u8>; 2]; 3]], root: &Node) -> Vec<(u32, [usize; 3])> {
+        let all: Vec<usize> = (0..self.level.len()).collect();
         let mut choices: Vec<(u32, [usize; 3])> = (0..8usize)
             .map(|bits| {
                 let signs = [bits & 1, bits >> 1 & 1, bits >> 2];
-                (step(all.clone(), signs).halves(&root), signs)
+                (Step { ring: self, columns: all.clone(), dist, signs }.halves(root), signs)
             })
             .collect();
         choices.sort();
+        choices
+    }
+
+    /// All the columns followed, matched in one search with an exact
+    /// ending; failing that by a beam search for each choice of signs.
+    /// With how it was found.
+    fn together(&self, root: &Node) -> Option<(Vec<u8>, String)> {
+        let dist = self.pair_tables();
+        let choices = self.choices(&dist, root);
+        if let Some((number, moves, ending)) = self.whole(root, &dist, &choices) {
+            return Some((moves, format!("choice {}, the last {} an ending", number, ending)));
+        }
+        let all: Vec<usize> = (0..self.level.len()).collect();
+        choices.iter().enumerate().find_map(|(number, &(_, signs))| {
+            let step = Step { ring: self, columns: all.clone(), dist: &dist, signs };
+            let score = |n: &Node| step.halves(n);
+            let found = beam_from(&step, std::slice::from_ref(root), score, WIDTH, 1, 60, 0, &|_| true).into_iter().next();
+            found.map(|moves| (moves, format!("choice {} by a beam alone", number)))
+        })
+    }
+
+    /// Moves of the cube after which, on each axis, every centre of the row
+    /// agrees with the one under it or every one is its opposite; from a
+    /// cube with staged centres.
+    ///
+    /// Which of the two it is to be on each axis is chosen before a search
+    /// (a score that takes the nearer of the two at every state keeps a
+    /// beam undecided, and it then finds nothing on most cubes).
+    pub fn solve(&self, g: &Geometry, f: &[u8]) -> Result<Vec<u8>, String> {
+        let root = self.node(f)?;
+        let deepest = *self.level.iter().max().unwrap();
+        let all: Vec<usize> = (0..self.level.len()).collect();
+        let dist = self.pair_tables();
+        let choices = self.choices(&dist, &root);
+        let step = |columns: Vec<usize>, signs: [usize; 3]| Step { ring: self, columns, dist: &dist, signs };
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let clock = std::time::Instant::now();
         let search = |step: &Step, from: &Node| {
             let score = |n: &Node| step.halves(n);
             beam_from(step, std::slice::from_ref(from), score, WIDTH, 1, 60, 0, &|_| true).into_iter().next()
         };
-        // All columns at once: the shortest, on short rows.
-        if all.len() <= WHOLE {
-            if let Some((number, moves, ending)) = self.whole(&root, &dist, &choices) {
+        // All columns at once: the shortest on a row of three, and on a
+        // row of four or five that is the first to be matched.
+        let whole = || {
+            let found = self.whole(&root, &dist, &choices)?;
+            if trace {
+                eprintln!(
+                    "    row {}: all columns at once, choice {}, {} moves (the last {} an ending), {:.1} s",
+                    self.row,
+                    found.0,
+                    found.1.len(),
+                    found.2,
+                    clock.elapsed().as_secs_f64()
+                );
+            }
+            Some(found.1)
+        };
+        let first = all.len() <= 3 || self.row == 1;
+        if all.len() <= WHOLE && first {
+            if let Some(moves) = whole() {
+                return Ok(moves);
+            }
+        }
+        // A longer row, and a row of four or five after a longer one (which
+        // left the row under it alike): the inner columns alike first, then
+        // matched with the ends.
+        if all.len() > 3 {
+            if let Some(moves) = self.alike(g, f) {
                 if trace {
-                    eprintln!(
-                        "    row {}: all columns at once, choice {}, {} moves (the last {} an ending), {:.1} s",
-                        self.row,
-                        number,
-                        moves.len(),
-                        ending,
-                        clock.elapsed().as_secs_f64()
-                    );
+                    eprintln!("    row {}: alike from the middle outwards, {} moves, {:.1} s", self.row, moves.len(), clock.elapsed().as_secs_f64());
                 }
+                return Ok(moves);
+            }
+        }
+        if all.len() <= WHOLE && !first {
+            if let Some(moves) = whole() {
                 return Ok(moves);
             }
         }
@@ -549,7 +793,17 @@ struct Grow<'a> {
     groups: Vec<Vec<usize>>,
     /// Per group and axis: half moves until the patterns of the group agree.
     dist: Vec<[std::sync::Arc<Bytes>; 3]>,
+    /// Pairs of orbits that are to agree, each with its tables of two axes
+    /// at a time (`Ring::two_axes`): the moves until the two agree on both.
+    twos: Vec<(usize, usize, [std::sync::Arc<Bytes>; 3])>,
+    /// For a step of `Ring::alike`: which of the moves cut the new columns
+    /// off. Every other move takes the new columns and the first one along
+    /// together, so the last move of such a step is one of these.
+    cuts: Vec<bool>,
 }
+
+/// The pairs of axes a table of `Ring::two_axes` is made for.
+const TWO: [(usize, usize); 3] = [(0, 1), (1, 2), (0, 2)];
 
 impl Grow<'_> {
     #[inline(always)]
@@ -565,6 +819,311 @@ impl Grow<'_> {
             }
         }
         sum
+    }
+}
+
+impl Grow<'_> {
+    /// Never more than the moves still needed: a move costs two half moves
+    /// over the three axes, and every group needs its own.
+    fn least(&self, n: &Node) -> usize {
+        let mut most = 0u32;
+        for (group, dist) in self.groups.iter().zip(&self.dist) {
+            let mut sum = 0u32;
+            for axis in 0..3 {
+                let mut at = 0;
+                for &j in group.iter().rev() {
+                    at = at * 70 + self.ring.rank8[(n[j] >> (8 * axis) & 255) as usize] as usize;
+                }
+                sum += dist[axis][at] as u32;
+            }
+            most = most.max(sum);
+        }
+        (most.div_ceil(2) as usize).max(self.two(n).0 as usize)
+    }
+
+    /// Whether the state is done, or `None` if it certainly needs more than
+    /// `left` moves (`least`, stopped at the first table that says so).
+    #[inline(always)]
+    fn within(&self, n: &Node, left: usize) -> Option<bool> {
+        let rank = |j: usize, axis: usize| self.ring.rank8[(n[j] >> (8 * axis) & 255) as usize] as usize;
+        let mut all = 0u32;
+        for (group, dist) in self.groups.iter().zip(&self.dist) {
+            let mut sum = 0u32;
+            for axis in 0..3 {
+                let at = group.iter().rev().fold(0, |at, &j| at * 70 + rank(j, axis));
+                sum += dist[axis][at] as u32;
+            }
+            if sum as usize > 2 * left {
+                return None;
+            }
+            all += sum;
+        }
+        for (x, y, tables) in &self.twos {
+            let at: [usize; 3] = std::array::from_fn(|axis| rank(*x, axis) * 70 + rank(*y, axis));
+            if (0..3).any(|t| tables[t][at[TWO[t].0] * 4900 + at[TWO[t].1]] as usize > left) {
+                return None;
+            }
+        }
+        Some(all == 0)
+    }
+
+    /// Asks for the table entries that the score and the bound of a state read (`search::fetch`).
+    #[inline(always)]
+    fn prefetch(&self, n: &Node) {
+        let rank = |j: usize, axis: usize| self.ring.rank8[(n[j] >> (8 * axis) & 255) as usize] as usize;
+        for (group, dist) in self.groups.iter().zip(&self.dist) {
+            for axis in 0..3 {
+                fetch(&dist[axis], group.iter().rev().fold(0, |at, &j| at * 70 + rank(j, axis)));
+            }
+        }
+        for (x, y, tables) in &self.twos {
+            let at: [usize; 3] = std::array::from_fn(|axis| rank(*x, axis) * 70 + rank(*y, axis));
+            for t in 0..3 {
+                fetch(&tables[t], at[TWO[t].0] * 4900 + at[TWO[t].1]);
+            }
+        }
+    }
+
+    /// The score of a step of `Ring::alike`: what each axis needs by itself
+    /// and what each pair of orbits needs on two axes together.
+    #[inline(always)]
+    fn score(&self, n: &Node) -> u32 {
+        self.halves(n) + self.two(n).1
+    }
+
+    /// From the tables of two axes: the most that any pair of orbits needs
+    /// on any two axes, and the sum over the pairs of what each needs most.
+    #[inline(always)]
+    fn two(&self, n: &Node) -> (u32, u32) {
+        let (mut most, mut sum) = (0u32, 0u32);
+        for (x, y, tables) in &self.twos {
+            let at: [usize; 3] = std::array::from_fn(|axis| {
+                let rank = |j: usize| self.ring.rank8[(n[j] >> (8 * axis) & 255) as usize] as usize;
+                rank(*x) * 70 + rank(*y)
+            });
+            let need = (0..3).map(|t| tables[t][at[TWO[t].0] * 4900 + at[TWO[t].1]] as u32).max().unwrap();
+            most = most.max(need);
+            sum += need;
+        }
+        (most, sum)
+    }
+
+    /// A step of `Ring::alike`: a beam search, and from the best states of
+    /// each of its levels an exact search of the last moves; the shortest
+    /// in all.
+    ///
+    /// The score adds up what each axis needs by itself, and a half turn
+    /// changes two axes at once: the turn an axis still needs undoes
+    /// another axis unless that one is set up for it first, which the score
+    /// counts as going away from the goal. A beam by itself fills up with
+    /// states one turn from done by the score and four to eight moves from
+    /// done in fact, and stays among them (as `Ending` says of the rows
+    /// that are matched whole). The tables of two axes (`Ring::two_axes`)
+    /// are in the score and in the bound of the exact search for that
+    /// reason; they see two axes of one row of one column together, not
+    /// both rows and both columns, so the endings are still needed.
+    fn arrive(&self, from: &Node) -> Option<Vec<u8>> {
+        // One step in eighty finds no ending on its way. A wider beam does,
+        // in a few seconds, where a longer ending from the same states
+        // takes twenty seconds and more.
+        TRIES.iter().enumerate().find_map(|(i, &(salt, times))| self.arrive_once(from, salt, WIDTH * times, i + 1 == TRIES.len()))
+    }
+
+    /// One beam search with its endings; `deeper`: with longer endings at
+    /// the end should it find none.
+    fn arrive_once(&self, from: &Node, salt: u32, width: usize, deeper: bool) -> Option<Vec<u8>> {
+        let trace = std::env::var_os("CUBEN_TRACE").is_some();
+        let clock = std::time::Instant::now();
+        let mut walk = Walk { grow: self, width, salt, level: vec![(*from, FAR)], scores: Vec::new(), trail: Vec::new() };
+        let mut best: Option<Vec<u8>> = None;
+        let mut since = 0;
+        // The lowest score so far, and for how many levels it has not gone down.
+        let (mut lowest, mut flat) = (u32::MAX, 0);
+        // The states tried and not finished, for a longer ending should none be found: (bound, score, moves, state).
+        let mut spare: Vec<(usize, u32, Vec<u8>, Node)> = Vec::new();
+        for len in 1..=50 {
+            walk.advance();
+            if walk.level.is_empty() {
+                break;
+            }
+            (lowest, flat) = if walk.scores[0] < lowest { (walk.scores[0], 0) } else { (lowest, flat + 1) };
+            if best.is_none() && flat > STUCK {
+                break;
+            }
+            let cap = best.as_ref().map_or(usize::MAX, |b| b.len());
+            if walk.scores[0] == 0 {
+                if len < cap {
+                    best = Some(walk.path(0));
+                }
+            } else {
+                let starts = &walk.level[..walk.level.len().min(STARTS)];
+                for depth in 1..=END_MOVES {
+                    if len + depth >= cap {
+                        break;
+                    }
+                    let hit = starts.par_iter().enumerate().find_map_first(|(i, (at, last))| {
+                        let mut path = Vec::new();
+                        (self.least(at) + END_GAP <= depth && self.finish(at, depth, *last, &mut path)).then_some((i, path))
+                    });
+                    if let Some((i, path)) = hit {
+                        if trace {
+                            eprintln!("        an ending of {} after {} moves (score {}, the best {})", depth, len, walk.scores[i], walk.scores[0]);
+                        }
+                        let mut all = walk.path(i);
+                        all.extend(path.iter().rev());
+                        best = Some(all);
+                        break;
+                    }
+                }
+                if best.is_none() {
+                    let near = (0..starts.len()).map(|i| (self.least(&starts[i].0), i)).filter(|x| x.0 <= END_MOVES);
+                    spare.extend(near.map(|(least, i)| (least, walk.scores[i], walk.path(i), starts[i].0)));
+                    spare.sort();
+                    spare.truncate(STARTS);
+                }
+            }
+            if let Some(found) = &best {
+                since += 1;
+                // What comes later is longer by now, or will be.
+                if len + 1 >= found.len() || since > END_LONGER {
+                    break;
+                }
+            }
+        }
+        // No ending anywhere: longer ones, and the short ones the bound was
+        // not asked about, from the states that came nearest.
+        if best.is_none() && deeper {
+            best = (1..=END_MOVES + END_MORE).find_map(|depth| {
+                spare.par_iter().find_map_first(|(_, _, moves, at)| {
+                    let mut path = Vec::new();
+                    self.finish(at, depth, moves.last().copied().unwrap_or(FAR), &mut path).then(|| {
+                        let mut all = moves.clone();
+                        all.extend(path.iter().rev());
+                        all
+                    })
+                })
+            });
+            if trace {
+                eprintln!("        no ending on the way; from the {} states that came nearest: {:?} moves in all", spare.len(), best.as_ref().map(|b| b.len()));
+            }
+        }
+        if trace {
+            eprintln!("        {} levels, {:.1} s", walk.trail.len(), clock.elapsed().as_secs_f64());
+        }
+        best
+    }
+
+    /// Whether at most `left` moves finish from here; they are left in
+    /// `path`, the last one first.
+    fn finish(&self, n: &Node, left: usize, last: u8, path: &mut Vec<u8>) -> bool {
+        match self.within(n, left) {
+            None => return false,
+            Some(true) => return true,
+            Some(false) => (),
+        }
+        // The states one move on are made first and their table entries asked for.
+        let mut kids: Vec<(usize, Node)> = Vec::with_capacity(self.ids.len());
+        for (k, &m) in self.ids.iter().enumerate() {
+            if (last != FAR && skip54(last, m)) || (left == 1 && !self.cuts[k]) {
+                continue;
+            }
+            let kid = self.next(n, k);
+            self.prefetch(&kid);
+            kids.push((k, kid));
+        }
+        for (k, kid) in &kids {
+            if self.finish(kid, left - 1, self.ids[*k], path) {
+                path.push(self.ids[*k]);
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// A beam search for a step of `Ring::alike`, taken a level at a time so
+/// that its states can be tried for an ending on the way (as `Lane` is for
+/// a short row; the search itself is `search::beam`).
+struct Walk<'a> {
+    grow: &'a Grow<'a>,
+    width: usize,
+    /// Which of the states with the same score are kept depends on this.
+    salt: u32,
+    /// The states of the length reached, the lowest scores first, each with the move that led to it.
+    level: Vec<(Node, u8)>,
+    scores: Vec<u32>,
+    /// Per length: each state's parent in the level before, and that move.
+    trail: Vec<Vec<(u32, u8)>>,
+}
+
+impl Walk<'_> {
+    fn advance(&mut self) {
+        let (grow, salt) = (self.grow, self.salt);
+        let (ids, count) = (&grow.ids, grow.ids.len());
+        let level = &self.level;
+        let scores: Vec<u16> = level
+            .par_chunks(256)
+            .flat_map_iter(|chunk| {
+                let mut out = vec![u16::MAX; chunk.len() * count];
+                let mut kids: Vec<(usize, Node)> = Vec::with_capacity(count);
+                for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
+                    kids.clear();
+                    for k in 0..count {
+                        if *last == FAR || !skip54(*last, ids[k]) {
+                            let kid = grow.next(n, k);
+                            grow.prefetch(&kid);
+                            kids.push((k, kid));
+                        }
+                    }
+                    for (k, kid) in &kids {
+                        row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
+                    }
+                }
+                out
+            })
+            .collect();
+        // The score at which the level is full, with room for states reached twice.
+        let most = self.width + self.width / 2;
+        let mut tally = vec![0usize; 1 << 16];
+        for &x in &scores {
+            tally[x as usize] += 1;
+        }
+        let (mut cut, mut total) = (0, tally[0]);
+        while total < most && cut < u16::MAX as usize - 1 {
+            cut += 1;
+            total += tally[cut];
+        }
+        let mut next: Vec<(u32, u32, Node, u32, u8)> = (0..scores.len())
+            .into_par_iter()
+            .filter(|&j| scores[j] as usize <= cut)
+            .map(|j| {
+                let (i, k) = (j / count, j % count);
+                let to = grow.next(&level[i].0, k);
+                (scores[j] as u32, mixed(&to, salt), to, i as u32, ids[k])
+            })
+            .collect();
+        if next.len() > most {
+            next.select_nth_unstable(most);
+            next.truncate(most);
+        }
+        next.par_sort_unstable();
+        next.dedup_by(|x, y| x.2 == y.2);
+        next.truncate(self.width);
+        self.trail.push(next.iter().map(|x| (x.3, x.4)).collect());
+        self.scores = next.iter().map(|x| x.0).collect();
+        self.level = next.iter().map(|x| (x.2, x.4)).collect();
+    }
+
+    /// The moves that led to a state of the length reached.
+    fn path(&self, i: usize) -> Vec<u8> {
+        let mut moves = Vec::with_capacity(self.trail.len());
+        let mut at = i;
+        for step in self.trail.iter().rev() {
+            moves.push(step[at].1);
+            at = step[at].0 as usize;
+        }
+        moves.reverse();
+        moves
     }
 }
 
@@ -1079,7 +1638,7 @@ fn pair_table(
 
 /// A name for a table from what it is made of (FNV-1a over the moves, their
 /// costs and the orbits taken as opposites).
-fn fingerprint(to: &[Vec<u32>], costs: &[usize], flips: &[bool]) -> u64 {
+fn fingerprint(to: &[Vec<u32>], costs: &[usize], flips: &[bool], pairs: bool) -> u64 {
     let mut h = 0xcbf29ce484222325u64;
     let mut eat = |x: u32| {
         for b in x.to_le_bytes() {
@@ -1091,6 +1650,9 @@ fn fingerprint(to: &[Vec<u32>], costs: &[usize], flips: &[bool]) -> u64 {
         column.iter().for_each(|&x| eat(x));
     }
     flips.iter().for_each(|&x| eat(x as u32 + 7));
+    if pairs {
+        eat(99);
+    }
     h
 }
 
@@ -1133,6 +1695,21 @@ mod tests {
             let choices: Vec<(u32, [usize; 3])> = (0..8usize).map(|bits| (0, [bits & 1, bits >> 1 & 1, bits >> 2])).collect();
             let (_, moves, ending) = ring.whole(&root, &dist, &choices).expect("a matching");
             assert!(ending <= EASY + 1 && moves.len() < 45);
+            g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
+            assert!(ring.matched(&f));
+        }
+    }
+
+    /// A longer row, the first of its cube and one after it: the inner
+    /// columns alike step by step, then matched with the two ends.
+    #[test]
+    fn a_long_row_is_matched_with_its_inner_columns_alike_first() {
+        for (n, row) in [(10, 1), (13, 2)] {
+            let g = Geometry::new(n);
+            let ring = Ring::new(&g, row);
+            let mut f = staged(&g, 11 + n as u64);
+            let moves = ring.alike(&g, &f).expect("a matching");
+            assert!(moves.len() < 25 * ring.len());
             g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
             assert!(ring.matched(&f));
         }

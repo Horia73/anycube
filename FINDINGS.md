@@ -68,9 +68,77 @@ number of positions counted in moves, the general solver at 2.1 to 2.4.
 - Rows of any length are matched from their middle outwards with the
   columns done so far kept alike, so that each step is a search of one
   fixed size (10x10x10: 482.75 became 427.95; no cube takes the long way).
+  (At 17 and 21 cubes did; see the section of 2026-11-16 below.)
 - Did not work: staging all orbits at once on a sum of per-orbit
   distances; a row of six centres in one search; moves built like
   commutators (always succeed, 105 to 139 moves for one row).
+
+### General solver, long rows of centres (2026-11-16, `centres-large`)
+
+Detail: the last section of `bench/RESULTS.md`.
+
+- **Where the moves of a large cube go:** the staging costs 0.40 moves a
+  centre at every size and the edges 35 moves an orbit of wings; the
+  matching grew, from 0.32 moves a centre it matches at 9x9x9 to 0.49 at
+  17 and 21, because a long row cost 11 to 14 moves a column where a
+  short one costs 6 to 9.
+- **The long way was not rare.** Of twenty 21x21x21 cubes five went the
+  long way, of twenty 17x17x17 and of twenty 15x15x15 one each (and three
+  of the release file's five 21x21x21 cubes, which is why that size stood
+  at 2,248). A step of the matching was a beam search with no exact
+  ending, tried again with another choice of sign when it found nothing;
+  when all eight failed the cube went the long way (80 to 230 moves and a
+  minute more).
+- **Alike is enough.** Columns that are alike in both rows move alike
+  whether they are matched or not. So a step only makes its two columns
+  like the first one (four things where it was five), the middle column
+  is not matched first, and at the end the inner columns as one thing and
+  the two ends are matched as a row of three, with the exact ending the
+  short rows have (`Ring::alike`).
+- **A row leaves the next one half done:** the row under it has its inner
+  columns alike afterwards. A step takes 25 to 28 moves on the first row
+  of a cube and 17 to 22 on every row after it (24 to 30 before).
+- **A step needs an exact ending and a table that sees two axes.** The
+  turns that cut the new columns off change two axes, both rows and both
+  columns at once; a beam on what each axis needs by itself ends one half
+  turn from done by its score and four to eight moves from done in fact
+  (0 of 6 rows matched). The best states of every level are tried for an
+  ending of up to six moves, bounded by a table over two axes for a pair
+  of orbits, which is also in the beam's score.
+- **Whole solves, twenty cubes each, old and new in turn:** 10x10x10
+  400.40 to 393.75, 13x13x13 741.85 to 697.55, 15x15x15 1034.65 to 953.50,
+  17x17x17 1370.45 to 1243.70, 21x21x21 2194.00 to 1934.75 (every cube
+  under 2,000: 1,908 to 1,992). No cube the long way. The same time or
+  less on these sizes (17x17x17 29.1 s to 27.8 s, 21x21x21 56.2 s to
+  44.2 s; the slowest cube 76 s to 38 s and 117 s to 59 s). The sizes in
+  between, five cubes each, are 4 to 10% shorter, and two of them slower
+  (below). Sizes 8 and 9 give the same solutions as before: a first row
+  of four or five centres is still matched whole. The same cube gives
+  the same solution.
+- **One step in eighty finds no ending**, and a wider beam (three times,
+  then ten times) does in a few seconds, where a longer ending from the
+  same states takes 20 to 86 s and other ties at the same width help
+  three times in seven. A search that will find an ending finds it on the
+  level that brings a lower score or within three levels of it, so one
+  that stands still for five is given up.
+- Did not work: starts for the endings chosen by a threshold of the score
+  (some steps never get under it); the score from the two-axis tables
+  alone; choosing among the ways of a step by the next step's score
+  (945.6 against 947.2 on five 15x15x15 cubes); endings of seven moves
+  (953.8 against 955.8 in four times the time); both ways for the first
+  row of a 9x9x9 and the shorter kept (2.5 moves for 2.4 s more).
+- What is left in the centres: the first row of a cube (26 moves a step
+  where the others take 19), the last search of every row (18 to 20 moves
+  for three things) and the staging, now the largest item (866 of 1,940
+  moves at 21x21x21). Counted in what a step has to achieve, the steps of
+  the rows after the first are at about four bits a move, where 36 moves
+  that could all follow one another would carry five; a shorter matching
+  would have to ask for less again.
+  And the time: the 16x16x16 and the 18x18x18 are slower than before
+  (27.5 s for 18.9 s, 32.3 s for 28.1 s on five cubes each; they had no
+  cube the long way to make up for the first row, which takes 8 s where
+  it took 3 s). A step's states are 192 bytes where six orbits are in
+  play; not tried.
 
 ### 5x5x5 (`faster-555`)
 

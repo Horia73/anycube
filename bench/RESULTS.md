@@ -3294,3 +3294,272 @@ ml/split5_net.py --data walks.bin found-*.bin --repeat 4 --init net0.bin --out n
 
 anycube split5-hybrid bench/scrambles555-200.txt --limit 20 --net net-fresh.bin --depth 6 --width 10000 --keep 64
 ```
+
+## Any size: long rows of centres made alike, then matched (2026-11-16, branch `centres-large`)
+
+The question: can the cubes of sizes 8 to 21 still be made shorter, by
+working on the centres. They can, in the matching of the long rows, and
+most of what is gained at the largest sizes is that no cube goes the long
+way any more.
+
+### Where the moves went
+
+`CUBEN_TRACE=1 anycube benchn <file> --size N` on the release files (20
+cubes at 9x9x9, five each at the others), the code of `origin/main`
+(3fd52cd). Moves, and moves a piece of what the step is for; the cubes that
+went the long way are left out of the step columns:
+
+| Size | Total | Staging | a centre | Matching | a centre it matches | Edges | an edge piece | 3x3x3 | The long way |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 9 | 301.40 | 114.05 | 0.40 | 62.30 | 0.32 | 107.90 | 1.28 | 17.15 | none of 20 |
+| 13 | 743.20 | 292.60 | 0.41 | 256.40 | 0.45 | 177.40 | 1.34 | 16.80 | none of 5 |
+| 15 | 1025.00 | 403.60 | 0.40 | 391.60 | 0.47 | 213.00 | 1.37 | 16.80 | none of 5 |
+| 17 | 1380.00 | 539.75 | 0.40 | 561.25 | 0.49 | 245.50 | 1.36 | 17.00 | 1 of 5 (1,446 moves, 72 s) |
+| 21 | 2246.40 | 859.00 | 0.40 | 938.50 | 0.49 | 316.00 | 1.39 | 18.00 | 3 of 5 (2,289 to 2,358 moves, 78 to 174 s) |
+
+The staging costs the same at every size, 0.40 moves a centre, and the
+edges 35 moves an orbit of wings. The matching is what grows, and by the
+row:
+
+| Row of | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 centres |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| moves, as it was | 18.8 | 43 to 49 | 74 to 84 | 105 to 113 | 126 to 143 | 154 to 172 | 177 | 232 |
+| a column | 6.3 | 8.7 to 9.8 | 10.6 to 12.0 | 11.6 to 12.6 | 11.5 to 13.0 | 11.8 to 13.3 | 11.8 | 13.7 |
+
+A row of three or five is matched with all its columns in one search; a
+longer one from its middle outwards (`Ring::extend`), which took 6.5 moves
+for the middle column, 24 to 30 for every two columns after it and 18 to 20
+for the two at the ends. The matching was also most of the time: 12 of the
+17 s of a 15x15x15.
+
+The long way is not a rare accident at the large sizes. A step of `extend`
+is a beam search on a sum of what each axis needs by itself; when it finds
+nothing the row is tried again with another of the eight choices of sign,
+and when all eight fail every centre is brought home instead, 80 to 230
+moves and a minute more. (No step has an exact ending. On the 17x17x17
+cube that went the long way four choices failed at the step of the two
+ends and four at a step before it.) On two of the five 17x17x17 cubes a row needed its fourth or
+fifth choice; of the five 21x21x21 cubes three had a row on which all eight
+failed, and of twenty (below) five. That is why the release table's
+21x21x21 stands at 2,248.
+
+### What a step was asked for
+
+The columns done so far are kept alike (the same pattern in the row, the
+same in the row under it), because columns that are alike and are not cut
+apart move alike, so they are one thing to follow. `extend` also keeps them
+matched, at every step: of a step that adds two columns it asks that each
+is like the first column in both rows (four things, each 18.4 bits: one
+pattern of 70 on each of three axes) and that the first column is matched
+again (a fifth).
+
+But alike is enough. Columns that are alike in both rows move alike whether
+they are matched or not. So (`Ring::alike`):
+
+- a step only makes its two columns like the first one, row for row. The
+  table of four orbits is the same with another goal: (x, y, x, y) for any
+  two patterns, where it was (x, x, x, x);
+- the middle column is not matched before the steps;
+- at the end the inner columns are one thing, and that and the two columns
+  at the ends are a row of three, matched in one search with its exact
+  ending (`Ring::whole`, which was there for the short rows), by the turns
+  that cut the ends only. All eight choices of sign are searched side by
+  side there, where `extend` chose one before its first step.
+
+And one thing follows that was not looked for. The row under the one being
+matched is left with its inner columns alike, and nothing the last search
+does cuts them. It is the upper row of the next matching, so every row
+after the first starts each step with half of it done:
+
+| Step | Moves, 15x15x15 | 21x21x21 |
+|---|---:|---:|
+| `extend`: two columns, like the first and matched | 24 to 30 | 20 to 33 (two cubes) |
+| `alike`, the first row of a cube | 24.8 to 27.4 | 24.8 to 28.0 |
+| `alike`, every row after it | 17.8 to 22.0 | 17.4 to 22.4 |
+| the inner columns and the two ends, as a row of three | 17.4 to 19.0 | 18.6 to 20.2 |
+
+A row of five that comes after a longer row is done this way as well (one
+step and the last search: 36 to 40 moves where all columns in one search
+took 44 to 47). As the first row of a cube (9x9x9) a row of five stays as
+it was: 45.7 this way against 43.5, and the shorter of the two (41.4) costs
+twice the time of the matching. The same for a row of four: 30.3 against
+31.8 after a longer row (10x10x10), 30.9 against 29.4 as the first row
+(8x8x8). So sizes 8 and 9 give the same solutions as before.
+
+### A step does not arrive by itself
+
+With the new goal a beam search of 30,000 states found nothing, on any of
+six rows of eleven centres: from about its 25th level to its 50th every
+state it holds has the score 1, one half turn from done on one axis. The
+turns that cut the new columns off are the only moves that change how they
+stand to the first column (every other move takes all of them along), and
+each of them changes two axes, both rows and both new columns at once:
+eight things, of which the score sees one. From such a state the way is
+four to eight moves: the other seven have to be set up so that the turn
+exchanges centres of one colour there.
+
+What made it work, in the order tried (rows of eleven centres on random
+staged cubes, `anycube rowtest --size 15 --row 1`, at the time of each):
+
+| | Rows matched this way | Moves | Seconds a row |
+|---|---|---:|---:|
+| `extend`, as it was | 6 of 6, after up to three failed choices | 141.5 | 13 |
+| beam alone, new goal | 0 of 6 | | |
+| states the beam calls close (score up to 2), an exact search of up to 6 moves from each | 4 of 6 | 126 | 86 to 132 |
+| the same, endings looked for by length over all the starts | 2 of 3 | 124 | 28 to 45 |
+| a table over two axes for a pair of orbits, in the bound of the exact search | 2 of 3, the same solutions | 124 | 7 to 10 |
+| that table in the score of the beam as well | 6 of 10 | 134.1, the other four rows as before | 6.4 |
+| other ties (six) when no ending is found | 8 or 9 of 10 | 129 to 130 | 6 to 9 |
+| the beam a level at a time, the 64 best states of every level tried for an ending of up to 5 moves | 10 of 10 | 129.4 | 4.1 |
+| the same, 16 states and up to 6 moves | 10 of 10 | 122.7 | 6.9 |
+
+- **The table over two axes** (`Ring::two_axes`, 24 MB, a plain
+  breadth-first search): for one orbit of the new column and the one it is
+  to be like, the moves until they agree on two axes together. It sees what
+  a half turn ties together within one row of one column, and takes the
+  exact search of six moves from 20 to 40 s to 3 to 7 s.
+- **Starts chosen by a threshold of the score do not do**: on some steps the
+  beam never gets under any fixed score, and those steps fail whatever the
+  ties. The best states of every level do.
+- **The last move of a step is a turn that cuts the new columns off** (any
+  other move leaves alike what was alike), which is a sixth of the last
+  level of the exact search.
+- **An ending is only looked for where the bound leaves two moves to
+  spare**: most of the time went on states that the tables allowed six
+  moves and that had no ending that short. 949.4 moves in 16.3 s against
+  947.2 in 19.0 s (15x15x15, five cubes); three to spare 948.4 in 21.6 s,
+  four 953.2 in 16.8 s.
+- **One step in eighty still finds no ending.** A longer ending (7 or 8
+  moves) from the states that came nearest was there every time and took
+  20 to 86 s. A wider beam finds one in a few seconds: the same search
+  three times as wide, then ten times. (With other ties at the same width
+  three steps in seven got their ending; one step of a 20x20x20 was not
+  finished by seven searches at up to three times the width and was by
+  one at ten times, in 4 s: 12 s for the step where the longer ending
+  took 86 s.) A search is given up when its lowest score has stood still
+  for five levels: of 150 searches the first ending came on the level
+  that brought a lower score in 140 and never more than three levels
+  after it.
+
+What the numbers of a step are worth (15x15x15, the five cubes, whole
+solves):
+
+| Changed | Values | Moves | Seconds a cube |
+|---|---|---|---|
+| Moves of an ending | 5, **6**, 7 | one cube the long way, 955.8, 953.8 | 23.6, 17.6, 72.8 |
+| States tried per level | 8, **16**, 32 (with a beam of 60,000) | 956.8, 947.2, 943.8 | 18.5, 19.0, 25.8 |
+| States per level of the beam | 15,000, **30,000** | 955.0, 947.2 | 20.1, 19.0 |
+| Levels after the first ending | 0, **2** | 948.8, 947.2 | 18.8, 19.0 |
+
+Did not work:
+
+- **The score from the tables over two axes alone**: nothing found.
+- **Choosing among the ways of a step by what they leave the next step**
+  (the next step's score at the end of each way, the ways as long as the
+  shortest): 945.6 against 947.2, and with every start's ending collected
+  947.2 in twice the time. Removed.
+- **Both ways for the first row of a 9x9x9 and the shorter kept**: 298.95
+  against 301.40 in 6.1 s against 3.7 s. Not in the default.
+
+### Whole solves, old and new one after the other
+
+`anycube benchn <file> --size N --out <file>`, the binary of `origin/main`
+(3fd52cd) and the new one in turn for each size, nothing else running;
+sizes 8 to 10 on the release files, the others on new files of twenty
+cubes (`bench/scrambles131313-20.txt` and its neighbours: the same seed as
+the release files, whose five cubes are their first five). Every solution
+applied on the sticker model. The new binary's columns are from a second
+series three hours later, with the searches of a step as they are now (the
+series in turn had 697.40, 1245.20 and 1937.10 moves for sizes 13, 17 and
+21 in 12.8 s, 33.1 s and 45.9 s, and the other sizes as below).
+
+| Size | Cubes | Moves before | Moves now | | Seconds before | Seconds now | Slowest before | Slowest now | The long way before | now |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 20 | 227.35 | 227.35 | the same solutions | 4.5 | 4.3 | 7.8 | 8.5 | 0 | 0 |
+| 9 | 20 | 301.40 | 301.40 | the same solutions | 3.9 | 4.1 | 11.8 | 11.9 | 0 | 0 |
+| 10 | 20 | 400.40 | 393.75 | -1.7% | 6.6 | 6.7 | 14.5 | 12.8 | 0 | 0 |
+| 13 | 20 | 741.85 | 697.55 | -6.0% | 12.9 | 12.3 | 24.0 | 17.6 | 0 | 0 |
+| 15 | 20 | 1034.65 | 953.50 | -7.8% | 21.2 | 18.4 | 58.0 | 24.3 | 1 | 0 |
+| 17 | 20 | 1370.45 | 1243.70 | -9.2% | 29.1 | 27.8 | 76.2 | 38.4 | 1 | 0 |
+| 21 | 20 | 2194.00 | 1934.75 | -11.8% | 56.2 | 44.2 | 117.2 | 58.7 | 5 | 0 |
+
+Shortest and longest cube: 13x13x13 672 to 715 (710 to 764 before),
+15x15x15 925 to 976 (995 to 1,086), 17x17x17 1,225 to 1,279 (1,320 to
+1,457), 21x21x21 1,908 to 1,992 (2,120 to 2,358).
+
+Of the 1,240 steps of these runs 15 needed a second search and one a
+third (2 to 9 s for such a step, where the others take 0.7 to 1.2 s); none
+needed a longer ending, and no row fell back on `extend`. The matching is
+still most of the time: 8.8 of 12.3 s at 13x13x13, 21.1 of 27.8 s at 17,
+33.7 of 44.2 s at 21.
+
+The same cube gives the same solution: a second run of the new binary
+gave every solution again, move for move (sizes 13 and 17, twenty cubes
+each, with the searches as they are now; sizes 8, 9, 10, 13 and 15 in the
+first series).
+
+The other sizes, on the release files (five cubes each), each binary alone
+on the machine:
+
+| Size | Moves before | Moves now | | Seconds before | Seconds now | The long way before | now |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 11 | 504.00 | 478.80 | -5.0% | 8.1 | 7.0 | 0 | 0 |
+| 12 | 611.40 | 587.00 | -4.0% | 11.0 | 10.5 | 0 | 0 |
+| 14 | 867.40 | 825.60 | -4.8% | 16.7 | 17.5 | 0 | 0 |
+| 16 | 1163.40 | 1095.60 | -5.8% | 18.9 | 27.5 | 0 | 0 |
+| 18 | 1525.80 | 1412.40 | -7.4% | 28.1 | 32.3 | 0 | 0 |
+| 19 | 1747.40 | 1579.40 | -9.6% | 52.1 | 37.9 | 1 | 0 |
+| 20 | 1930.00 | 1760.00 | -8.8% | 39.6 | 41.8 | 0 | 0 |
+
+**The 16x16x16 and the 18x18x18 are slower**, by 8.6 s and 4.2 s a cube.
+The first row of a cube is where the new matching takes longer than the
+old one did when its first choice of sign arrived (8.4 s against 3.0 s at
+16x16x16: five steps of about 1.5 s), and these two sizes had no cube the
+long way to make up for it. In moves they are 68 and 113 shorter.
+
+Step by step on the release files (the table at the top of this section,
+now):
+
+| Size | Total | Staging | Matching | a centre it matches | Edges | 3x3x3 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 13 | 701.80 | 292.60 | 215.00 | 0.37 | 177.00 | 17.20 |
+| 15 | 949.40 | 403.60 | 316.20 | 0.38 | 212.60 | 17.00 |
+| 17 | 1238.00 | 537.40 | 437.80 | 0.38 | 245.20 | 17.60 |
+| 21 | 1940.20 | 866.40 | 742.80 | 0.39 | 313.60 | 17.40 |
+
+| Row of | 3 | 5 | 7 | 9 | 11 | 13 | 15 | 17 centres |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| moves now, after a longer row | 18.2 to 20.4 | 36.4 to 38.4 | 57.4 to 59.4 | 74.4 to 76.2 | 94.8 to 95.6 | 116.8 | 133.4 | |
+| moves now, the first row of a cube | | | | 100.6 | 124.2 | 152.8 | | 207.4 |
+
+### What is left
+
+- **The first row of a cube**: 25 to 28 moves a step where the rows after
+  it take 17 to 22, with no row before it to leave it half done: 207 of
+  the 743 moves of matching at 21x21x21, and the slowest part.
+- **The last search of every row**: 18 to 20 moves for three things (the
+  inner columns as one, and the two ends), eight times on a 21x21x21.
+- **Counted in what a step has to achieve** (18.4 bits a pattern on three
+  axes; a step after the first row has two to make and two to keep), the
+  steps are at about four bits a move, where 36 moves that could all
+  follow one another would carry five. A shorter matching would have to
+  ask for less again, as this one does.
+- **The staging** is now the largest item, 866 of 1,940 moves at 21x21x21,
+  0.40 a centre at every size (the 7x7x7 solver pays 0.35); the edges are
+  at 35 moves an orbit of wings where a 5x5x5 of its own takes 32.8.
+- **Time**: the exact endings were 8.4 of the 11.9 s of the steps of a
+  15x15x15 before they were kept to states with two moves to spare; not
+  measured since. A step keeps its states as the patterns of every column
+  of the row (192 bytes) where six orbits are in play; the short rows got
+  part of their speed from states of 24 bytes (`Short`). Not tried here.
+- The 21x21x21 is under 2,000 moves on every cube of the twenty (1,908 to
+  1,992; mean 1,934.75) and not under 1,900.
+
+### Commands
+
+```
+CUBEN_TRACE=1 anycube benchn bench/scrambles151515-5.txt --size 15     # every step of every cube
+anycube rowtest --size 15 --row 1 --count 10                           # one row on random staged cubes
+anycube scrambles --size 21 --count 20 --length 1050 > bench/scrambles212121-20.txt
+anycube benchn bench/scrambles212121-20.txt --size 21 --out new-21.tsv # old and new binaries in turn
+```
