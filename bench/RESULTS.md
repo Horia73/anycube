@@ -3563,3 +3563,13 @@ anycube rowtest --size 15 --row 1 --count 10                           # one row
 anycube scrambles --size 21 --count 20 --length 1050 > bench/scrambles212121-20.txt
 anycube benchn bench/scrambles212121-20.txt --size 21 --out new-21.tsv # old and new binaries in turn
 ```
+
+### The rows of the release table
+
+`bench/releases.tsv`, v0.2.0: sizes 2 to 7 by `scripts/release.py measure
+v0.2.0 2 3 4 5 6 7` at 63583d3 (this change does not touch them; they stood
+at their figures of v0.1.1). Sizes 8 to 21 are the runs of the new binary on
+the release files above, not run again; their memory is that of the first
+cube alone (`/usr/bin/time -l anycube row <file> --size N --limit 1`), which
+is less than a whole run holds (2.9 GB against the 4.3 GB of v0.1.1 at
+21x21x21, where a run of five cubes touches more of the tables).
