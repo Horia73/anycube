@@ -4,6 +4,7 @@
 // `node --test app/tests/*.test.mjs`.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { CubeModel } from "../js/cube-model.js";
 import { sortColours, named, oppositeCentres, STICKERS } from "../js/colour.js";
@@ -40,6 +41,27 @@ const scrambled = (n, rnd) => {
 
 // The same cube, however it was turned as a whole when it was put together.
 const sameCube = (n, a, b) => cubeKey(n, a) === cubeKey(n, b);
+
+const CAMERA_SCANS = JSON.parse(readFileSync(new URL("./fixtures/camera-5x5.json", import.meta.url), "utf8"));
+
+for (const { name, size, rgb, palette, expected } of CAMERA_SCANS) {
+  test(`recorded 5x5 camera scan: ${name}`, () => {
+    const { sorted, made } = assembleScan(size, rgb);
+    const read = named(size, sorted, arrange(size, made.labels, made));
+    assert.equal(made.kind, "taken");
+    assert.equal(new CubeModel(size).toText(read.facelets), expected);
+    assert.deepEqual(read.palette, palette);
+    assert.equal(structure(size, read.facelets), null);
+  });
+}
+
+test("a recorded scan with one corner twisted is still refused", () => {
+  const { size, rgb } = CAMERA_SCANS.at(-1);
+  const samples = rgb.map((colour) => colour.slice());
+  // The three stickers of the upper, back, left corner. Counts stay right.
+  [samples[0], samples[100], samples[129]] = [samples[100], samples[129], samples[0]];
+  assert.equal(assembleScan(size, samples).made.kind, "none");
+});
 
 const DISTINCT = {
   "white and pale yellow": {

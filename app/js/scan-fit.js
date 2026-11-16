@@ -394,7 +394,18 @@ export function assembleScan(n, samples) {
     if (made?.kind === "taken" || made?.kind === "placed") return { sorted: distinct, made };
   }
   const sorted = sortColours(samples, n);
-  return { sorted, made: assemble(n, sorted) };
+  const made = assemble(n, sorted);
+  if (made.kind === "none" || made.kind === "several") {
+    // A clipped channel or a shaded sticker can mislead the glare model.
+    // Retry the measured Lab colours with each sticker's nearest group,
+    // accepting them only when the counts and the original face order fit.
+    const observed = sortDistinctColours(samples, n, 1);
+    if (observed) {
+      const fitted = fitWithoutRecolouring(n, observed);
+      if (fitted?.kind === "taken") return { sorted: observed, made: fitted };
+    }
+  }
+  return { sorted, made };
 }
 
 /** The closest colour calls in facelet order, excluding fixed centre stickers. */

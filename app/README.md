@@ -142,11 +142,12 @@ the browser's solver against the native one on the same cubes.
 - **Holding the camera's exposure and white balance** fixed between the six
   pictures, where a browser allows it: not tried on a camera. `colour.js`
   takes each picture's own cast out instead.
-- **A real cube in front of a real camera** has shown the page orange for
-  red once, before the colours were sorted as they are now; the sorting,
-  the putting together and the finding of the face are tested on made-up
-  pictures only. Glare, logo stickers, stickerless cubes with no seam and
-  fingers over stickers are untested.
+- **Real camera coverage is limited**: three recorded 5x5x5 scans are
+  replayed as tests, including a failed scan where the glare model confused
+  shaded red with clipped orange. When that model cannot reconstruct a
+  cube, the original Lab colour groups are tried again, requiring exact
+  counts and a valid cube in the captured face order. Other sizes, makers,
+  lighting, logos and fingers over stickers still need more real cases.
 - **Windows**: no window of its own and no application entry there yet.
 - **The camera inside the macOS window** has not been tried on a real
   camera: the page finds the camera interface there, and the bundle
