@@ -340,7 +340,7 @@ function casts(sorted, each) {
 }
 
 /** Groups clearly separated camera colours by their full CIELAB distance. */
-export function sortDistinctColours(samples, n) {
+export function sortDistinctColours(samples, n, maxDoubt = 0.5) {
   const each = n * n;
   if (samples.length !== 6 * each) return null;
   const points = samples.map(toLab);
@@ -368,8 +368,9 @@ export function sortDistinctColours(samples, n) {
   const doubt = new Float32Array(points.length);
   for (const [i, point] of points.entries()) {
     const [closest, next] = ranked(point);
-    // Leave close readings to the sorter that models glare and exposure.
-    if (closest.cost * 2 >= next.cost) return null;
+    // The strict pass leaves close readings to the glare/exposure model.
+    // A later pass may keep each sticker's first choice for cube validation.
+    if (closest.cost >= next.cost * maxDoubt) return null;
     labels[i] = closest.label;
     second[i] = next.label;
     doubt[i] = closest.cost / next.cost;
