@@ -68,3 +68,45 @@ No mode runs by a clock: the joint phase ends when its budget of positions
 is spent, counted in a fixed order of its searches, so the same cube gives
 the same solution on every run and every machine. On a slower machine a
 solve takes longer and is no worse.
+
+## Projected face turns on the 4x4x4 and 5x5x5
+
+`solve --lift` tries to shorten the ordinary solution. It works from the
+stickers, whether the input is a scramble or a facelet string. A 5x5x5
+turn such as `R` or `Rw` moves the corners and middle edges the same way.
+The search proposes sequences on that 3x3x3 and uses the wings and centres
+to decide how many layers each turn needs. It also tries pairs of turns
+such as `R' Rw` that move an inner layer while leaving the 3x3x3 fixed. On
+a 4x4x4 it tries several choices of virtual middle edges. Each result is
+replayed on the original stickers.
+
+`--holds N` tries the ordinary solver in N orientations, from 1 (default)
+to 6, before the projected search. The reported lengths show what each
+step contributed. The reduction search flags above apply to each
+orientation. Searching for a new ending adds time after the reductions.
+
+```sh
+anycube solve --size 5 --lift --holds 6 "Rw U Fw2 D' Bw R2"
+anycube bench-lift bench/scrambles555-200.txt --size 5 --holds 6 --limit 30 --out lift.tsv
+```
+
+The benchmark TSV records the zero-based row, ordinary length, best length
+across orientations, final length, milliseconds and the final moves.
+
+If another search has an entire sequence of faces, directions and powers,
+`widths` can test it directly. It propagates each piece's possible
+positions from both ends and assigns one shared width to each move. It
+reports a solution, an impossible word, or an exhausted search budget.
+For this example, the supplied sequence is consistent with the scramble
+once the middle move turns two layers.
+
+```sh
+state=$(anycube facelets --size 5 "F2 Rw U'")
+anycube widths --size 5 --state "$state" --word "U R' F2"
+```
+
+`bench-widths` measures this last step in isolation. It takes the first L
+turns of each input scramble and supplies the projected inverse with every
+width erased. The corresponding sticker-only benchmark is `bench-lift`.
+The [paired measurements](../bench/RESULTS.md#projected-face-turns-on-4x4x4-and-5x5x5-2026-11-17)
+include both experiments.
