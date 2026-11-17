@@ -360,14 +360,76 @@ fn verify(g: &Geometry, facelets: &[u8], moves: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// A face turn only permutes centres within each face. For a cube G and a
+// face turn F we can therefore solve F G, then append F in the returned
+// solved frame. The hidden ordering of same-colour centres cannot matter.
+fn append_last_face(start: &Cube, mut moves: Vec<u8>, face: u8) -> Option<Vec<u8>> {
+    let t = tables();
+    let mut end = *start;
+    end.apply_seq(&moves);
+    let frame = t.rots.iter().position(|r| r.state == end)?;
+    let last = t.relabel[t.rot_inv[frame]][face as usize];
+    for i in (0..moves.len()).rev() {
+        if moves[i] / 3 % 3 != last / 3 % 3 {
+            break;
+        }
+        if moves[i] / 3 == last / 3 {
+            let power = (moves[i] % 3 + last % 3 + 2) % 4;
+            if power == 0 {
+                moves.remove(i);
+            } else {
+                moves[i] = last / 3 * 3 + power - 1;
+            }
+            return Some(moves);
+        }
+    }
+    moves.push(last);
+    Some(moves)
+}
+
+fn try_last_faces(solver: &Solver, path: &[u8]) -> Option<Vec<u8>> {
+    let inverse = crate::cube::inv_seq(path);
+    let mut best = None;
+    let mut limit = path.len();
+    let params = Params::fast();
+    for face in 0..18 {
+        let mut start = Cube::from_moves(&[face]);
+        start.apply_seq(&inverse);
+        let mut proposals = Vec::new();
+        if let Ok(winner) = solver.solve_with_alternatives(&start, &params, Some(&mut proposals)) {
+            proposals.push(winner.moves);
+        }
+        for word in proposals {
+            // Appending one face can remove at most one existing move.
+            if word.len() <= limit {
+                if let Some(found) = append_last_face(&start, word, face) {
+                    if found.len() < limit {
+                        limit = found.len();
+                        best = Some(found);
+                    }
+                }
+            }
+        }
+    }
+    best
+}
+
 /// An experimental quality pass for a standalone 4x4x4 or 5x5x5.
 pub enum Search<'a> {
-    Four(&'a Solver, &'a Params),
-    Five(&'a Solver5, &'a Params5, Option<&'a Solver>),
+    Four {
+        solver: &'a Solver,
+        params: &'a Params,
+        last_face: bool,
+    },
+    Five {
+        solver: &'a Solver5,
+        params: &'a Params5,
+        shell: Option<&'a Solver>,
+    },
 }
 
 /// Lengths after the ordinary solve, the requested orientations and the
-/// projected 3x3x3 search. The final moves also include any shell improvement.
+/// projected 3x3x3 search. The final moves include any subsequent improvement.
 pub struct ResultLengths {
     pub normal: usize,
     pub held: usize,
@@ -377,7 +439,7 @@ pub struct ResultLengths {
 
 impl Search<'_> {
     pub fn solve(&self, g: &Geometry, f: &[u8], holds: usize) -> Result<ResultLengths, String> {
-        let five = matches!(self, Self::Five(..));
+        let five = matches!(self, Self::Five { .. });
         let size = if five { 5 } else { 4 };
         if g.n != size || f.len() != 6 * g.n * g.n || f.iter().any(|&v| v >= 6) {
             return Err("invalid facelets for the selected cube size".into());
@@ -386,8 +448,8 @@ impl Search<'_> {
             return Err("holds must be between 1 and 6".into());
         }
         let (t, two) = match self {
-            Self::Four(s, _) => (&s.t3, &s.two),
-            Self::Five(s, _, _) => (&s.edges.t3, &s.two),
+            Self::Four { solver, .. } => (&solver.t3, &solver.two),
+            Self::Five { solver, .. } => (&solver.edges.t3, &solver.two),
         };
         crate::api::check::validate(size, f).map_err(|e| e.message)?;
         if g.is_solved(f) {
@@ -404,11 +466,18 @@ impl Search<'_> {
             let framed = g.held(f, turns);
             let mut alts = Vec::new();
             let solution = match self {
-                Self::Four(s, p) => {
-                    s.solve_with_alternatives(&Cube::from_facelets(&g.to_string(&framed))?, p, Some(&mut alts))?
+                Self::Four { solver, params, .. } => {
+                    solver
+                        .solve_with_alternatives(
+                            &Cube::from_facelets(&g.to_string(&framed))?,
+                            params,
+                            Some(&mut alts),
+                        )?
                         .moves
                 }
-                Self::Five(s, p, _) => s.solve_with_alternatives(&framed, p, &mut alts)?.moves,
+                Self::Five { solver, params, .. } => {
+                    solver.solve_with_alternatives(&framed, params, &mut alts)?.moves
+                }
             };
             let map = g.frame_moves(turns);
             let original = |word: &[u8]| word.iter().map(|&m| map[m as usize] as u8).collect::<Vec<u8>>();
@@ -428,10 +497,19 @@ impl Search<'_> {
             }
         }
         let projected = moves.len();
-        if let Self::Five(_, _, Some(solver)) = self {
-            if let Some(found) = shell::improve(solver, &moves, projected) {
-                moves = found;
-            }
+        let improved = match self {
+            Self::Four {
+                solver,
+                last_face: true,
+                ..
+            } => try_last_faces(solver, &moves),
+            Self::Five {
+                shell: Some(solver), ..
+            } => shell::improve(solver, &moves, projected),
+            _ => None,
+        };
+        if let Some(found) = improved {
+            moves = found;
         }
         verify(g, f, &moves)?;
         Ok(ResultLengths {
@@ -473,6 +551,23 @@ mod tests {
             assert_eq!(found.len(), word.len());
             verify(size, &inv_seq(&original), &found);
             assert!(lift(&p, five, &word[1..], 0).is_none());
+        }
+    }
+
+    #[test]
+    fn final_face_uses_the_auxiliary_solved_frame() {
+        let scramble = parse_moves("Rw U Fw2 L'").unwrap();
+        let answer = inv_seq(&scramble);
+        for face in 0..18u8 {
+            let mut aux = Cube::from_moves(&[face]);
+            aux.apply_seq(&scramble);
+            for r in &tables().rots {
+                let mut word = answer.clone();
+                word.push(inv_move(face));
+                word.extend_from_slice(&r.seq);
+                let found = append_last_face(&aux, word, face).unwrap();
+                verify(4, &scramble, &found);
+            }
         }
     }
 
