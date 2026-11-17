@@ -147,6 +147,34 @@ pub struct SolutionN {
     pub long_way: bool,
 }
 
+/// A turn of a single width can leave each face in a 2 by 2 or 3 by 3
+/// grid of uniform rectangles. Rotation exchanges rows and columns, so
+/// every boundary on every face must have the same distance to the rim.
+fn block_width(n: usize, f: &[u8]) -> Option<usize> {
+    if n < 6 || f.len() != 6 * n * n {
+        return None;
+    }
+    let mut width = None;
+    for face in f.chunks_exact(n * n) {
+        for i in 1..n {
+            let w = i.min(n - i);
+            if width == Some(w) {
+                continue;
+            }
+            let boundary = (0..n).any(|j| {
+                face[j * n + i] != face[j * n + i - 1] || face[i * n + j] != face[(i - 1) * n + j]
+            });
+            if boundary {
+                if width.is_some() {
+                    return None;
+                }
+                width = Some(w);
+            }
+        }
+    }
+    width
+}
+
 /// The cube while it is being solved: as it is now, seen in a frame in
 /// which the centres are (or will be) at home, and the moves so far in the
 /// frame it was given in.
@@ -246,15 +274,31 @@ impl SolverN {
     /// Solves a cube of size 6 or more given as its facelets (faces U R F D
     /// L B, row by row; colours 0 to 5 in that order).
     pub fn solve(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
-        self.solve_edges(g, facelets, Search::Normal)
+        self.solve_blocks_or_edges(g, facelets, false)
     }
 
     /// Compare complete solutions from different penultimate wing reductions.
     /// Starting at size nine, also try centre turns whose widths prepare the
     /// next column. Keep the shorter verified solution, including normal mode's.
     pub fn solve_full(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
-        let mut best = self.solve_edges(g, facelets, Search::ChooseWings)?;
-        if g.n >= 9 && crate::rings::Ring::supports(g) {
+        self.solve_blocks_or_edges(g, facelets, true)
+    }
+
+    fn solve_blocks_or_edges(&self, g: &Geometry, facelets: &[u8], full: bool) -> Result<SolutionN, String> {
+        let blocks = block_width(g.n, facelets).and_then(|width| self.solve_blocks(g, facelets, width));
+        let candidate = match blocks {
+            Some((solution, true)) => return Ok(solution),
+            Some((solution, false)) => Some(solution),
+            None => None,
+        };
+        let search = if full { Search::ChooseWings } else { Search::Normal };
+        let mut best = match (self.solve_edges(g, facelets, search), candidate) {
+            (Ok(regular), Some(small)) if small.moves.len() < regular.moves.len() => small,
+            (Ok(regular), _) => regular,
+            (Err(_), Some(small)) => small,
+            (Err(e), None) => return Err(e),
+        };
+        if full && g.n >= 9 && crate::rings::Ring::supports(g) {
             match self.attempt(g, facelets, true, Search::ChooseWidthsAndWings) {
                 Ok(other) => {
                     if std::env::var_os("CUBEN_TRACE").is_some() {
@@ -269,6 +313,79 @@ impl SolverN {
             }
         }
         Ok(best)
+    }
+
+    /// A block turn projects to one face turn on the corners. A lifted
+    /// solution attaining their exact 2x2 distance is globally shortest.
+    /// Other verified block solutions compete with the ordinary search.
+    fn solve_blocks(&self, g: &Geometry, f: &[u8], width: usize) -> Option<(SolutionN, bool)> {
+        use crate::api::{check, solve, Input, Mode};
+        let last = g.n - 1;
+        let corners = g.sub_facelets(f, &[0, last]);
+        if corners.iter().any(|&c| c >= 6) {
+            return None;
+        }
+        let text = g.to_string(&corners);
+        let small = check(2, Input::Facelets(&text), 2).ok()?;
+        let optimal_corners = solve(&small, Mode::Normal).ok()?.moves;
+        let lower = optimal_corners.len();
+        let lift = |word: &[usize]| {
+            let moves: Vec<_> = word.iter().map(|&m| (width - 1) * 18 + m).collect();
+            let mut after = f.to_vec();
+            g.apply_seq(&mut after, &moves);
+            if !g.is_solved(&after) {
+                return None;
+            }
+            let len = moves.len();
+            let lens = if width == 1 { [0, 0, len] } else { [len, 0, 0] };
+            Some((SolutionN { moves, lens, long_way: false }, len == lower))
+        };
+        if let Some(answer) = lift(&optimal_corners) {
+            return Some(answer);
+        }
+        if 2 * width == g.n {
+            return None;
+        }
+
+        // On an even cube the middle rectangle can have a rotated colour
+        // scheme. Name its six colours after their current faces.
+        let mut middle = g.sub_facelets(f, &[0, g.n / 2, last]);
+        let mut name = [u8::MAX; 6];
+        for (face, tiles) in middle.chunks_exact(9).enumerate() {
+            let slot = name.get_mut(tiles[4] as usize)?;
+            if *slot != u8::MAX {
+                return None;
+            }
+            *slot = face as u8;
+        }
+        for c in &mut middle {
+            *c = *name.get(*c as usize)?;
+        }
+        crate::api::check::validate(3, &middle).ok()?;
+        let cube = Cube::from_small_facelets(&g.to_string(&middle)).ok()?;
+        let c3 = crate::c3::C3::from_cube(&cube)?;
+        let solver = &self.six.solver4;
+        let path = solver.two.solve(&solver.t3, &c3, crate::two3::Effort::NORMAL);
+        let word: Vec<_> = path.into_iter().map(usize::from).collect();
+        let mut answer = lift(&word)?;
+        // On an odd cube every physical block turn also acts as exactly
+        // one face turn on the true middle edges. The exact 3x3 distance
+        // is therefore a lower bound, even for paths using other widths.
+        if g.n % 2 == 1 && !answer.1 {
+            use crate::opt3::{Opt3, Outcome};
+            use std::sync::atomic::AtomicI64;
+            let exact = Opt3::new(&solver.t3, &solver.big2);
+            let budget = AtomicI64::new(250_000);
+            match exact.solve(&exact.prepare(&c3), lower, word.len() - 1, &budget) {
+                Outcome::Solved(path) => {
+                    let word: Vec<_> = path.into_iter().map(usize::from).collect();
+                    answer = (lift(&word)?.0, true);
+                }
+                Outcome::None => answer.1 = true,
+                Outcome::Aborted => (),
+            }
+        }
+        Some(answer)
     }
 
     fn solve_edges(&self, g: &Geometry, facelets: &[u8], search: Search) -> Result<SolutionN, String> {
@@ -483,5 +600,35 @@ impl SolverN {
         }
         let total = w.moves.len();
         Ok(SolutionN { moves: w.moves, lens: [centres, total - centres - tail, tail], long_way: !matched })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uniform_blocks_project_and_lift_across_different_sizes_and_widths() {
+        let solver = SolverN::load();
+        for (n, width) in [(8, 4), (9, 2), (21, 7), (30, 15)] {
+            let g = Geometry::new(n);
+            let mut f = g.solved();
+            assert_eq!(block_width(n, &f), None);
+            let turns = [0, 4, 8, 10, 12, 2, 7, 3];
+            for m in turns {
+                g.apply(&mut f, (width - 1) * 18 + m);
+            }
+            assert_eq!(block_width(n, &f), Some(width));
+            let (solution, exact) = solver.solve_blocks(&g, &f, width).unwrap();
+            if 2 * width == n {
+                assert!(exact);
+            }
+            assert!(solution.moves.iter().all(|m| 1 + m / 18 == width));
+            let mut after = f.clone();
+            g.apply_seq(&mut after, &solution.moves);
+            assert!(g.is_solved(&after));
+            g.apply(&mut f, 3);
+            assert_eq!(block_width(n, &f), None);
+        }
     }
 }
