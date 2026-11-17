@@ -204,6 +204,12 @@ impl Solver {
     }
 
     pub fn solve(&self, cube: &Cube, p: &Params) -> Result<Solution, String> {
+        self.solve_with_alternatives(cube, p, None)
+    }
+
+    pub(crate) fn solve_with_alternatives(
+        &self, cube: &Cube, p: &Params, alternatives: Option<&mut Vec<Vec<u8>>>,
+    ) -> Result<Solution, String> {
         cube.validate()?;
         let ct = cube_tables();
         let tabs = &self.tabs;
@@ -526,17 +532,21 @@ impl Solver {
         }
         let shortest_reduction = items.iter().map(|it| it.len123).min().unwrap_or(0);
         let (_, item, moves333) = best;
+        let assemble = |item: usize, end: &[u8]| {
+            let (i, moves3) = &reds[items[item].red];
+            let c2 = &found[*i];
+            let frame = variants[c2.variant].frame;
+            c2.moves.iter().chain(moves3).chain(end)
+                .map(|&m| ct.relabel[frame][m as usize]).collect::<Vec<u8>>()
+        };
+        if let Some(alts) = alternatives {
+            let mut order: Vec<_> = (0..items.len()).collect();
+            order.sort_by_key(|&k| (items[k].len123 + two[k].len(), items[k].len123));
+            alts.extend(order.into_iter().take(8).map(|k| assemble(k, &two[k])));
+        }
+        let moves = assemble(item, &moves333);
         let (i, moves3) = &reds[items[item].red];
         let c2 = &found[*i];
-
-        let frame = variants[c2.variant].frame;
-        let moves: Vec<u8> = c2
-            .moves
-            .iter()
-            .chain(moves3.iter())
-            .chain(moves333.iter())
-            .map(|&m| ct.relabel[frame][m as usize])
-            .collect();
         let mut check = *cube;
         check.apply_seq(&moves);
         if !check.is_solved() {

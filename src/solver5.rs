@@ -196,19 +196,26 @@ impl Solver5 {
     /// ways, such as the larger cubes: every step here chooses among all of
     /// them by total length.
     pub fn solve_any(&self, cubes: &[(Vec<u8>, usize)], p: &Params5) -> Result<(usize, Solution5), String> {
-        self.run(cubes, p, true, None)
+        self.run(cubes, p, true, None, None)
     }
 
     /// Experiment (`learned5`): as `solve`, with centre stagings found
     /// elsewhere offered next to the solver's own, or alone with `only`.
     pub fn solve_from(&self, facelets: &[u8], p: &Params5, given: &[Vec<u8>], only: bool) -> Result<Solution5, String> {
-        self.run(&[(facelets.to_vec(), 0)], p, true, Some((given, only))).map(|x| x.1)
+        self.run(&[(facelets.to_vec(), 0)], p, true, Some((given, only)), None).map(|x| x.1)
     }
 
     /// The shortest reduction found: centres solved and edges whole, the
     /// 3x3x3 left as it comes. For callers that go on from there themselves.
     pub fn reduce(&self, facelets: &[u8], p: &Params5) -> Result<Vec<u8>, String> {
-        self.run(&[(facelets.to_vec(), 0)], p, false, None).map(|x| x.1.moves)
+        self.run(&[(facelets.to_vec(), 0)], p, false, None, None).map(|x| x.1.moves)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn solve_with_alternatives(
+        &self, facelets: &[u8], p: &Params5, alternatives: &mut Vec<Vec<u8>>,
+    ) -> Result<Solution5, String> {
+        self.run(&[(facelets.to_vec(), 0)], p, true, None, Some(alternatives)).map(|x| x.1)
     }
 
     fn run(
@@ -217,6 +224,7 @@ impl Solver5 {
         p: &Params5,
         finish: bool,
         given: Option<(&[Vec<u8>], bool)>,
+        alternatives: Option<&mut Vec<Vec<u8>>>,
     ) -> Result<(usize, Solution5), String> {
         let g = &tables5().geometry;
         let t0 = Instant::now();
@@ -362,7 +370,7 @@ impl Solver5 {
                     Ok((x.root, Solution5 { moves: x.moves.clone(), lens }))
                 }
                 None if p.time_ms == 0 => Err("no reduction found".to_string()),
-                None => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish, given),
+                None => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish, given, alternatives),
             };
         }
         // The 3x3x3 that is left.
@@ -391,12 +399,20 @@ impl Solver5 {
             // A step cut short by the clock left the next one nothing to work with.
             return match p.time_ms {
                 0 => Err("no reduction found".to_string()),
-                _ => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish, given),
+                _ => self.run(cubes, &Params5 { time_ms: 0, ..p.clone() }, finish, given, alternatives),
             };
         };
         lap("3x3x3", 1, cubes[x.root].1 + x.moves.len() + sol3.len());
-        let to_orig = &self.frames[x.frame].to_orig;
-        let moves: Vec<u8> = x.moves.iter().copied().chain(sol3.iter().map(|&m| to_orig[m as usize])).collect();
+        let assemble = |x: &Partial, end: &[u8]| {
+            let map = &self.frames[x.frame].to_orig;
+            x.moves.iter().copied().chain(end.iter().map(|&m| map[m as usize])).collect::<Vec<u8>>()
+        };
+        if let Some(alts) = alternatives {
+            let mut order: Vec<_> = (0..reduced.len()).collect();
+            order.sort_by_key(|&k| (left[k].0 + found[k].len(), left[k].0));
+            alts.extend(order.into_iter().take(8).map(|k| assemble(&reduced[k], &found[k])));
+        }
+        let moves = assemble(x, &sol3);
         let e = &x.ends;
         let lens = [e[0], e[1] - e[0], e[2] - e[1], e[3] - e[2], e[4] - e[3], sol3.len()];
         Ok((x.root, Solution5 { moves, lens }))
