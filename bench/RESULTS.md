@@ -3573,3 +3573,79 @@ the release files above, not run again; their memory is that of the first
 cube alone (`/usr/bin/time -l anycube row <file> --size N --limit 1`), which
 is less than a whole run holds (2.9 GB against the 4.3 GB of v0.1.1 at
 21x21x21, where a run of five cubes touches more of the tables).
+
+## Projected face turns on 4x4x4 and 5x5x5 (2026-11-17)
+
+The requested mean lengths are 35–37 and 55–60 OBTM. Re-running the v0.2.0
+normal solver on the first 100 benchmark scrambles reproduced 40.55 and
+67.34. The paired comparison below uses lines 101–130 of the same files.
+Both solvers receive only the resulting stickers. The short-scramble
+control uses the first 14 turns of each of those same lines.
+
+| Size | Scramble | Holds | Ordinary | Best ordinary hold | After assigning widths | After 4x4x4 shell | Seconds per cube |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 4x4x4 | 100 turns | 6 | 40.40 | 40.10 | 40.10 | — | 15.68 |
+| 5x5x5 | 150 turns | 6 | 66.93 | 66.27 | 66.27 | 66.20 | 8.71 |
+| 4x4x4 | 14 turns | 1 | 15.70 | 15.70 | 14.47 | — | 1.45 |
+| 5x5x5 | 14 turns | 1 | 23.70 | 23.70 | 17.87 | off | 11.16 |
+
+On the long scrambles, trying six orientations helped 6 of 30 4x4x4s and
+14 of 30 5x5x5s. The embedded 4x4x4 saved another move on two 5x5x5s
+(source lines 106 and 126). The shortest solutions were 38 and 64. On
+the short scrambles, width assignment improved 5 of 30 4x4x4s and 18 of
+30 5x5x5s. The number solved in at most 14 moves rose from 24 to 27 on
+the 4x4x4 and from 10 to 25 on the 5x5x5. On line 107 of the 5x5x5 set
+the ordinary solution took 42 moves and the new search found 14. All 120
+final solutions were replayed with `anycube verify`. Times include all
+requested orientations and the width search on the development Mac, with
+tables loaded before timing. [Moves for every cube](lift-45.tsv)
+
+### What the width search can recover
+
+On a 5x5x5, a face turn and its wide version have identical effects on the
+corners and middle edges. On a 4x4x4 both have identical effects on the
+corners. Given a sequence of faces and powers, each turn has two possible
+widths. For each wing and centre, the search propagates the places it
+can reach from the initial state and the places from which it can still
+reach its goal. It eliminates a width when any piece needs the other
+choice. It branches when propagation leaves both choices open.
+
+In a separate control, `bench-widths` scrambles with an L-move prefix and
+supplies the faces, directions and powers of its inverse. Width recovery
+returned sticker-verified solutions on **1,000/1,000** 4x4x4s at L = 37
+and **200/200** 5x5x5s at L = 60. No search reached the 25,000-node
+budget. These counts measure recovery with a correct face sequence
+supplied. In the sticker-only test the generator must discover that
+sequence. It proposes short 3x3x3 solutions from the input and near the
+last wide turn of up to four ordinary solutions. It can split a projected
+turn into two or insert an inner-layer turn using two moves. On long
+scrambles none of these proposals improved the best ordinary hold.
+
+### Endings from the embedded 4x4x4
+
+Removing the middle row and column of each 5x5x5 face preserves the
+corners, all the wings and one orbit of centres. The fast 4x4x4 solver
+proposes endings for this shell near the last wide turn. A wide turn can
+be played from either side of its axis with a change of hold on the
+4x4x4. Its two spellings move the omitted pieces differently on the 5x5x5.
+The search keeps the spellings that return the shell to the correct frame
+and checks the middle edges and remaining centres on the full cube.
+Without the shell search, the long 5x5x5 sample took 5.41 s per cube.
+
+### Reproduction
+
+Run from the repository root with a release binary.
+
+```sh
+for size in 4 5
+do
+    if [ "$size" = 4 ]; then file=bench/scrambles-1000.txt; length=37; set --
+    else file=bench/scrambles555-200.txt; length=60; set -- --shell4
+    fi
+    sed -n '101,130p' "$file" |
+        target/release/anycube bench-lift /dev/stdin --size "$size" --holds 6 "$@"
+    awk 'NR >= 101 && NR <= 130 { NF = 14; print }' "$file" |
+        target/release/anycube bench-lift /dev/stdin --size "$size" --holds 1
+    target/release/anycube bench-widths "$file" --size "$size" --length "$length"
+done
+```
