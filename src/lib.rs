@@ -20,6 +20,8 @@ pub mod cuben;
 pub mod edges5;
 pub mod first3;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod lift;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod free;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod joint;
