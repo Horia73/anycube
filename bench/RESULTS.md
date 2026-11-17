@@ -3582,23 +3582,25 @@ normal solver on the first 100 benchmark scrambles reproduced 40.55 and
 Both solvers receive only the resulting stickers. The short-scramble
 control uses the first 14 turns of each of those same lines.
 
-| Size | Scramble | Holds | Ordinary | Best ordinary hold | After assigning widths | After 4x4x4 shell | Seconds per cube |
+| Size | Scramble | Holds | Ordinary | Best ordinary hold | After assigning widths | After final face or shell | Seconds per cube |
 |---|---|---:|---:|---:|---:|---:|---:|
-| 4x4x4 | 100 turns | 6 | 40.40 | 40.10 | 40.10 | — | 15.68 |
+| 4x4x4 | 100 turns | 6 | 40.40 | 40.10 | 40.10 | 40.07 | 29.58 |
 | 5x5x5 | 150 turns | 6 | 66.93 | 66.27 | 66.27 | 66.20 | 8.71 |
-| 4x4x4 | 14 turns | 1 | 15.70 | 15.70 | 14.47 | — | 1.45 |
+| 4x4x4 | 14 turns | 1 | 15.70 | 15.70 | 14.47 | off | 1.45 |
 | 5x5x5 | 14 turns | 1 | 23.70 | 23.70 | 17.87 | off | 11.16 |
 
 On the long scrambles, trying six orientations helped 6 of 30 4x4x4s and
-14 of 30 5x5x5s. The embedded 4x4x4 saved another move on two 5x5x5s
+14 of 30 5x5x5s. Trying a last face saved another move on one 4x4x4
+(source line 114). The embedded 4x4x4 saved another move on two 5x5x5s
 (source lines 106 and 126). The shortest solutions were 38 and 64. On
 the short scrambles, width assignment improved 5 of 30 4x4x4s and 18 of
 30 5x5x5s. The number solved in at most 14 moves rose from 24 to 27 on
 the 4x4x4 and from 10 to 25 on the 5x5x5. On line 107 of the 5x5x5 set
 the ordinary solution took 42 moves and the new search found 14. All 120
-final solutions were replayed with `anycube verify`. Times include all
-requested orientations and the width search on the development Mac, with
-tables loaded before timing. [Moves for every cube](lift-45.tsv)
+final solutions were replayed with `anycube verify`. Times cover the whole
+search on an M1 Pro after loading the tables. Other experiments ran
+concurrently, so these timings describe the runs shown here.
+[Moves for every cube](lift-45.tsv)
 
 ### What the width search can recover
 
@@ -3621,6 +3623,16 @@ last wide turn of up to four ordinary solutions. It can split a projected
 turn into two or insert an inner-layer turn using two moves. On long
 scrambles none of these proposals improved the best ordinary hold.
 
+### Choosing the last face on the 4x4x4
+
+A hidden permutation of four same-colour centres can invalidate a solution
+obtained by inverting a scramble. An outer turn at the solved end preserves
+each face's set of centres. It is therefore possible to impose such a turn,
+solve the resulting auxiliary position with the fast 4x4x4 search and map
+the turn back using the actual solved orientation. The implementation tries
+all 18 choices and combines a turn with another turn of the same face when
+they commute past the intervening moves.
+
 ### Endings from the embedded 4x4x4
 
 Removing the middle row and column of each 5x5x5 face preserves the
@@ -3639,11 +3651,11 @@ Run from the repository root with a release binary.
 ```sh
 for size in 4 5
 do
-    if [ "$size" = 4 ]; then file=bench/scrambles-1000.txt; length=37; set --
-    else file=bench/scrambles555-200.txt; length=60; set -- --shell4
+    if [ "$size" = 4 ]; then file=bench/scrambles-1000.txt; length=37; ending=--last-face
+    else file=bench/scrambles555-200.txt; length=60; ending=--shell4
     fi
     sed -n '101,130p' "$file" |
-        target/release/anycube bench-lift /dev/stdin --size "$size" --holds 6 "$@"
+        target/release/anycube bench-lift /dev/stdin --size "$size" --holds 6 "$ending"
     awk 'NR >= 101 && NR <= 130 { NF = 14; print }' "$file" |
         target/release/anycube bench-lift /dev/stdin --size "$size" --holds 1
     target/release/anycube bench-widths "$file" --size "$size" --length "$length"
