@@ -292,14 +292,16 @@ impl SolverN {
             None => None,
         };
         let search = if full { Search::ChooseWings } else { Search::Normal };
-        let mut best = match (self.solve_edges(g, facelets, search), candidate) {
+        let longest = candidate.as_ref().map_or(usize::MAX, |s| s.moves.len());
+        let mut best = match (self.solve_edges(g, facelets, search, longest), candidate) {
             (Ok(regular), Some(small)) if small.moves.len() < regular.moves.len() => small,
             (Ok(regular), _) => regular,
             (Err(_), Some(small)) => small,
             (Err(e), None) => return Err(e),
         };
         if full && g.n >= 9 && crate::rings::Ring::supports(g) {
-            match self.attempt(g, facelets, true, Search::ChooseWidthsAndWings) {
+            let longest = best.moves.len().saturating_sub(1);
+            match self.attempt(g, facelets, true, Search::ChooseWidthsAndWings, longest) {
                 Ok(other) => {
                     if std::env::var_os("CUBEN_TRACE").is_some() {
                         eprintln!("  fixed widths {} moves, flexible widths {} moves", best.moves.len(), other.moves.len());
@@ -351,8 +353,8 @@ impl SolverN {
         // scheme. Name its six colours after their current faces.
         let mut middle = g.sub_facelets(f, &[0, g.n / 2, last]);
         let mut name = [u8::MAX; 6];
-        for (face, tiles) in middle.chunks_exact(9).enumerate() {
-            let slot = name.get_mut(tiles[4] as usize)?;
+        for (face, &centre) in middle.iter().skip(4).step_by(9).enumerate() {
+            let slot = name.get_mut(centre as usize)?;
             if *slot != u8::MAX {
                 return None;
             }
@@ -375,7 +377,9 @@ impl SolverN {
             use crate::opt3::{Opt3, Outcome};
             use std::sync::atomic::AtomicI64;
             let exact = Opt3::new(&solver.t3, &solver.big2);
-            let budget = AtomicI64::new(250_000);
+            // Short depths usually finish outright. A longer projection
+            // already gives an upper bound for every ordinary centre path.
+            let budget = AtomicI64::new(if word.len() <= 12 { 250_000 } else { 8_192 });
             match exact.solve(&exact.prepare(&c3), lower, word.len() - 1, &budget) {
                 Outcome::Solved(path) => {
                     let word: Vec<_> = path.into_iter().map(usize::from).collect();
@@ -388,15 +392,15 @@ impl SolverN {
         Some(answer)
     }
 
-    fn solve_edges(&self, g: &Geometry, facelets: &[u8], search: Search) -> Result<SolutionN, String> {
+    fn solve_edges(&self, g: &Geometry, facelets: &[u8], search: Search, longest: usize) -> Result<SolutionN, String> {
         if crate::rings::Ring::supports(g) {
-            match self.attempt(g, facelets, true, search) {
+            match self.attempt(g, facelets, true, search, longest) {
                 Ok(solution) => return Ok(solution),
                 Err(e) if std::env::var_os("CUBEN_TRACE").is_some() => eprintln!("  {e}; the long way instead"),
                 Err(_) => (),
             }
         }
-        self.attempt(g, facelets, false, search)
+        self.attempt(g, facelets, false, search, longest)
     }
 
     /// The 3-layer turns of the penultimate orbit are wide turns on the
@@ -441,7 +445,7 @@ impl SolverN {
     /// `matched`: the centres are only made to agree with their neighbours
     /// towards the middle (`rings`), and the edge steps bring them home.
     /// Otherwise every centre is brought home first (`axes`).
-    fn attempt(&self, g: &Geometry, facelets: &[u8], matched: bool, search: Search) -> Result<SolutionN, String> {
+    fn attempt(&self, g: &Geometry, facelets: &[u8], matched: bool, search: Search, longest: usize) -> Result<SolutionN, String> {
         let n = g.n;
         if n < 6 {
             return Err("sizes below 6 have solvers of their own".to_string());
@@ -475,7 +479,7 @@ impl SolverN {
         // centres may end on any faces, an axis to a pair.
         let none = |what: &str, layers: &[usize]| format!("no {} found for the centres of layers {:?}", what, layers);
         let flexible = search == Search::ChooseWidthsAndWings;
-        let staged = self.stage_centres(g, &w.f, odd || !matched, &self.staging, flexible)?;
+        let staged = self.stage_centres(g, &w.f, odd || !matched, &self.staging, flexible, longest)?;
         for &m in &staged {
             g.apply(&mut w.f, m);
             w.moves.push(w.to_given[m]);
@@ -524,6 +528,9 @@ impl SolverN {
         let as_six = matched && !odd;
         if matched {
             for a in 1..if as_six { first - 1 } else { first } {
+                if w.moves.len() > longest {
+                    return Err("the centre prefix exceeds the incumbent".into());
+                }
                 let moves = crate::rings::Ring::new(g, a).solve(g, &w.f)?;
                 w.apply_ours(&moves);
                 if trace {
@@ -571,6 +578,9 @@ impl SolverN {
             }
         }
         for k in (1..if odd { half } else { half - 1 }).rev() {
+            if w.moves.len() > longest {
+                return Err("the wing prefix exceeds the incumbent".into());
+            }
             let layers = [0, k, mid, last - k, last];
             let sub = g.sub_facelets(&w.f, &layers);
             // Without a clock: the same cube gives the same solution however busy the machine is.
@@ -620,15 +630,16 @@ mod tests {
             }
             assert_eq!(block_width(n, &f), Some(width));
             let (solution, exact) = solver.solve_blocks(&g, &f, width).unwrap();
-            if 2 * width == n {
-                assert!(exact);
-            }
+            assert!(exact);
             assert!(solution.moves.iter().all(|m| 1 + m / 18 == width));
             let mut after = f.clone();
             g.apply_seq(&mut after, &solution.moves);
             assert!(g.is_solved(&after));
             g.apply(&mut f, 3);
             assert_eq!(block_width(n, &f), None);
+            if n == 9 {
+                assert!(solver.solve_edges(&g, &f, Search::Normal, 0).is_err());
+            }
         }
     }
 }

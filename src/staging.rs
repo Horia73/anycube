@@ -109,7 +109,7 @@ impl SolverN {
     /// The staging of a whole cube as given (`stage_centres`): an odd cube
     /// onto the faces of the centres' own colours.
     pub fn stage(&self, g: &Geometry, f: &[u8]) -> Result<Vec<usize>, String> {
-        self.stage_centres(g, f, g.n % 2 == 1, &self.staging, false)
+        self.stage_centres(g, f, g.n % 2 == 1, &self.staging, false, usize::MAX)
     }
 
     /// Moves that bring every centre of the cube onto a face of its own
@@ -121,7 +121,7 @@ impl SolverN {
     /// one). Otherwise (an even cube with nothing solved yet) any colour
     /// axis may end on any pair of faces, and the cube is held accordingly
     /// afterwards.
-    pub(crate) fn stage_centres(&self, g: &Geometry, f: &[u8], own: bool, p: &Staging, flexible: bool) -> Result<Vec<usize>, String> {
+    pub(crate) fn stage_centres(&self, g: &Geometry, f: &[u8], own: bool, p: &Staging, flexible: bool, longest: usize) -> Result<Vec<usize>, String> {
         let n = g.n;
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let (odd, half, last) = (n % 2 == 1, n / 2, n - 1);
@@ -166,6 +166,10 @@ impl SolverN {
                     _ => None,
                 };
                 cands = self.advance(g, cands, step, pass, p, next_column)?;
+                // Candidates are shortest first, and later phases only append moves.
+                if cands.first().is_some_and(|c| c.moves.len() > longest) {
+                    return Err("the centre staging exceeds the incumbent".into());
+                }
                 if trace {
                     let lens: Vec<String> = cands.iter().map(|c| c.moves.len().to_string()).collect();
                     eprintln!("  staging, axis {}, step {} of {}: {}", pass + 1, number + 1, steps.len(), lens.join(" "));
