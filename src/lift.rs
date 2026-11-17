@@ -3,6 +3,7 @@
 //! assign widths and, where necessary, restore turns invisible to the core.
 //! On a 4x4x4 a verified reduction supplies one choice of virtual middle edges.
 
+mod shell;
 mod widths;
 pub use widths::Widths;
 
@@ -362,14 +363,15 @@ fn verify(g: &Geometry, facelets: &[u8], moves: &[u8]) -> Result<(), String> {
 /// An experimental quality pass for a standalone 4x4x4 or 5x5x5.
 pub enum Search<'a> {
     Four(&'a Solver, &'a Params),
-    Five(&'a Solver5, &'a Params5),
+    Five(&'a Solver5, &'a Params5, Option<&'a Solver>),
 }
 
-/// The ordinary answer, the best ordinary answer across the requested
-/// orientations, and the verified moves after attempting to lift.
+/// Lengths after the ordinary solve, the requested orientations and the
+/// projected 3x3x3 search. The final moves also include any shell improvement.
 pub struct ResultLengths {
     pub normal: usize,
     pub held: usize,
+    pub projected: usize,
     pub moves: Vec<u8>,
 }
 
@@ -385,13 +387,14 @@ impl Search<'_> {
         }
         let (t, two) = match self {
             Self::Four(s, _) => (&s.t3, &s.two),
-            Self::Five(s, _) => (&s.edges.t3, &s.two),
+            Self::Five(s, _, _) => (&s.edges.t3, &s.two),
         };
         crate::api::check::validate(size, f).map_err(|e| e.message)?;
         if g.is_solved(f) {
             return Ok(ResultLengths {
                 normal: 0,
                 held: 0,
+                projected: 0,
                 moves: Vec::new(),
             });
         }
@@ -405,7 +408,7 @@ impl Search<'_> {
                     s.solve_with_alternatives(&Cube::from_facelets(&g.to_string(&framed))?, p, Some(&mut alts))?
                         .moves
                 }
-                Self::Five(s, p) => s.solve_with_alternatives(&framed, p, &mut alts)?.moves,
+                Self::Five(s, p, _) => s.solve_with_alternatives(&framed, p, &mut alts)?.moves,
             };
             let map = g.frame_moves(turns);
             let original = |word: &[u8]| word.iter().map(|&m| map[m as usize] as u8).collect::<Vec<u8>>();
@@ -424,8 +427,19 @@ impl Search<'_> {
                 moves = found;
             }
         }
+        let projected = moves.len();
+        if let Self::Five(_, _, Some(solver)) = self {
+            if let Some(found) = shell::improve(solver, &moves, projected) {
+                moves = found;
+            }
+        }
         verify(g, f, &moves)?;
-        Ok(ResultLengths { normal, held, moves })
+        Ok(ResultLengths {
+            normal,
+            held,
+            projected,
+            moves,
+        })
     }
 }
 
