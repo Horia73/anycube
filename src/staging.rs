@@ -109,7 +109,7 @@ impl SolverN {
     /// The staging of a whole cube as given (`stage_centres`): an odd cube
     /// onto the faces of the centres' own colours.
     pub fn stage(&self, g: &Geometry, f: &[u8]) -> Result<Vec<usize>, String> {
-        self.stage_centres(g, f, g.n % 2 == 1, &self.staging)
+        self.stage_centres(g, f, g.n % 2 == 1, &self.staging, false)
     }
 
     /// Moves that bring every centre of the cube onto a face of its own
@@ -121,7 +121,7 @@ impl SolverN {
     /// one). Otherwise (an even cube with nothing solved yet) any colour
     /// axis may end on any pair of faces, and the cube is held accordingly
     /// afterwards.
-    pub(crate) fn stage_centres(&self, g: &Geometry, f: &[u8], own: bool, p: &Staging) -> Result<Vec<usize>, String> {
+    pub(crate) fn stage_centres(&self, g: &Geometry, f: &[u8], own: bool, p: &Staging, flexible: bool) -> Result<Vec<usize>, String> {
         let n = g.n;
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let (odd, half, last) = (n % 2 == 1, n / 2, n - 1);
@@ -156,7 +156,16 @@ impl SolverN {
                 cands.extend(other);
             }
             for (number, step) in steps.iter().enumerate() {
-                cands = self.advance(g, cands, step, pass, p)?;
+                // The next column sits between the two cuts of this step.
+                // Moving the shallower cut as far as that column leaves
+                // this step unchanged. A half turn also preserves every
+                // axis already staged on the inner rings and wing parity.
+                let next_column = match (flexible, step, steps.get(number + 1)) {
+                    (true, Step::Rows7(_, d), Some(Step::Rows7(layers, next)))
+                        if d[1] == next[1] && d[2] == next[2] + 1 => Some(layers),
+                    _ => None,
+                };
+                cands = self.advance(g, cands, step, pass, p, next_column)?;
                 if trace {
                     let lens: Vec<String> = cands.iter().map(|c| c.moves.len().to_string()).collect();
                     eprintln!("  staging, axis {}, step {} of {}: {}", pass + 1, number + 1, steps.len(), lens.join(" "));
@@ -167,7 +176,7 @@ impl SolverN {
     }
 
     /// One step for all the cubes carried: the continuations shortest in total.
-    fn advance(&self, g: &Geometry, cands: Vec<Cand>, step: &Step, pass: usize, p: &Staging) -> Result<Vec<Cand>, String> {
+    fn advance(&self, g: &Geometry, cands: Vec<Cand>, step: &Step, pass: usize, p: &Staging, next_column: Option<&[usize; 7]>) -> Result<Vec<Cand>, String> {
         let stage5 = &self.six.outer.stage;
         let least = cands.iter().map(|c| c.moves.len()).min().unwrap_or(0);
         // Evenly from all the solutions of an exact search, so that they differ from the first move on.
@@ -179,7 +188,7 @@ impl SolverN {
             sols
         };
         // (the cube continued, moves of the small cube).
-        let (found, depths): (Vec<(usize, Vec<u8>)>, &[usize]) = match step {
+        let (mut found, depths): (Vec<(usize, Vec<u8>)>, &[usize]) = match step {
             Step::Faces(layers, depths) => {
                 let (x5, t5) = (&self.orbits5[0], &self.orbits5[1]);
                 let found = cands
@@ -233,30 +242,31 @@ impl SolverN {
         if found.is_empty() {
             return Err(format!("no staging found for a step {} layers deep", depths[depths.len() - 1]));
         }
-        let mut next: Vec<(usize, Cand)> = found
-            .par_iter()
-            .map(|(i, sol)| {
-                let mut c = cands[*i].clone();
-                for &m in sol {
-                    let (face, d, power) = (m as usize / 3 % 6, m as usize / 18, m as usize % 3);
-                    let ours = (face + 6 * (depths[d] - 1)) * 3 + power;
-                    g.apply(&mut c.f, ours);
-                    c.moves.push(c.to_start[ours]);
-                }
-                (*i, c)
-            })
-            .collect();
-        // Of the continuations of one cube the `fan` shortest stay, then the `width` shortest of all.
-        next.sort_by(|x, y| (x.0, x.1.moves.len()).cmp(&(y.0, y.1.moves.len())));
+        // Within a parent the existing prefix is fixed. Filter by path
+        // length before copying large cubes for the surviving continuations.
+        found.sort_by_key(|(i, path)| (*i, path.len()));
         let mut run = (usize::MAX, 0);
-        next.retain(|x| {
-            if x.0 != run.0 {
-                run = (x.0, 0);
+        found.retain(|(i, _)| {
+            if *i != run.0 {
+                run = (*i, 0);
             }
             run.1 += 1;
             run.1 <= p.fan
         });
-        let mut next: Vec<Cand> = next.into_iter().map(|x| x.1).collect();
+        let mut next: Vec<Cand> = found.par_iter().map(|(i, sol)| {
+            let mut c = cands[*i].clone();
+            let wide = next_column.map_or(0, |layers| {
+                self.s7.prepare_column(&g.sub_facelets(&c.f, layers), pass, sol)
+            });
+            for (j, &m) in sol.iter().enumerate() {
+                let (face, d, power) = (m as usize / 3 % 6, m as usize / 18, m as usize % 3);
+                let width = if j < 64 && wide >> j & 1 == 1 { depths[2] - 1 } else { depths[d] };
+                let ours = (face + 6 * (width - 1)) * 3 + power;
+                g.apply(&mut c.f, ours);
+                c.moves.push(c.to_start[ours]);
+            }
+            c
+        }).collect();
         next.sort_by(|x, y| (x.moves.len(), &x.f).cmp(&(y.moves.len(), &y.f)));
         next.dedup_by(|x, y| x.f == y.f);
         next.truncate(p.width);

@@ -1,12 +1,13 @@
 use anycube::cube::{format_moves, parse_moves, Cube};
 use anycube::solver::{Params, Solver};
+use anycube::{cuben::Geometry, nnn::{SolutionN, SolverN}};
 use rayon::prelude::*;
 use std::io::Write;
 use std::time::Instant;
 
 fn usage() -> ! {
     eprintln!(
-        "usage:\n  anycube app   open the interface: a cube to scramble, paint, show to a camera, turn and solve (anycube app --help)\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube widths --size 4|5 --state <facelets> --word <face-turns>   recover widths for a supplied projected word\n  anycube bench-widths <scrambles.txt> --size 4|5 --length L   measure width recovery with the projected word supplied\n  anycube bench-lift <scrambles.txt> --size 4|5 [--holds 1..6] [--last-face|--shell4] [--out results.tsv]   try projected 3x3x3 words with narrow and wide turns\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube known5 --walk K [--moves all|h|g] [--count N] [--seed S] [--base reduced|solved|split] [search flags]   5x5x5 cubes K moves away from a reduced (or the solved) cube, the walk made of all moves, of those that keep the centres staged (h) or of those that keep the wing halves apart (g)\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
+        "usage:\n  anycube app   open the interface: a cube to scramble, paint, show to a camera, turn and solve (anycube app --help)\n  anycube solve --size N <moves...> [search flags]   solve a scramble given as moves, for a cube of any size from 2 up\n  anycube solve --state <facelets> [search flags]   solve a cube given as 6*N*N facelets in URFDLB order; the size is read from their number\n  anycube facelets --size N <moves...>   print the facelets of a scrambled cube\n  anycube scrambles --size N [--count C] [--length L] [--seed S]   random-move scrambles, one per line\n  anycube verify --size N <file>   check solutions; each line is scramble<TAB>solution\n  anycube bench <scrambles.txt> [--out results.tsv] [--tpr tpr-results.tsv] [--limit N] [--parallel] [search flags]   4x4x4 scrambles\n  anycube widths --size 4|5 --state <facelets> --word <face-turns>   recover widths for a supplied projected word\n  anycube bench-widths <scrambles.txt> --size 4|5 --length L   measure width recovery with the projected word supplied\n  anycube bench-lift <scrambles.txt> --size 4|5 [--holds 1..6] [--last-face|--shell4] [--out results.tsv]   try projected 3x3x3 words with narrow and wide turns\n  anycube known --walk K [--count N] [--seed S] [--base reduced|solved] [--out results.tsv] [search flags]   4x4x4 cubes K moves away from a reduced (or the solved) cube: what the solver finds against what is known to exist\n  anycube bench5 <scrambles.txt> [--out results.tsv] [--limit N] [search flags]   5x5x5 scrambles\n  anycube known5 --walk K [--moves all|h|g] [--count N] [--seed S] [--base reduced|solved|split] [search flags]   5x5x5 cubes K moves away from a reduced (or the solved) cube, the walk made of all moves, of those that keep the centres staged (h) or of those that keep the wing halves apart (g)\n  anycube bench6 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal|full]   6x6x6 scrambles\n  anycube bench7 <scrambles.txt> [--out results.tsv] [--limit N] [--mode fast|normal]   7x7x7 scrambles\n  anycube benchn <scrambles.txt> --size N [--out results.tsv] [--limit N] [--mode normal|full]   scrambles of size 8 and up\n  anycube row <scrambles.txt> --size N [--limit N] [--mode M]   any size from 2 up in one mode: a line of size, cubes, mean moves, mean and longest seconds per cube\n\nsearch flags start with --mode fast|normal|full; see README.md for the rest"
     );
     std::process::exit(2)
 }
@@ -397,6 +398,11 @@ fn solve6(state: Option<&str>, args: &[String]) {
     }
 }
 
+/// Select the same general search for solving, benchmarks and release rows.
+fn general_search(args: &[String]) -> fn(&SolverN, &Geometry, &[u8]) -> Result<SolutionN, String> {
+    if opt(args, "--mode") == Some("full") { SolverN::solve_full } else { SolverN::solve }
+}
+
 /// Sizes from 8 up: the general solver.
 fn solven(size: usize, state: Option<&str>, args: &[String]) {
     let t0 = Instant::now();
@@ -412,7 +418,7 @@ fn solven(size: usize, state: Option<&str>, args: &[String]) {
         }
     };
     let t1 = Instant::now();
-    match solver.solve(&g, &facelets) {
+    match general_search(args)(&solver, &g, &facelets) {
         Ok(sol) => {
             g.apply_seq(&mut facelets, &sol.moves);
             if !g.is_solved(&facelets) {
@@ -546,6 +552,7 @@ fn benchn(args: &[String]) {
     let text = std::fs::read_to_string(path).unwrap_or_else(|e| fail(&format!("{}: {}", path, e)));
     let num = |name: &str, default: usize| opt(args, name).and_then(|s| s.parse().ok()).unwrap_or(default);
     let (size, limit) = (num("--size", 8), num("--limit", usize::MAX));
+    let search = general_search(args);
     let g = anycube::cuben::Geometry::new(size);
     let t0 = Instant::now();
     let mut solver = anycube::nnn::SolverN::load();
@@ -560,7 +567,7 @@ fn benchn(args: &[String]) {
         let mut f = g.solved();
         g.apply_seq(&mut f, &scramble);
         let t = Instant::now();
-        let sol = solver.solve(&g, &f).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
+        let sol = search(&solver, &g, &f).unwrap_or_else(|e| fail(&format!("cube {}: {}", n, e)));
         let ms = t.elapsed().as_secs_f64() * 1e3;
         g.apply_seq(&mut f, &sol.moves);
         if !g.is_solved(&f) {
@@ -659,7 +666,8 @@ fn row(args: &[String]) {
         }
         _ => {
             let s = anycube::nnn::SolverN::load();
-            Box::new(move |g, _, f| s.solve(g, f).map(|sol| sol.moves))
+            let search = general_search(args);
+            Box::new(move |g, _, f| search(&s, g, f).map(|sol| sol.moves))
         }
     };
     let (mut moves, mut times) = (0usize, Vec::new());

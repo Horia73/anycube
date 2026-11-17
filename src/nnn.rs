@@ -34,7 +34,7 @@ use crate::cube::Cube;
 use crate::cuben::Geometry;
 use crate::orbits::centre_orbits;
 use crate::solver::Params;
-use crate::solver5::Params5;
+use crate::solver5::{Params5, Solution5};
 use crate::solver6::Solver6;
 use crate::stage7::Stage7;
 
@@ -128,6 +128,13 @@ impl Home4 {
         }
         Some(out)
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Search {
+    Normal,
+    ChooseWings,
+    ChooseWidthsAndWings,
 }
 
 pub struct SolutionN {
@@ -239,21 +246,85 @@ impl SolverN {
     /// Solves a cube of size 6 or more given as its facelets (faces U R F D
     /// L B, row by row; colours 0 to 5 in that order).
     pub fn solve(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
-        match self.attempt(g, facelets, true) {
-            Ok(sol) => Ok(sol),
-            Err(e) => {
-                if std::env::var_os("CUBEN_TRACE").is_some() {
-                    eprintln!("  {}; the long way instead", e);
+        self.solve_edges(g, facelets, Search::Normal)
+    }
+
+    /// Compare complete solutions from different penultimate wing reductions.
+    /// Starting at size nine, also try centre turns whose widths prepare the
+    /// next column. Keep the shorter verified solution, including normal mode's.
+    pub fn solve_full(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
+        let mut best = self.solve_edges(g, facelets, Search::ChooseWings)?;
+        if g.n >= 9 && crate::rings::Ring::supports(g) {
+            match self.attempt(g, facelets, true, Search::ChooseWidthsAndWings) {
+                Ok(other) => {
+                    if std::env::var_os("CUBEN_TRACE").is_some() {
+                        eprintln!("  fixed widths {} moves, flexible widths {} moves", best.moves.len(), other.moves.len());
+                    }
+                    if other.moves.len() < best.moves.len() {
+                        best = other;
+                    }
                 }
-                self.attempt(g, facelets, false)
+                Err(e) if std::env::var_os("CUBEN_TRACE").is_some() => eprintln!("  flexible widths: {e}"),
+                Err(_) => (),
             }
         }
+        Ok(best)
+    }
+
+    fn solve_edges(&self, g: &Geometry, facelets: &[u8], search: Search) -> Result<SolutionN, String> {
+        if crate::rings::Ring::supports(g) {
+            match self.attempt(g, facelets, true, search) {
+                Ok(solution) => return Ok(solution),
+                Err(e) if std::env::var_os("CUBEN_TRACE").is_some() => eprintln!("  {e}; the long way instead"),
+                Err(_) => (),
+            }
+        }
+        self.attempt(g, facelets, false, search)
+    }
+
+    /// The 3-layer turns of the penultimate orbit are wide turns on the
+    /// outer 5x5x5 as well. Compare full endings on that projection before
+    /// committing either set of turns on the large cube.
+    fn last_two_wings(&self, inner: &[u8], outer: &[u8], p: &Params5) -> Result<(Vec<u8>, Solution5), String> {
+        let small = &crate::c5::tables5().geometry;
+        let residual = |seq: &[u8]| {
+            let mut f = outer.to_vec();
+            for &m in seq {
+                small.apply(&mut f, m as usize);
+            }
+            f
+        };
+        let mut paths = self.six.outer.reductions(inner, p)?.into_iter();
+        let first = paths.next().ok_or("no penultimate wing reduction found")?;
+        let base = residual(&first);
+        let mut seen = std::collections::HashSet::from([base.clone()]);
+        let mut best = (first, self.six.outer.solve(&base, p)?);
+        let mut roots = Vec::new();
+        let mut prefixes = Vec::new();
+        for path in paths {
+            let f = residual(&path);
+            if seen.insert(f.clone()) {
+                roots.push((f, path.len()));
+                prefixes.push(path);
+                if roots.len() == 8 {
+                    break;
+                }
+            }
+        }
+        if !roots.is_empty() {
+            if let Ok((k, tail)) = self.six.outer.solve_any(&roots, p) {
+                if prefixes[k].len() + tail.moves.len() < best.0.len() + best.1.moves.len() {
+                    best = (std::mem::take(&mut prefixes[k]), tail);
+                }
+            }
+        }
+        Ok(best)
     }
 
     /// `matched`: the centres are only made to agree with their neighbours
     /// towards the middle (`rings`), and the edge steps bring them home.
     /// Otherwise every centre is brought home first (`axes`).
-    fn attempt(&self, g: &Geometry, facelets: &[u8], matched: bool) -> Result<SolutionN, String> {
+    fn attempt(&self, g: &Geometry, facelets: &[u8], matched: bool, search: Search) -> Result<SolutionN, String> {
         let n = g.n;
         if n < 6 {
             return Err("sizes below 6 have solvers of their own".to_string());
@@ -286,7 +357,8 @@ impl SolverN {
         // An even cube with nothing solved yet has no faces of its own: its
         // centres may end on any faces, an axis to a pair.
         let none = |what: &str, layers: &[usize]| format!("no {} found for the centres of layers {:?}", what, layers);
-        let staged = self.stage_centres(g, &w.f, odd || !matched, &self.staging)?;
+        let flexible = search == Search::ChooseWidthsAndWings;
+        let staged = self.stage_centres(g, &w.f, odd || !matched, &self.staging, flexible)?;
         for &m in &staged {
             g.apply(&mut w.f, m);
             w.moves.push(w.to_given[m]);
@@ -386,6 +458,14 @@ impl SolverN {
             let sub = g.sub_facelets(&w.f, &layers);
             // Without a clock: the same cube gives the same solution however busy the machine is.
             let wide = Params5 { c_keep: 6000, time_ms: 0, ..Params5::normal() };
+            if k == 2 && search != Search::Normal {
+                let outer = g.sub_facelets(&w.f, &[0, 1, mid, last - 1, last]);
+                let (prefix, ending) = self.last_two_wings(&sub, &outer, &wide)?;
+                w.apply(&prefix, &[1, k + 1]);
+                w.apply(&ending.moves, &[1, 2]);
+                tail = ending.lens[5];
+                break;
+            }
             let moves = if k > 1 {
                 self.six.outer.reduce(&sub, &wide)?
             } else {

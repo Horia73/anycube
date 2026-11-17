@@ -51,7 +51,7 @@ use crate::cuben::Geometry;
 use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
 use crate::search::{beam_again_longer, beam_roots, fetch, Problem};
-use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes, Ranks};
+use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes, MaskMoves, Ranks};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
@@ -134,6 +134,7 @@ pub struct Stage7 {
     pub g: Geometry,
     pub orbits: Vec<CentreOrbit>,
     pub perms: Vec<BitPerm>,
+    mask_moves: Vec<MaskMoves>,
     pub ranks: Ranks,
     /// Step 2: its moves, and for each two of the three orbits of a triple
     /// (the obliques, first oblique and t, t and second oblique) a lower
@@ -371,7 +372,8 @@ impl Stage7 {
                 (turns, map)
             })
             .collect();
-        Stage7 { g, orbits, perms, ranks, m2, diff2, m1, diff1, m4, mv4, pair4, frames }
+        let mask_moves = perms.iter().map(MaskMoves::new).collect();
+        Stage7 { g, orbits, perms, mask_moves, ranks, m2, diff2, m1, diff1, m4, mv4, pair4, frames }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -568,6 +570,51 @@ impl Stage7 {
         (d[1][x as usize] as u32 + d[2][y as usize] as u32) * 64 + x.count_ones() + y.count_ones()
     }
 
+    /// Pick widths for the half turns of the preceding pair of columns.
+    /// A two-layer turn may reach the next column as a three-layer turn.
+    /// Both widths act identically on the columns already formed.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn prepare_column(&self, f: &[u8], pass: usize, path: &[u8]) -> u64 {
+        let eligible = |m: u8| (18..36).contains(&m) && m % 3 == 1;
+        let mut free: Vec<_> = (0..path.len().min(64)).filter(|&i| eligible(path[i])).collect();
+        if free.is_empty() {
+            return 0;
+        }
+        // Keep at most 64 spellings. Moves closer to the next column's
+        // search are tried first when a long path offers more cuts.
+        free.reverse();
+        free.truncate(6);
+        let choices = free.iter().fold(0u64, |bits, &i| bits | 1 << i);
+        let orbits = [OBL_A, T_OUT, OBL_B];
+        let start = orbits.map(|o| self.mask(o, f, if pass == 0 { 1 } else { 0 }));
+        if pass != 0 && start.iter().any(|&mask| mask >= 1 << 16 || mask.count_ones() != 8) {
+            return 0;
+        }
+        let mut states = vec![(start, 0u64)];
+        for (i, &m) in path.iter().enumerate() {
+            let mut next = Vec::with_capacity(2 * states.len());
+            for (n, wide) in states {
+                let moved = |m: u8| std::array::from_fn(|j| self.perms[orbits[j]].apply(m, n[j]));
+                next.push((moved(m), wide));
+                if i < 64 && choices >> i & 1 == 1 {
+                    next.push((moved(m + 18), wide | 1 << i));
+                }
+            }
+            states = next;
+        }
+        let score = |n: &[u32; 3]| {
+            if pass == 0 {
+                return self.score2(n);
+            }
+            let [a, o, b] = n.map(|mask| self.ranks.rank16[mask as usize] as usize);
+            let d = &self.pair4;
+            nibble(&d[0], a * N_UD + b) as u32
+                + nibble(&d[1], a * N_UD + o) as u32
+                + nibble(&d[2], o * N_UD + b) as u32
+        };
+        states.into_iter().min_by_key(|(n, wide)| (score(n), wide.count_ones(), *wide)).unwrap().1
+    }
+
     /// What the inner centres need in step 4: exactly, with the parity of
     /// the inner wings to be made even or (`free`) left as it comes.
     #[inline(always)]
@@ -705,6 +752,18 @@ impl Problem for Step2<'_> {
     }
 
     #[inline(always)]
+    fn children(&self, n: &[u32; 3], indices: &[usize], out: &mut Vec<(usize, [u32; 3])>) {
+        let orbits = [OBL_A, T_OUT, OBL_B];
+        let all: [[u32; 54]; 3] = std::array::from_fn(|i| self.s.mask_moves[orbits[i]].apply(n[i]));
+        for &k in indices {
+            let m = self.moves()[k] as usize;
+            let c = std::array::from_fn(|i| all[i][m]);
+            self.prefetch(&c);
+            out.push((k, c));
+        }
+    }
+
+    #[inline(always)]
     fn bound(&self, n: &[u32; 3]) -> usize {
         let d = &self.s.diff2;
         d[0][(n[0] ^ n[2]) as usize].max(d[1][(n[0] ^ n[1]) as usize]).max(d[2][(n[1] ^ n[2]) as usize]) as usize
@@ -715,9 +774,13 @@ impl Problem for Step2<'_> {
     }
 
     #[inline(always)]
+    fn solved(&self, n: &[u32; 3]) -> bool {
+        self.done(n)
+    }
+
+    #[inline(always)]
     fn prefetch(&self, n: &[u32; 3]) {
         let d = &self.s.diff2;
-        fetch(&d[0], (n[0] ^ n[2]) as usize);
         fetch(&d[1], (n[0] ^ n[1]) as usize);
         fetch(&d[2], (n[1] ^ n[2]) as usize);
     }
@@ -773,6 +836,11 @@ impl Problem for Step45<'_> {
     }
 
     #[inline(always)]
+    fn solved(&self, n: &Node45) -> bool {
+        n.xo == 0 && n.n.o == 0 && !n.odd && Step4 { s: self.s, s5: self.s5, free: false }.solved(&n.n)
+    }
+
+    #[inline(always)]
     fn prefetch(&self, n: &Node45) {
         Step4 { s: self.s, s5: self.s5, free: false }.prefetch(&n.n);
         self.s5.b_fetch(n.xo as usize, n.n.o as usize, n.odd);
@@ -800,6 +868,18 @@ impl Problem for Step12<'_> {
     }
 
     #[inline(always)]
+    fn children(&self, n: &[u32; 5], indices: &[usize], out: &mut Vec<(usize, [u32; 5])>) {
+        let orbits = [X_IN, T_IN, OBL_A, T_OUT, OBL_B];
+        let all: [[u32; 54]; 5] = std::array::from_fn(|i| self.s.mask_moves[orbits[i]].apply(n[i]));
+        for &k in indices {
+            let m = self.moves()[k] as usize;
+            let c = std::array::from_fn(|i| all[i][m]);
+            self.prefetch(&c);
+            out.push((k, c));
+        }
+    }
+
+    #[inline(always)]
     fn bound(&self, n: &[u32; 5]) -> usize {
         let d = &self.s.diff1;
         let triples = d[0][(n[2] ^ n[4]) as usize].max(d[1][(n[2] ^ n[3]) as usize]).max(d[2][(n[3] ^ n[4]) as usize]);
@@ -811,10 +891,14 @@ impl Problem for Step12<'_> {
     }
 
     #[inline(always)]
+    fn solved(&self, n: &[u32; 5]) -> bool {
+        self.done(n)
+    }
+
+    #[inline(always)]
     fn prefetch(&self, n: &[u32; 5]) {
         let d = &self.s.diff1;
         self.s5.a_fetch(n[0], n[1]);
-        fetch(&d[0], (n[2] ^ n[4]) as usize);
         fetch(&d[1], (n[2] ^ n[3]) as usize);
         fetch(&d[2], (n[3] ^ n[4]) as usize);
     }
@@ -877,6 +961,13 @@ impl Problem for Step4<'_> {
     }
 
     #[inline(always)]
+    fn solved(&self, n: &Node4) -> bool {
+        // Pattern rank zero is the eight U/D places. The pair tables
+        // have distance zero precisely on their diagonals.
+        n.x == 0 && n.t == 0 && (self.free || !n.odd) && n.a == n.o && n.o == n.b
+    }
+
+    #[inline(always)]
     fn prefetch(&self, n: &Node4) {
         let (a, o, b) = (n.a as usize, n.o as usize, n.b as usize);
         let p = &self.s.pair4;
@@ -922,6 +1013,29 @@ mod tests {
             g7.apply(&mut f, m);
             g5.apply(&mut outer, m);
             assert_eq!(g7.sub_facelets(&f, &OUTER5), outer);
+        }
+    }
+
+    #[test]
+    fn two_widths_agree_on_the_current_columns_and_expose_the_next_one() {
+        let g = Geometry::new(13);
+        let small = Geometry::new(7);
+        let current = [0, 1, 4, 6, 8, 11, 12];
+        let next = [0, 1, 3, 6, 9, 11, 12];
+        let f: Vec<u8> = (0..6 * g.n * g.n).map(|i| (i % 251) as u8).collect();
+        for face in 0..6 {
+            let m = 3 * face + 1;
+            let mut narrow = f.clone();
+            let mut wide = f.clone();
+            g.apply(&mut narrow, 18 + m);
+            g.apply(&mut wide, 54 + m);
+            assert_eq!(g.sub_facelets(&narrow, &current), g.sub_facelets(&wide, &current));
+            for (state, width) in [(&narrow, 2), (&wide, 3)] {
+                let mut projected = g.sub_facelets(&f, &next);
+                small.apply(&mut projected, (width - 1) * 18 + m);
+                assert_eq!(g.sub_facelets(state, &next), projected);
+            }
+            assert_ne!(g.sub_facelets(&narrow, &next), g.sub_facelets(&wide, &next));
         }
     }
 

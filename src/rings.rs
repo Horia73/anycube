@@ -57,7 +57,7 @@
 //!   and brought back: a last resort.
 
 use crate::cuben::Geometry;
-use crate::search::{beam_from, fetch, mixed, Problem};
+use crate::search::{beam_cut, beam_from, fetch, mixed, Problem};
 use crate::stage6::skip54;
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
@@ -120,6 +120,12 @@ type Node = [u32; MAX];
 type Slot = std::sync::Arc<std::sync::OnceLock<std::sync::Arc<Bytes>>>;
 static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Slot>>> = std::sync::LazyLock::new(Default::default);
 
+// Four eight-position permutations describe the action of a move on
+// two orbits and two axes. Identical move sets share the expanded table.
+type PairAction = [[u8; 8]; 4];
+static PAIR_ACTIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<Vec<PairAction>, Slot>>> =
+    std::sync::LazyLock::new(Default::default);
+
 pub struct Ring {
     row: usize,
     /// The columns of the row that are followed, as columns of a face.
@@ -155,6 +161,13 @@ fn axis_of(face: usize) -> usize {
 }
 
 impl Ring {
+    /// The first row has two orbits for each of its n - 4 columns.
+    /// The matching search also stores every move in one byte.
+    #[cfg(any(test, not(target_arch = "wasm32")))]
+    pub(crate) fn supports(g: &Geometry) -> bool {
+        g.n.saturating_sub(4) <= MAX / 2 && g.move_count() <= u8::MAX as usize + 1
+    }
+
     pub fn new(g: &Geometry, a: usize) -> Ring {
         Ring::part(g, a, (a + 1..g.n - 1 - a).collect(), usize::MAX)
     }
@@ -315,6 +328,11 @@ impl Ring {
                 })
                 .clone()
             }
+            3 => {
+                let print = fingerprint(&to, &costs, flips, pairs);
+                let slot = SHARED.lock().unwrap().entry(print).or_default().clone();
+                slot.get_or_init(|| std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips, pairs)))).clone()
+            }
             _ => std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips, pairs))),
         };
         self.tables.lock().unwrap().insert(key, table.clone());
@@ -326,11 +344,30 @@ impl Ring {
     /// two axes at once, which the tables of one axis cannot see; this one
     /// sees it for one pair of orbits. Kept as a file, like the others.
     fn two_axes(&self, ids: &[u8], places: &[usize], x: usize, y: usize, axes: (usize, usize)) -> std::sync::Arc<Bytes> {
+        let orbit_axis = [(x, axes.0), (y, axes.0), (x, axes.1), (y, axes.1)];
+        let still = std::array::from_fn(|i| 1u8 << i);
+        let mut actions: Vec<PairAction> = places.iter().map(|&k| {
+            orbit_axis.map(|(o, axis)| {
+                let shift = 8 * axis;
+                std::array::from_fn(|i| (self.perms[o].apply(k as u8, 1 << (shift + i)) >> shift) as u8)
+            })
+        }).filter(|m| *m != [still; 4]).collect();
+        actions.sort_unstable();
+        actions.dedup();
+        let slot = PAIR_ACTIONS.lock().unwrap().entry(actions).or_default().clone();
+        slot.get_or_init(|| self.load_two_axes(ids, places, x, y, axes)).clone()
+    }
+
+    /// Expand the 70 by 70 products only for a new action. The ordering
+    /// and byte fingerprint here also open tables made by previous releases.
+    fn load_two_axes(&self, ids: &[u8], places: &[usize], x: usize, y: usize, axes: (usize, usize)) -> std::sync::Arc<Bytes> {
         // Per move and axis: where it takes the two patterns, as one number.
         let pair = |i: usize, axis: usize| -> Vec<u16> {
             let shift = 8 * axis as u32;
             let to = |orbit: usize, r: usize| self.rank8[(self.perms[orbit].apply(places[i] as u8, self.unrank8[r] << shift) >> shift) as usize] as u16;
-            (0..4900).map(|s| to(x, s / 70) * 70 + to(y, s % 70)).collect()
+            let a: [u16; 70] = std::array::from_fn(|r| to(x, r) * 70);
+            let b: [u16; 70] = std::array::from_fn(|r| to(y, r));
+            a.into_iter().flat_map(|row| b.into_iter().map(move |col| row + col)).collect()
         };
         let mut moves: Vec<(Vec<u16>, Vec<u16>)> = (0..ids.len()).map(|i| (pair(i, axes.0), pair(i, axes.1))).collect();
         moves.sort();
@@ -701,8 +738,10 @@ impl Ring {
         let root = self.node(f)?;
         let deepest = *self.level.iter().max().unwrap();
         let all: Vec<usize> = (0..self.level.len()).collect();
-        let dist = self.pair_tables();
-        let choices = self.choices(&dist, &root);
+        // Long rows usually finish by matching their columns from the
+        // middle. Only the other searches need the single-column tables.
+        let dist = std::cell::LazyCell::new(|| self.pair_tables());
+        let choices = std::cell::LazyCell::new(|| self.choices(&dist, &root));
         let step = |columns: Vec<usize>, signs: [usize; 3]| Step { ring: self, columns, dist: &dist, signs };
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let clock = std::time::Instant::now();
@@ -1084,18 +1123,10 @@ impl Walk<'_> {
             .collect();
         // The score at which the level is full, with room for states reached twice.
         let most = self.width + self.width / 2;
-        let mut tally = vec![0usize; 1 << 16];
-        for &x in &scores {
-            tally[x as usize] += 1;
-        }
-        let (mut cut, mut total) = (0, tally[0]);
-        while total < most && cut < u16::MAX as usize - 1 {
-            cut += 1;
-            total += tally[cut];
-        }
+        let cut = beam_cut(&scores, most);
         let mut next: Vec<(u32, u32, Node, u32, u8)> = (0..scores.len())
             .into_par_iter()
-            .filter(|&j| scores[j] as usize <= cut)
+            .filter(|&j| scores[j] <= cut)
             .map(|j| {
                 let (i, k) = (j / count, j % count);
                 let to = grow.next(&level[i].0, k);
@@ -1670,6 +1701,13 @@ mod tests {
             g.apply(&mut f, moves[(seed >> 33) as usize % moves.len()]);
         }
         f
+    }
+
+    #[test]
+    fn fixed_width_ring_search_fits_through_size_28() {
+        assert!(Ring::supports(&Geometry::new(28)));
+        assert!(!Ring::supports(&Geometry::new(29)));
+        assert!(!Ring::supports(&Geometry::new(30)));
     }
 
     /// The last row of an even cube (four centres) and of an odd one

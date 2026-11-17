@@ -275,7 +275,7 @@ mod big {
                     (sol.moves.iter().map(|&m| m as usize).collect(), parts, false)
                 }
                 _ => {
-                    // One solver for every size from 8 up; it has no modes.
+                    // Both public API presets use the ordinary general search.
                     let sol = sn().solve(g, f)?;
                     let l = sol.lens;
                     (sol.moves, vec![("centres", l[0]), ("edges", l[1]), ("3x3x3", l[2])], false)
