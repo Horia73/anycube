@@ -85,13 +85,20 @@ to 6, before the projected search. The reported lengths show what each
 step contributed. The reduction search flags above apply to each
 orientation. Searching for a new ending adds time after the reductions.
 
+On the 5x5x5, `--shell4` adds another source of possible endings. Removing
+the middle row and column of each face gives a real 4x4x4. The search
+solves that shell, tries both sides of the axis for its wide turns and
+keeps the shorter endings that also solve the middle band. This option
+loads the 4x4x4 tables as well as the 5x5x5 tables.
+
 ```sh
-anycube solve --size 5 --lift --holds 6 "Rw U Fw2 D' Bw R2"
-anycube bench-lift bench/scrambles555-200.txt --size 5 --holds 6 --limit 30 --out lift.tsv
+anycube solve --size 5 --lift --holds 6 --shell4 "Rw U Fw2 D' Bw R2"
+anycube bench-lift bench/scrambles555-200.txt --size 5 --holds 6 --shell4 --limit 30 --out lift.tsv
 ```
 
 The benchmark TSV records the zero-based row, ordinary length, best length
-across orientations, final length, milliseconds and the final moves.
+across orientations, length after the projected 3x3x3 search, final length,
+milliseconds and the final moves.
 
 If another search has an entire sequence of faces, directions and powers,
 `widths` can test it directly. It propagates each piece's possible
@@ -108,5 +115,4 @@ anycube widths --size 5 --state "$state" --word "U R' F2"
 `bench-widths` measures this last step in isolation. It takes the first L
 turns of each input scramble and supplies the projected inverse with every
 width erased. The corresponding sticker-only benchmark is `bench-lift`.
-The [paired measurements](../bench/RESULTS.md#projected-face-turns-on-4x4x4-and-5x5x5-2026-11-17)
-include both experiments.
+[Measurements for both experiments](../bench/RESULTS.md#projected-face-turns-on-4x4x4-and-5x5x5-2026-11-17)
