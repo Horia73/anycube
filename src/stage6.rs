@@ -21,7 +21,7 @@ use crate::cube::Cube;
 use crate::cuben::Geometry;
 use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
-use crate::tables::{gen_stage, load_or_gen, load_or_gen_quiet, table_dir, BitPerm, Bytes, Ranks};
+use crate::tables::{gen_stage, load_or_gen, load_or_gen_quiet, table_dir, BitPerm, Bytes, MaskMoves, Ranks};
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
@@ -55,6 +55,7 @@ pub struct Stage6 {
     pub g: Geometry,
     pub orbits: Vec<CentreOrbit>,
     pub perms: Vec<BitPerm>,
+    mask_moves: [MaskMoves; 3],
     ranks: Ranks,
     /// Step 1: moves until the R/L inner x centres are on R and L, by mask,
     /// and a lower bound on the moves that pair the obliques, by the mask of
@@ -200,7 +201,8 @@ impl Stage6 {
             unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
         });
         let out_ud_mv = table(X_OUT, &m3);
-        Stage6 { g, orbits, perms, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
+        let mask_moves = [X_IN, OBL_A, OBL_B].map(|o| MaskMoves::new(&perms[o]));
+        Stage6 { g, orbits, perms, mask_moves, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -612,18 +614,21 @@ impl Run1<'_> {
         // Both tables are larger than the cache: the states one move on are
         // made first and their entries asked for, then judged in order.
         let s = self.s;
-        let mut kids = [[0u32; 3]; 54];
+        let kids: [[u32; 54]; 3] = std::array::from_fn(|i| s.mask_moves[i].apply(next[i]));
         for m2 in 0..54u8 {
             if !skip54(m, m2) {
-                let k = [s.perms[X_IN].apply(m2, next[0]), s.perms[OBL_A].apply(m2, next[1]), s.perms[OBL_B].apply(m2, next[2])];
-                crate::search::fetch(&s.in_rl, k[0] as usize);
-                crate::search::fetch(&s.unpaired, (k[1] ^ k[2]) as usize);
-                kids[m2 as usize] = k;
+                let k = m2 as usize;
+                crate::search::fetch(&s.in_rl, kids[0][k] as usize);
+                crate::search::fetch(&s.unpaired, (kids[1][k] ^ kids[2][k]) as usize);
             }
         }
         for m2 in 0..54u8 {
-            if !skip54(m, m2) && self.enter(&kids[m2 as usize], m2, rem - 1, depth + 1) {
-                return true;
+            if !skip54(m, m2) {
+                let k = m2 as usize;
+                let child = [kids[0][k], kids[1][k], kids[2][k]];
+                if self.enter(&child, m2, rem - 1, depth + 1) {
+                    return true;
+                }
             }
         }
         false

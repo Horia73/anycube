@@ -68,6 +68,30 @@ impl BitPerm {
     }
 }
 
+/// Transposed permutations for a search expanding all 54 moves of one
+/// parent. Each of its three mask bytes selects a contiguous row of moves.
+pub(crate) struct MaskMoves {
+    rows: Vec<[u32; 54]>,
+}
+
+impl MaskMoves {
+    pub(crate) fn new(p: &BitPerm) -> Self {
+        assert_eq!(p.t.len(), 54);
+        let rows = (0..3)
+            .flat_map(|byte| (0..256).map(move |value| std::array::from_fn(|m| p.t[m][byte][value])))
+            .collect();
+        Self { rows }
+    }
+
+    #[inline(always)]
+    pub(crate) fn apply(&self, mask: u32) -> [u32; 54] {
+        let a = &self.rows[(mask & 255) as usize];
+        let b = &self.rows[256 + (mask >> 8 & 255) as usize];
+        let c = &self.rows[512 + (mask >> 16) as usize];
+        std::array::from_fn(|m| a[m] | b[m] | c[m])
+    }
+}
+
 /// Rank tables for 4-of-8 and 8-of-16 bit masks.
 pub struct Ranks {
     pub rank8: [u8; 256],

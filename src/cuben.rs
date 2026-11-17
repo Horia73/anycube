@@ -195,24 +195,14 @@ impl Geometry {
     /// For a frame reached by `turns`: `out[m]` is the move of the original cube
     /// that does what move `m` does in the new frame.
     pub fn frame_moves(&self, turns: &[usize]) -> Vec<usize> {
-        let total = 6 * self.n * self.n;
-        // The turn as one permutation and its inverse.
-        let mut rot: Vec<u32> = (0..total as u32).collect();
+        // A proper rotation changes only the face name of a block turn.
+        // The source face of one sticker identifies the whole rotated face.
+        let nn = self.n * self.n;
+        let mut faces = [0, 1, 2, 3, 4, 5];
         for &t in turns {
-            rot = (0..total).map(|j| rot[self.rotations[t][j] as usize]).collect();
+            faces = std::array::from_fn(|f| faces[self.rotations[t][f * nn] as usize / nn]);
         }
-        let mut inv = vec![0u32; total];
-        for j in 0..total {
-            inv[rot[j] as usize] = j as u32;
-        }
-        (0..self.moves.len())
-            .map(|m| {
-                // Turn to the new frame, do `m`, turn back.
-                let perm: Vec<u32> =
-                    (0..total).map(|j| rot[self.moves[m][inv[j] as usize] as usize]).collect();
-                self.moves.iter().position(|x| *x == perm).expect("a turned move is a move")
-            })
-            .collect()
+        (0..self.move_count()).map(|m| 18 * (m / 18) + 3 * faces[m / 3 % 6] + m % 3).collect()
     }
 
     /// The facelets of the smaller cube made of the given layers of this one
@@ -383,6 +373,24 @@ mod tests {
             assert_eq!(a, g.reframe(&b, &turns));
         }
         assert_eq!(g.reframe(&g.solved(), &[0, 1]), g.solved());
+    }
+
+    #[test]
+    fn every_width_maps_to_the_same_permutation_in_a_new_frame() {
+        for n in [4, 7, 12] {
+            let g = Geometry::new(n);
+            let f: Vec<u8> = (0..6 * n * n).map(|i| (i % 251) as u8).collect();
+            for turns in [&[0][..], &[1, 2], &[2, 1, 0, 0]] {
+                let framed = g.turned(&f, turns);
+                for (m, mapped) in g.frame_moves(turns).into_iter().enumerate() {
+                    let mut here = framed.clone();
+                    g.apply(&mut here, m);
+                    let mut original = f.clone();
+                    g.apply(&mut original, mapped);
+                    assert_eq!(here, g.turned(&original, turns), "size {n}, move {m}");
+                }
+            }
+        }
     }
 
     #[test]
