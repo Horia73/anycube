@@ -216,6 +216,23 @@ Fw' L D' L U Uw' B2 Rw U' Uw2 R Fw' R2 B2 D2 F' D' Uw2 Fw2 L2 D F D2 Uw2 Rw2 L2 
 41 moves (phases [12, 0, 13, 16]), tables 24 ms, search 3646 ms
 ```
 
+For sizes 8 and up, `--mode full` compares different ways of reducing the
+last two sets of wings. From size 9 it also tries half turns of different
+widths while arranging the centres, so a turn can prepare the next
+column. It keeps the shortest complete solution it finds, including the
+ordinary one. The extra search can roughly double the time on a large
+scramble.
+
+```bash
+anycube solve --size 15 --mode full "$(sed -n '11p' bench/scrambles151515-20.txt)"
+```
+
+Both general search modes recognize positions whose stickers form uniform
+blocks on all six faces. They try solving the smaller cube described by
+those blocks and lift its moves to the physical layer width. If the
+smaller cube establishes that the result is optimal, the search finishes
+there.
+
 Moves are written as on any cube: `U R F D L B`, `'` for a turn the other
 way, `2` for a half turn; `Rw` turns two layers and `3Rw` three.
 
