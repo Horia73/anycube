@@ -44,6 +44,8 @@ pub struct Stage5 {
     near: Bytes,
     /// The symmetries of phase A, as they move the x and the t positions.
     syms: Vec<(MaskMap, MaskMap)>,
+    /// For each x pattern, its least image and the symmetries attaining it.
+    x_images: Vec<(u32, u16)>,
 }
 
 /// Phase-A lower bound near the goal. Every state within `NEAR_A` moves of
@@ -301,7 +303,21 @@ impl Stage5 {
         let syms = a_symmetries();
         assert_eq!(syms.len(), 16, "symmetries of phase A");
         let near = load_or_gen(&dir.join("stage555-near8.bin"), NEAR_BYTES, || gen_near(&bx, &bt, &syms));
-        Stage5 { bx, bt, ranks, ax, at, rank8, b, x_mv, t_mv, frames, near, syms }
+        let x_images = rank8.unrank.par_iter().map(|&x| {
+            let (mut least, mut matches) = (u32::MAX, 0u16);
+            for (i, (sx, _)) in syms.iter().enumerate() {
+                let image = sx.apply(x);
+                if image < least {
+                    least = image;
+                    matches = 0;
+                }
+                if image == least {
+                    matches |= 1 << i;
+                }
+            }
+            (least, matches)
+        }).collect();
+        Stage5 { bx, bt, ranks, ax, at, rank8, b, x_mv, t_mv, frames, near, syms, x_images }
     }
 
     fn b_index(&self, c: &Cube5) -> usize {
@@ -580,20 +596,35 @@ impl Stage5 {
         self.ax[self.rank8.rank(x)].max(self.at[self.rank8.rank(t)])
     }
 
+    /// X occupies the high bits of the joint key. Only its minimising
+    /// symmetries can win, including every tied symmetry of a symmetric X.
+    #[inline(always)]
+    fn near_key(&self, x_rank: usize, t: u32) -> u64 {
+        let (x, mut matches) = self.x_images[x_rank];
+        let mut best = u32::MAX;
+        while matches != 0 {
+            let i = matches.trailing_zeros() as usize;
+            matches &= matches - 1;
+            best = best.min(self.syms[i].1.apply(t));
+        }
+        ((x as u64) << 24) | best as u64
+    }
+
     /// A lower bound on phase A that is exact for most states within
     /// `NEAR_A` moves of the end (the table of `gen_near`), and the bound of
     /// the two orbits taken singly further out.
     #[inline(always)]
     pub fn a_close(&self, x: u32, t: u32) -> u8 {
-        let k = bucket(canonical(&self.syms, x, t));
-        ((self.near[k >> 1] >> ((k & 1) * 4)) & 15).max(self.a_bound(x, t))
+        let xr = self.rank8.rank(x);
+        let k = bucket(self.near_key(xr, t));
+        ((self.near[k >> 1] >> ((k & 1) * 4)) & 15).max(self.ax[xr]).max(self.at[self.rank8.rank(t)])
     }
 
     /// Asks for the entry of the near table `a_close` will read (see
     /// `search::fetch`); the tables of the single orbits stay in the cache.
     #[inline(always)]
     pub fn a_fetch(&self, x: u32, t: u32) {
-        crate::search::fetch(&self.near, bucket(canonical(&self.syms, x, t)) >> 1);
+        crate::search::fetch(&self.near, bucket(self.near_key(self.rank8.rank(x), t)) >> 1);
     }
 
     /// Exact length of phase B from the ranks (`Ranks::rank16`) of the U/D
@@ -703,7 +734,7 @@ impl Stage5 {
             let exact = rem - 1 <= NEAR_A;
             let mut at = [0usize; 36];
             for i in 0..live {
-                let key = canonical(&self.syms, kids[i].0, kids[i].1);
+                let key = self.near_key(self.rank8.rank(kids[i].0), kids[i].1);
                 at[i] = if exact { bucket(key) } else { shell_bit(key) };
             }
             let mut ok = [false; 36];
@@ -781,4 +812,22 @@ fn gen_b(x_mv: &[[u16; 22]], t_mv: &[[u16; 22]], ranks: &Ranks) -> Vec<u8> {
     let mut v = std::mem::ManuallyDrop::new(dist);
     // AtomicU8 has the same layout as u8.
     unsafe { Vec::from_raw_parts(v.as_mut_ptr() as *mut u8, v.len(), v.capacity()) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cached_joint_key_handles_symmetric_and_asymmetric_centres() {
+        let stage = Stage5::load();
+        let ranks = &stage.rank8;
+        for x in [0x0000ff, 0x00ff00, 0xff0000].into_iter()
+            .chain(ranks.unrank.iter().copied().step_by(589))
+        {
+            for t in [0xff0000, 0x0f0f00, ranks.unrank[(ranks.rank(x) + 917) % ranks.unrank.len()]] {
+                assert_eq!(stage.near_key(ranks.rank(x), t), canonical(&stage.syms, x, t));
+            }
+        }
+    }
 }

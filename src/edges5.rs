@@ -1085,21 +1085,36 @@ impl Edges5 {
         let centres = self.c_centres[self.rank8[(Self::rl_pattern(&cube.c4.ct) >> 16) as usize] as usize * 70
             + self.rank8[(Self::rl_pattern(&cube.t) >> 16) as usize] as usize];
         let mut all = Vec::with_capacity(2048);
-        let mut lab = 0u16;
-        for i in 0..4096u32 {
-            if i > 0 {
-                // Gray code: one class changes its labelling per step.
-                let c = i.trailing_zeros() as usize;
-                lab ^= 1 << c;
-                mask ^= wings[c];
-                eo ^= mids[c];
+        // Consecutive even-parity entries of the Gray code differ in
+        // class zero and one other class. Visit just those entries, in
+        // batches so that independent class and distance reads overlap.
+        let change_w = wings.map(|w| w ^ wings[0]);
+        let change_m = mids.map(|m| m ^ mids[0]);
+        const LOT: usize = 32;
+        for base in (0..2048).step_by(LOT) {
+            let mut classes = [(0u32, 0usize); LOT];
+            for (j, slot) in classes.iter_mut().enumerate() {
+                let i = base + j;
+                if i != 0 {
+                    let k = i.trailing_zeros() as usize + 1;
+                    mask ^= change_w[k];
+                    eo ^= change_m[k];
+                }
+                *slot = (self.c_cls[self.rk.rank(mask)], (eo & 0x7ff) as usize);
             }
-            if lab.count_ones() % 2 == 0 {
-                all.push((self.c_dist(mask, (eo & 0x7FF) as usize).max(centres), lab));
+            let at = classes.map(|(cs, flip)| {
+                (cs >> 6) as usize * N_FLIP + self.c_phi[(cs & 63) as usize][flip] as usize
+            });
+            for (j, index) in at.into_iter().enumerate() {
+                let i = (base + j) as u16;
+                all.push((nibble(&self.c, index).max(centres), (2 * i) ^ i));
             }
         }
-        all.sort();
-        all.truncate(keep);
+        if keep < all.len() {
+            all.select_nth_unstable(keep);
+            all.truncate(keep);
+        }
+        all.sort_unstable();
         all
     }
 

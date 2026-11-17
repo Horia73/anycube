@@ -148,6 +148,8 @@ struct Partial {
     ends: Vec<usize>,
     /// Which of the cubes given this continues.
     root: usize,
+    /// Index of the shared centre staging this path continues.
+    stage: usize,
 }
 
 pub struct Solver5 {
@@ -211,6 +213,15 @@ impl Solver5 {
         self.run(&[(facelets.to_vec(), 0)], p, false, None, None).map(|x| x.1.moves)
     }
 
+    /// All reductions already found in this search, shortest first. A larger
+    /// cube can choose among them by the cost of its next wing orbit.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn reductions(&self, facelets: &[u8], p: &Params5) -> Result<Vec<Vec<u8>>, String> {
+        let mut paths = Vec::new();
+        self.run(&[(facelets.to_vec(), 0)], p, false, None, Some(&mut paths))?;
+        Ok(paths)
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn solve_with_alternatives(
         &self, facelets: &[u8], p: &Params5, alternatives: &mut Vec<Vec<u8>>,
@@ -224,7 +235,7 @@ impl Solver5 {
         p: &Params5,
         finish: bool,
         given: Option<(&[Vec<u8>], bool)>,
-        alternatives: Option<&mut Vec<Vec<u8>>>,
+        mut alternatives: Option<&mut Vec<Vec<u8>>>,
     ) -> Result<(usize, Solution5), String> {
         let g = &tables5().geometry;
         let t0 = Instant::now();
@@ -235,16 +246,6 @@ impl Solver5 {
                 self.frames.iter().map(|f| Cube5::from_facelets(&g.reframe(facelets, &f.turns))).collect::<Result<_, _>>()
             })
             .collect::<Result<_, String>>()?;
-        let start_in = |root: usize, frame: usize, moves: &[u8]| -> Start {
-            let f = &self.frames[frame];
-            let mut cube = roots[root][frame];
-            let mut last = 255;
-            for &m in moves {
-                last = f.from_orig[m as usize];
-                cube.apply(last);
-            }
-            Start { cube, cost: cubes[root].1 + moves.len(), last }
-        };
         let limits = |keep: usize, per_node: usize, share: f64| Limits {
             keep,
             cap: keep * 8,
@@ -254,23 +255,21 @@ impl Solver5 {
             floor: (keep / 8).clamp(4, 64),
         };
         // Continues each start's partial solution with what a phase found.
-        let extend = |from: &[Partial], found: Vec<crate::edges5::Found>| -> Vec<Partial> {
+        let extend = |from: &[Partial], quarters: usize, found: Vec<crate::edges5::Found>| -> Vec<Partial> {
             found
                 .into_iter()
                 .map(|f| {
-                    let base = &from[f.start];
-                    let to_orig = &self.frames[base.frame].to_orig;
+                    let base = &from[f.start / quarters];
+                    let frame = base.frame + f.start % quarters;
+                    let to_orig = &self.frames[frame].to_orig;
                     let moves: Vec<u8> =
                         base.moves.iter().copied().chain(f.moves.iter().map(|&m| to_orig[m as usize])).collect();
                     let mut ends = base.ends.clone();
                     ends.push(moves.len());
-                    Partial { moves, frame: base.frame, ends, root: base.root }
+                    Partial { moves, frame, ends, root: base.root, stage: base.stage }
                 })
                 .collect()
         };
-        let starts_of =
-            |from: &[Partial]| -> Vec<Start> { from.par_iter().map(|x| start_in(x.root, x.frame, &x.moves)).collect() };
-
         let trace = std::env::var_os("CUBE5_TRACE").is_some();
         let mut clock = (Instant::now(), crate::clock::cpu_ms());
         let mut lap = |what: &str, n: usize, best: usize| {
@@ -317,11 +316,35 @@ impl Solver5 {
             staged = all;
             lap("given", staged.len(), staged.first().map_or(0, |s| s.1.moves.len()));
         }
+        // Thousands of edge candidates continue the same centre paths in
+        // two frames per axis. Play each shared prefix once in each frame.
+        let staged_cubes: Vec<[Cube5; 6]> = staged.par_iter().map(|(root, stage)| {
+            std::array::from_fn(|frame| {
+                let mut c = roots[*root][frame];
+                for &m in &stage.moves {
+                    c.apply(self.frames[frame].from_orig[m as usize]);
+                }
+                c
+            })
+        }).collect();
+        let start_in = |x: &Partial, frame: usize| {
+            let map = &self.frames[frame].from_orig;
+            let mut cube = staged_cubes[x.stage][frame];
+            for &m in &x.moves[x.ends[1]..] {
+                cube.apply(map[m as usize]);
+            }
+            Start { cube, cost: cubes[x.root].1 + x.moves.len(), last: x.moves.last().map_or(255, |&m| map[m as usize]) }
+        };
+        let starts_of = |from: &[Partial], quarters: usize| -> Vec<Start> {
+            from.par_iter().flat_map_iter(|x| (0..quarters).map(|q| start_in(x, x.frame + q))).collect()
+        };
         // Phase C, along each axis.
         let from: Vec<Partial> = staged
             .iter()
-            .flat_map(|(root, s)| {
+            .enumerate()
+            .flat_map(|(stage, (root, s))| {
                 (0..3).map(move |axis| Partial {
+                    stage,
                     moves: s.moves.clone(),
                     frame: 2 * axis,
                     ends: vec![s.len_a, s.moves.len()],
@@ -333,36 +356,29 @@ impl Solver5 {
         // shortest results of phase C can all be alike and offer none; then
         // phase C is asked for more.
         let mut c_keep = p.c_keep;
-        let (after_c, after_p) = loop {
-            let found = self.edges.phase_c(&starts_of(&from), p.labellings, &limits(c_keep, 10, 0.4));
-            let after_c = extend(&from, found);
+        let after_p = loop {
+            let found = self.edges.phase_c(&starts_of(&from, 1), p.labellings, &limits(c_keep, 10, 0.4));
+            let after_c = extend(&from, 1, found);
             lap("phase C", after_c.len(), shortest(&after_c));
             // Phase P, with either of the two other axes turning freely.
-            let from_p: Vec<Partial> = after_c
-                .iter()
-                .flat_map(|x| {
-                    (0..2).map(move |quarter| Partial {
-                        moves: x.moves.clone(),
-                        frame: x.frame + quarter,
-                        ends: x.ends.clone(),
-                        root: x.root,
-                    })
-                })
-                .collect();
-            let found = self.edges.phase_p(&starts_of(&from_p), &limits(p.p_keep, 10, 0.7));
-            let after_p = extend(&from_p, found);
+            let found = self.edges.phase_p(&starts_of(&after_c, 2), &limits(p.p_keep, 10, 0.7));
+            let after_p = extend(&after_c, 2, found);
             lap("phase P", after_p.len(), shortest(&after_p));
             if !after_p.is_empty() || after_c.is_empty() || c_keep >= p.c_keep * 512 {
-                break (after_c, after_p);
+                break after_p;
             }
             c_keep *= 8;
         };
-        let _ = after_c;
         // Phase E.
-        let found = self.edges.phase_e(&starts_of(&after_p), &limits(p.e_keep, 2, 0.9));
-        let reduced = extend(&after_p, found);
+        let found = self.edges.phase_e(&starts_of(&after_p, 1), &limits(p.e_keep, 2, 0.9));
+        let reduced = extend(&after_p, 1, found);
         lap("phase E", reduced.len(), shortest(&reduced));
         if !finish {
+            if let Some(alts) = alternatives.as_deref_mut() {
+                let mut order: Vec<_> = reduced.iter().collect();
+                order.sort_by_key(|x| cubes[x.root].1 + x.moves.len());
+                alts.extend(order.into_iter().map(|x| x.moves.clone()));
+            }
             return match reduced.iter().min_by_key(|x| cubes[x.root].1 + x.moves.len()) {
                 Some(x) => {
                     let e = &x.ends;
@@ -378,7 +394,7 @@ impl Solver5 {
         let left: Vec<(usize, C3)> = reduced
             .par_iter()
             .map(|x| {
-                let cube = start_in(x.root, x.frame, &x.moves).cube;
+                let cube = start_in(x, x.frame).cube;
                 debug_assert!(is_reduced(&cube));
                 (cubes[x.root].1 + x.moves.len(), C3 { cp: cube.c4.cp, co: cube.c4.co, ep: cube.mid.ep, eo: cube.mid.eo })
             })
