@@ -85,6 +85,13 @@ to 6, before the projected search. The reported lengths show what each
 step contributed. The reduction search flags above apply to each
 orientation. Searching for a new ending adds time after the reductions.
 
+On the 4x4x4, `--last-face` tries each of the 18 outer turns at the solved
+end. The fast solver searches the resulting auxiliary cube. On return,
+the final face turn is expressed in the orientation that solver reached
+and combined with any turn of the same face on the final axis. This works
+with indistinguishable centres because an outer turn only permutes the
+four centres within a face.
+
 On the 5x5x5, `--shell4` adds another source of possible endings. Removing
 the middle row and column of each face gives a real 4x4x4. The search
 solves that shell, tries both sides of the axis for its wide turns and
@@ -92,6 +99,7 @@ keeps the shorter endings that also solve the middle band. This option
 loads the 4x4x4 tables as well as the 5x5x5 tables.
 
 ```sh
+anycube solve --size 4 --lift --holds 6 --last-face "Rw U Fw2 D' Bw R2"
 anycube solve --size 5 --lift --holds 6 --shell4 "Rw U Fw2 D' Bw R2"
 anycube bench-lift bench/scrambles555-200.txt --size 5 --holds 6 --shell4 --limit 30 --out lift.tsv
 ```
