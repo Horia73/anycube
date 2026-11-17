@@ -239,6 +239,16 @@ pub trait Problem: Sync {
     fn moves(&self) -> &[u8];
     /// The state after the `k`-th of `moves`.
     fn next(&self, n: &Self::Node, k: usize) -> Self::Node;
+    /// Successors of the same state, in move-list order. Mask-based
+    /// problems can apply every move to the same bytes in a single pass.
+    #[inline(always)]
+    fn children(&self, n: &Self::Node, indices: &[usize], out: &mut Vec<(usize, Self::Node)>) {
+        for &k in indices {
+            let c = self.next(n, k);
+            self.prefetch(&c);
+            out.push((k, c));
+        }
+    }
     /// Never more than the moves still needed.
     fn bound(&self, n: &Self::Node) -> usize;
     /// Asked only where the bound is 0.
@@ -293,6 +303,56 @@ pub fn fetch_at<T>(entry: &T) {
 
 /// States made and asked for (`Problem::prefetch`) before the first of them is scored.
 const AHEAD: usize = 48;
+
+/// Smallest score that admits the requested number of candidates. The
+/// sentinel is always excluded. Two byte-wide counts cover the full u16
+/// range without clearing a 256 KiB histogram per worker and level.
+pub(crate) fn beam_cut(scores: &[u16], most: usize) -> u16 {
+    const LAST: u16 = u16::MAX - 1;
+    if most == 0 {
+        return 0;
+    }
+    if scores.len() < most {
+        return LAST;
+    }
+    let bins = |high: Option<u16>| {
+        scores.par_chunks(1 << 16).map(|chunk| {
+            let mut counts = [0usize; 256];
+            match high {
+                None => {
+                    for &s in chunk {
+                        counts[(s >> 8) as usize] += 1;
+                    }
+                }
+                Some(hi) => {
+                    for &s in chunk {
+                        if s >> 8 == hi {
+                            counts[(s & 255) as usize] += 1;
+                        }
+                    }
+                }
+            }
+            counts
+        }).reduce(|| [0; 256], |mut a, b| {
+            for (x, y) in a.iter_mut().zip(b) {
+                *x += y;
+            }
+            a
+        })
+    };
+    let mut left = most;
+    let mut select = |counts: [usize; 256]| {
+        for (i, count) in counts.into_iter().enumerate() {
+            if left <= count {
+                return i as u16;
+            }
+            left -= count;
+        }
+        unreachable!("the candidate rank is within the score array")
+    };
+    let hi = select(bins(None));
+    ((hi << 8) | select(bins(Some(hi)))).min(LAST)
+}
 
 /// Level by level, only the `width` states with the lowest `score` are
 /// continued (states reached twice count once). Returns up to `cap`
@@ -397,6 +457,14 @@ where
     // led to it; for a root, its number and no move.
     let mut trail: Vec<Vec<(u32, u8)>> = Vec::new();
     let mut level: Vec<(P::Node, u8)> = Vec::new();
+    let mut scores = Vec::<u16>::new();
+    let moves = p.moves();
+    let count = moves.len();
+    let mut followers: [Vec<usize>; 256] = std::array::from_fn(|_| Vec::new());
+    for &last in moves.iter().chain([&NONE]) {
+        followers[last as usize] = (0..count).filter(|&k| last == NONE || !skip54(last, moves[k])).collect();
+    }
+
     let mut kept: Vec<(u32, u8)> = Vec::new();
     // The score every state kept had on the last level, if they all had the
     // same one, and for how many levels running that has been so.
@@ -414,25 +482,19 @@ where
         }
         // The score of every state one move on; 0 marks a solution, the
         // largest value a move that need not be tried.
-        let moves = p.moves();
-        let count = moves.len();
-        let scores: Vec<u16> = level
-            .par_chunks(256)
-            .flat_map_iter(|chunk| {
-                let mut out = vec![u16::MAX; chunk.len() * count];
+        if count == 0 {
+            level.clear();
+            continue;
+        }
+        scores.resize(level.len() * count, u16::MAX);
+        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256))
+            .for_each(|(out, chunk)| {
+                out.fill(u16::MAX);
                 let mut kids: Vec<(usize, P::Node)> = Vec::with_capacity(AHEAD);
                 for (i, (n, last)) in chunk.iter().enumerate() {
-                    let mut k = 0;
-                    while k < count {
+                    for indices in followers[*last as usize].chunks(AHEAD) {
                         kids.clear();
-                        while k < count && kids.len() < AHEAD {
-                            if *last == NONE || !skip54(*last, moves[k]) {
-                                let c = p.next(n, k);
-                                p.prefetch(&c);
-                                kids.push((k, c));
-                            }
-                            k += 1;
-                        }
+                        p.children(n, indices, &mut kids);
                         for (k, c) in &kids {
                             out[i * count + k] = match p.solved(c) {
                                 true => 0,
@@ -441,38 +503,13 @@ where
                         }
                     }
                 }
-                out
-            })
-            .collect();
-        // The score at which the beam is full, with room for states reached twice.
+            });
         let most = width + width / 2;
-        let tally = scores
-            .par_chunks(1 << 16)
-            .map(|chunk| {
-                let mut tally = vec![0u32; 1 << 16];
-                for &x in chunk {
-                    tally[x as usize] += 1;
-                }
-                tally
-            })
-            .reduce(
-                || vec![0u32; 1 << 16],
-                |mut a, b| {
-                    for (x, y) in a.iter_mut().zip(&b) {
-                        *x += y;
-                    }
-                    a
-                },
-            );
-        let (mut cut, mut total) = (0usize, tally[0] as usize);
-        while total < most && cut < u16::MAX as usize - 1 {
-            cut += 1;
-            total += tally[cut] as usize;
-        }
+        let cut = beam_cut(&scores, most);
         // Only the states up to that score are built: (score, hash, state, parent, move).
         let mut next: Vec<(u32, u32, P::Node, u32, u8)> = (0..scores.len())
             .into_par_iter()
-            .filter(|&j| scores[j] as usize <= cut)
+            .filter(|&j| scores[j] <= cut)
             .map(|j| {
                 let (i, k) = (j / moves.len(), j % moves.len());
                 let c = p.next(&level[i].0, k);
@@ -604,6 +641,18 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cutoff_matches_sorted_scores_including_ties_and_skipped_moves() {
+        let scores = [65535, 256, 0, 0, 65433, 617, 65433, 255, 65535, 3, 65534, 256];
+        let mut ordered = scores;
+        ordered.sort_unstable();
+        assert_eq!(beam_cut(&scores, 0), 0);
+        assert_eq!(beam_cut(&[], 1), u16::MAX - 1);
+        for most in 1..=ordered.len() + 1 {
+            assert_eq!(beam_cut(&scores, most), ordered.get(most - 1).copied().unwrap_or(u16::MAX).min(u16::MAX - 1));
+        }
+    }
 
     /// A point on a grid: U steps right, R steps up, and the goal is (3, 3).
     struct Grid;
