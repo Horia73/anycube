@@ -86,6 +86,9 @@ struct Partner {
 struct LastMove {
     /// Per move and frame: the positions whose wing the move sends to the low half.
     to_low: [[u32; 3]; 27],
+    followers: [u32; 28],
+    /// Moves with a live frame that leave the wing permutation even.
+    terminal: [u32; 2],
     /// Per move: the frames in which it is not a phase-3 move (bit mask).
     live: [u8; 27],
     frames: usize,
@@ -280,7 +283,14 @@ impl Solver {
         let lower = roots.iter().map(|n| n.d as usize).min().unwrap();
         // For the test on the last move: which wings each move sends to the low half, per frame.
         let ct = cube_tables();
-        let mut last_move = LastMove { to_low: [[0; 3]; 27], live: [0; 27], frames: if share { 3 } else { 1 } };
+        let mut last_move = LastMove {
+            to_low: [[0; 3]; 27], followers: [(1 << 27) - 1; 28], terminal: [0; 2],
+            live: [0; 27], frames: if share { 3 } else { 1 },
+        };
+        for &last in &P1_MOVES {
+            last_move.followers[last as usize] = P1_MOVES.iter().copied()
+                .filter(|&m| !skip_move(last, m)).fold(0, |mask, m| mask | (1 << m));
+        }
         for f in 0..last_move.frames {
             // Positions that end in the low half when the cube is turned into frame `f`.
             let mut at = [0u8; 24];
@@ -306,6 +316,11 @@ impl Solver {
                 if !is_p3_move(relabel[m as usize]) {
                     last_move.live[m as usize] |= 1 << f;
                 }
+            }
+        }
+        for &m in &P1_MOVES {
+            if last_move.live[m as usize] != 0 {
+                last_move.terminal[p2_flips_parity(m) as usize] |= 1 << m;
             }
         }
         // Development aid: stop after a given depth.
@@ -450,11 +465,17 @@ impl Ctx<'_> {
         }
         // With no move to spare, only the moves that bring the centres closer can work;
         // with one to spare, also those that keep the distance.
-        let allowed = match rem - n.d as usize {
+        let mut allowed = self.last_move.followers[last.min(27) as usize] & match rem - n.d as usize {
             0 => n.closer,
             1 => n.closer | n.same,
             _ => UNKNOWN,
         };
+        if rem == 1 {
+            allowed &= self.last_move.terminal[n.parity as usize];
+        }
+        if allowed == 0 {
+            return;
+        }
         // Before the last move: where the two wings of each dedge are. Almost every
         // last move leaves some dedge with both wings in the same half, in every
         // frame, and can be skipped without looking at the centres.
@@ -482,10 +503,9 @@ impl Ctx<'_> {
         // in and its table entry asked for; then the steps themselves.
         let mut tries = [(0u8, 0u8, Ahead { rl: 0, ud: 0, at: 0 }); 27];
         let mut count = 0;
-        for &m in &P1_MOVES {
-            if (allowed >> m) & 1 == 0 || (last != 255 && skip_move(last, m)) {
-                continue;
-            }
+        while allowed != 0 {
+            let m = allowed.trailing_zeros() as u8;
+            allowed &= allowed - 1;
             let mut ok = 7;
             if rem == 1 {
                 // An endpoint that ends with a phase-3 move is the previous endpoint plus
