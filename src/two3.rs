@@ -50,6 +50,7 @@ pub struct Two3 {
     cp_mv: Vec<[u16; 18]>,
     /// Moves of the second phase that the corners alone need.
     cdist: Vec<u8>,
+    edge_moves: [[u8; 16]; 18],
 }
 
 const NO_MOVE: u8 = 255;
@@ -144,7 +145,12 @@ impl Two3 {
             }
             frontier = next;
         }
-        Two3 { first, cp_mv, cdist }
+        let edge_moves = t.moves.map(|m| {
+            let mut row = [0; 16];
+            row[..12].copy_from_slice(&m.ep);
+            row
+        });
+        Two3 { first, cp_mv, cdist, edge_moves }
     }
 
     /// A short solution in outer moves (0..18); see `Effort` for how hard it looks.
@@ -330,6 +336,31 @@ impl Two3 {
             *m = ct.relabel[r][*m as usize];
         }
         (Some(sol), probes)
+    }
+
+    /// The last phase needs only the edge permutation. The corner
+    /// permutation has already followed the search and orientations are solved.
+    #[inline]
+    fn edges_after(&self, start: &[u8; 12], path: &[u8]) -> [u8; 12] {
+        #[cfg(target_arch = "aarch64")]
+        {
+            use std::arch::aarch64::{vld1q_u8, vqtbl1q_u8, vst1q_u8};
+            let mut padded = [0; 16];
+            padded[..12].copy_from_slice(start);
+            // The state and every move row are 16 bytes, with 12 used lanes.
+            unsafe {
+                let mut ep = vld1q_u8(padded.as_ptr());
+                for &m in path {
+                    ep = vqtbl1q_u8(ep, vld1q_u8(self.edge_moves[m as usize].as_ptr()));
+                }
+                vst1q_u8(padded.as_mut_ptr(), ep);
+            }
+            padded[..12].try_into().unwrap()
+        }
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            path.iter().fold(*start, |ep, &m| std::array::from_fn(|i| ep[self.edge_moves[m as usize][i] as usize]))
+        }
     }
 
     /// The position one move on.
@@ -546,11 +577,11 @@ impl Job<'_> {
             return;
         }
         let t = self.t;
-        let c = self.sol[..d1].iter().fold(self.start, |c, &m| c.mul(&t.moves[m as usize]));
-        let up = perm_rank(&c.ep[..8]);
+        let ep = self.e.edges_after(&self.start.ep, &self.sol[..d1]);
+        let up = perm_rank(&ep[..8]);
         let mut s = [0u8; 4];
         for i in 0..4 {
-            s[i] = c.ep[8 + i] - 8;
+            s[i] = ep[8 + i] - 8;
         }
         let sp = perm_rank(&s);
         let max2 = (wanted - d1).min(12);
