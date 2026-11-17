@@ -3597,10 +3597,29 @@ the short scrambles, width assignment improved 5 of 30 4x4x4s and 18 of
 30 5x5x5s. The number solved in at most 14 moves rose from 24 to 27 on
 the 4x4x4 and from 10 to 25 on the 5x5x5. On line 107 of the 5x5x5 set
 the ordinary solution took 42 moves and the new search found 14. All 120
-final solutions were replayed with `anycube verify`. Times cover the whole
-search on an M1 Pro after loading the tables. Other experiments ran
+solutions in this first comparison were replayed with `anycube verify`.
+Times cover the whole search on an M1 Pro after loading the tables. Other experiments ran
 concurrently, so these timings describe the runs shown here.
 [Moves for every cube](lift-45.tsv)
+
+### Twenty further long scrambles per size
+
+With the search settings fixed, we ran full-length scrambles from lines
+151–170. The pooled rows include those cubes and the first 30.
+
+| Long scrambles | Size | Ordinary | Best of six holds | Projected 3x3x3 | Final |
+|---|---|---:|---:|---:|---:|
+| Further 20 | 4x4x4 | 40.55 | 40.40 | 40.30 | 40.25 |
+| Further 20 | 5x5x5 | 67.25 | 66.80 | 66.80 | 66.75 |
+| All 50 | 4x4x4 | 40.46 | 40.22 | 40.18 | **40.14** |
+| All 50 | 5x5x5 | 67.06 | 66.48 | 66.48 | **66.42** |
+
+The complete search shortened 13/50 ordinary 4x4x4 solutions and 23/50
+ordinary 5x5x5 solutions. On top of the six orientations, four 4x4x4s
+and three 5x5x5s each gained one further move. The shortest solutions
+across the 50 cubes were 38 and 64. The 100 long solves and the 80
+shorter-scramble controls in this section all passed a separate sticker
+replay.
 
 ### What the width search can recover
 
@@ -3616,12 +3635,18 @@ In a separate control, `bench-widths` scrambles with an L-move prefix and
 supplies the faces, directions and powers of its inverse. Width recovery
 returned sticker-verified solutions on **1,000/1,000** 4x4x4s at L = 37
 and **200/200** 5x5x5s at L = 60. No search reached the 25,000-node
-budget. These counts measure recovery with a correct face sequence
-supplied. In the sticker-only test the generator must discover that
-sequence. It proposes short 3x3x3 solutions from the input and near the
+budget. On lines 171–180 we gave the sticker-only solver the same
+37- and 60-move positions, with one hold and the size-specific ending
+enabled. It found a solution within the planted length on 0/10 cubes at
+each size. Its means were 40.40 and 67.60. Supplying the projected word
+allowed width recovery on all 20 of those positions.
+
+In a sticker-only test the generator must discover the face sequence.
+It proposes short 3x3x3 solutions from the input and near the
 last wide turn of up to four ordinary solutions. It can split a projected
-turn into two or insert an inner-layer turn using two moves. On long
-scrambles none of these proposals improved the best ordinary hold.
+turn into two or insert an inner-layer turn using two moves. The projected
+3x3x3 search shortened two long 4x4x4 solves (lines 152 and 168) and none
+of the 50 long 5x5x5 solves.
 
 ### Choosing the last face on the 4x4x4
 
@@ -3656,8 +3681,12 @@ do
     fi
     sed -n '101,130p' "$file" |
         target/release/anycube bench-lift /dev/stdin --size "$size" --holds 6 "$ending"
+    sed -n '151,170p' "$file" |
+        RAYON_NUM_THREADS=3 target/release/anycube bench-lift /dev/stdin --size "$size" --holds 6 "$ending"
     awk 'NR >= 101 && NR <= 130 { NF = 14; print }' "$file" |
         target/release/anycube bench-lift /dev/stdin --size "$size" --holds 1
+    awk -v length_limit="$length" 'NR >= 171 && NR <= 180 { NF = length_limit; print }' "$file" |
+        RAYON_NUM_THREADS=4 target/release/anycube bench-lift /dev/stdin --size "$size" --holds 1 "$ending"
     target/release/anycube bench-widths "$file" --size "$size" --length "$length"
 done
 ```
