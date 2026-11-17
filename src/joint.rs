@@ -84,13 +84,15 @@ struct Partner {
 
 /// What the last move of a sequence does to the wings, per frame.
 struct LastMove {
-    /// Per move and frame: the positions whose wing the move sends to the low half.
-    to_low: [[u32; 3]; 27],
+    /// Per frame and wing position, the moves sending it to the low half.
+    to_low: [[u32; 24]; 3],
+    /// Per move, destination of each wing position.
+    dest: [[u8; 24]; 27],
     followers: [u32; 28],
     /// Moves with a live frame that leave the wing permutation even.
     terminal: [u32; 2],
-    /// Per move: the frames in which it is not a phase-3 move (bit mask).
-    live: [u8; 27],
+    /// Per frame, moves outside phase 3.
+    live: [u32; 3],
     frames: usize,
 }
 
@@ -284,12 +286,24 @@ impl Solver {
         // For the test on the last move: which wings each move sends to the low half, per frame.
         let ct = cube_tables();
         let mut last_move = LastMove {
-            to_low: [[0; 3]; 27], followers: [(1 << 27) - 1; 28], terminal: [0; 2],
-            live: [0; 27], frames: if share { 3 } else { 1 },
+            to_low: [[0; 24]; 3], dest: [[0; 24]; 27], followers: [(1 << 27) - 1; 28], terminal: [0; 2],
+            live: [0; 3], frames: if share { 3 } else { 1 },
         };
         for &last in &P1_MOVES {
             last_move.followers[last as usize] = P1_MOVES.iter().copied()
                 .filter(|&m| !skip_move(last, m)).fold(0, |mask, m| mask | (1 << m));
+        }
+        let wing_positions: Vec<[u8; 24]> = variants.iter().take(searched).map(|v| {
+            let mut pos = [0; 24];
+            for (i, &piece) in v.cube.ep.iter().enumerate() {
+                pos[piece as usize] = i as u8;
+            }
+            pos
+        }).collect();
+        for &m in &P1_MOVES {
+            for (q, &p) in ct.ep_src[m as usize].iter().enumerate() {
+                last_move.dest[m as usize][p as usize] = q as u8;
+            }
         }
         for f in 0..last_move.frames {
             // Positions that end in the low half when the cube is turned into frame `f`.
@@ -310,16 +324,16 @@ impl Solver {
                 let src = &ct.ep_src[m as usize];
                 for q in 0..24 {
                     if (low >> q) & 1 == 1 {
-                        last_move.to_low[m as usize][f] |= 1 << src[q];
+                        last_move.to_low[f][src[q] as usize] |= 1 << m;
                     }
                 }
                 if !is_p3_move(relabel[m as usize]) {
-                    last_move.live[m as usize] |= 1 << f;
+                    last_move.live[f] |= 1 << m;
                 }
             }
         }
         for &m in &P1_MOVES {
-            if last_move.live[m as usize] != 0 {
+            if last_move.live.iter().any(|bits| bits >> m & 1 != 0) {
                 last_move.terminal[p2_flips_parity(m) as usize] |= 1 << m;
             }
         }
@@ -385,7 +399,7 @@ impl Solver {
                             nodes: 0,
                             frames_ok: 7,
                             by_rem: [0; 9],
-                            wings: [variants[*vi].cube.ep; 33],
+                            wings: [wing_positions[*vi]; 33],
                             wings_known: 0,
                         };
                         ctx.path[..path.len()].copy_from_slice(path);
@@ -479,25 +493,26 @@ impl Ctx<'_> {
         // Before the last move: where the two wings of each dedge are. Almost every
         // last move leaves some dedge with both wings in the same half, in every
         // frame, and can be skipped without looking at the centres.
-        let mut pairs = [(0u8, 0u8); 12];
+        let mut frames = [u32::MAX; 3];
         if rem == 1 {
-            let ct = cube_tables();
+            let lm = self.last_move;
             for k in self.wings_known..depth {
-                let src = &ct.ep_src[self.path[k] as usize];
-                let old = self.wings[k];
-                for i in 0..24 {
-                    self.wings[k + 1][i] = old[src[i] as usize];
-                }
+                self.wings[k + 1] = crate::cube::compose_src(&lm.dest[self.path[k] as usize], &self.wings[k]);
             }
             self.wings_known = depth;
-            for (p, &piece) in self.wings[depth].iter().enumerate() {
-                let c = (piece % 12) as usize;
-                if piece < 12 {
-                    pairs[c].0 = p as u8;
-                } else {
-                    pairs[c].1 = p as u8;
+            let pos = &self.wings[depth];
+            frames = [0; 3];
+            for (f, mask) in frames.iter_mut().enumerate().take(lm.frames) {
+                *mask = allowed & lm.live[f];
+                let low = &lm.to_low[f];
+                for i in 0..12 {
+                    *mask &= low[pos[i] as usize] ^ low[pos[i + 12] as usize];
+                    if *mask == 0 {
+                        break;
+                    }
                 }
             }
+            allowed = frames[0] | frames[1] | frames[2];
         }
         // The moves worth trying, each with the frames it may end an endpoint
         // in and its table entry asked for; then the steps themselves.
@@ -506,24 +521,7 @@ impl Ctx<'_> {
         while allowed != 0 {
             let m = allowed.trailing_zeros() as u8;
             allowed &= allowed - 1;
-            let mut ok = 7;
-            if rem == 1 {
-                // An endpoint that ends with a phase-3 move is the previous endpoint plus
-                // a move phase 3 could make itself.
-                let lm = self.last_move;
-                ok = lm.live[m as usize];
-                for f in 0..lm.frames {
-                    if (ok >> f) & 1 == 1 {
-                        let low = lm.to_low[m as usize][f];
-                        if !pairs.iter().all(|&(p, q)| ((low >> p) ^ (low >> q)) & 1 == 1) {
-                            ok &= !(1 << f);
-                        }
-                    }
-                }
-                if ok == 0 {
-                    continue;
-                }
-            }
+            let ok = ((frames[0] >> m & 1) | (frames[1] >> m & 1) << 1 | (frames[2] >> m & 1) << 2) as u8;
             if let Some(ahead) = self.solver.joint_ahead(n, m, rem - 1) {
                 tries[count] = (m, ok, ahead);
                 count += 1;
@@ -582,10 +580,7 @@ impl Ctx<'_> {
         let mut ep = self.variants[variant].cube.ep;
         for &m in moves {
             let src = &ct.ep_src[m as usize];
-            let old = ep;
-            for i in 0..24 {
-                ep[i] = old[src[i] as usize];
-            }
+            ep = crate::cube::compose_src(&ep, src);
         }
         if !wings_pairable(&ep) {
             return;

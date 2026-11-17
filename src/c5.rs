@@ -112,11 +112,7 @@ impl Cube5 {
         self.c4.apply(m);
         // A wide turn carries the same middle edges as the face turn.
         self.mid = self.mid.mul(&tb.mid_moves[m as usize % 18]);
-        let old = self.t;
-        let src = &tb.t_src[m as usize];
-        for i in 0..24 {
-            self.t[i] = old[src[i] as usize];
-        }
+        self.t = crate::cube::compose_src(&self.t, &tb.t_src[m as usize]);
     }
 
     pub fn apply_seq(&mut self, seq: &[u8]) {

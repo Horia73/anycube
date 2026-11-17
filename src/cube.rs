@@ -117,13 +117,24 @@ fn quarter_src(cycles: &[[u8; 4]]) -> [u8; 24] {
     src
 }
 
-fn compose_src(first: &[u8; 24], second: &[u8; 24]) -> [u8; 24] {
-    // Apply `first`, then `second`: new[i] = mid[second[i]] = old[first[second[i]]].
-    let mut out = [0u8; 24];
-    for i in 0..24 {
-        out[i] = first[second[i] as usize];
+/// The value at each of the 24 source positions of a centre or wing move.
+#[inline(always)]
+pub(crate) fn compose_src(first: &[u8; 24], second: &[u8; 24]) -> [u8; 24] {
+    #[cfg(target_arch = "aarch64")]
+    {
+        use std::arch::aarch64::*;
+        let mut out = [0; 24];
+        // Each load and store covers exactly 16 or 8 bytes of a 24-byte
+        // array. NEON is available on every aarch64 target.
+        unsafe {
+            let table = uint8x16x2_t(vld1q_u8(first.as_ptr()), vcombine_u8(vld1_u8(first.as_ptr().add(16)), vdup_n_u8(0)));
+            vst1q_u8(out.as_mut_ptr(), vqtbl2q_u8(table, vld1q_u8(second.as_ptr())));
+            vst1_u8(out.as_mut_ptr().add(16), vqtbl2_u8(table, vld1_u8(second.as_ptr().add(16))));
+        }
+        out
     }
-    out
+    #[cfg(not(target_arch = "aarch64"))]
+    { std::array::from_fn(|i| first[second[i] as usize]) }
 }
 
 fn set8perm(mut idx: u32) -> [u8; 8] {
@@ -280,11 +291,8 @@ impl Cube {
     fn apply_with(&mut self, t: &Tables, m: u8) {
         let m = m as usize;
         let (cs, es) = (&t.ct_src[m], &t.ep_src[m]);
-        let (ct, ep) = (self.ct, self.ep);
-        for i in 0..24 {
-            self.ct[i] = ct[cs[i] as usize];
-            self.ep[i] = ep[es[i] as usize];
-        }
+        self.ct = compose_src(&self.ct, cs);
+        self.ep = compose_src(&self.ep, es);
         let k = m % 18;
         let (cp, co) = corner_mult(&self.cp, &self.co, &t.c_cp[k], &t.c_co[k]);
         self.cp = cp;

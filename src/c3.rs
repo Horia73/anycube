@@ -225,14 +225,17 @@ impl C3 {
     }
 }
 
+#[inline]
 pub(crate) fn perm_rank(p: &[u8]) -> usize {
-    let n = p.len();
-    let mut r = 0;
-    for i in 0..n {
-        let smaller = p[i + 1..].iter().filter(|&&x| x < p[i]).count();
-        r = r * (n - i) + smaller;
+    let mut remaining = (1u32 << p.len()) - 1;
+    let mut rank = 0;
+    for (i, &x) in p.iter().enumerate() {
+        let bit = 1 << x;
+        let smaller = (remaining & (bit - 1)).count_ones();
+        rank = rank * (p.len() - i) + smaller as usize;
+        remaining &= !bit;
     }
-    r
+    rank
 }
 
 pub(crate) fn perm_unrank(mut r: usize, out: &mut [u8]) {
