@@ -3988,3 +3988,33 @@ The scramble generator uses `6175103 + 997 * N` for each size. The same CLI comm
 anycube scrambles --size 5 --length 150 --count 48 --seed 6180088 > /tmp/anycube-speed-5.txt
 anycube bench5 /tmp/anycube-speed-5.txt --out /tmp/anycube-speed-5.tsv
 ```
+
+## Wing insertions for shorter 4x4x4 and 5x5x5 solutions
+
+An exact local rewrite examined every interval of two through ten moves in the 48 default solutions for each size. A breadth-first index of all sticker permutations within four turns, combined with up to two final turns, tested all replacements shorter than the interval and at most six turns long. It shortened 0/48 words at each size. This test distinguished all sticker positions and kept the coordinate frame fixed.
+
+A second experiment allowed a cycle of three physical pieces to be inserted anywhere in a word. It used the 36 outer and wide turns, plus each inner-slice turn written as a wide turn and an opposite-power face turn. The candidate library consisted of commutators of a single turn with a conjugated turn. Moves on a common axis were collected and cancelled. The library kept a shortest representative found for each permutation that cycled just three wings or just three centres. At each cut the required permutation was conjugated by the remaining suffix. Multiplying the complete labelled-sticker permutations verified the resulting word in every trial. This adapts the insertion method described for the 3x3x3. [Sebastiano Tronto’s Fewest Moves Tutorial, chapter 2](https://fmcsolves.cubing.net/fmc_tutorial_ENG.pdf)
+
+Each of the 48 ordinary words per size received 24 randomly sampled wing cycles and 24 centre cycles from the corresponding library. The standalone column counts the moves of the chosen representative in isolation. The insertion column gives the net cost above the original word at the best cut found.
+
+| Cube | Three pieces cycled | Distinct library entries | Trials | Mean standalone moves | Mean net inserted moves |
+|---|---|---:|---:|---:|---:|
+| 4x4x4 | Wings | 1,920 | 1,152 | 10.46 | 7.61 |
+| 4x4x4 | Centres | 2,112 | 1,152 | 13.30 | 10.20 |
+| 5x5x5 | Wings | 1,920 | 1,152 | 10.44 | 7.47 |
+| 5x5x5 | Centres | 2,160 | 1,152 | 13.27 | 9.84 |
+
+A possible full-mode search would accept a reduction with a single three-wing cycle. It could pair those wings virtually for the 3x3x3 finish, carry their actual positions, then insert the correction at its cheapest cut. The insertion measurements reused ordinary complete words. The length of the relaxed search and its complete sticker-verified answer are what would determine the benefit on random cubes.
+
+A second sampling scheme included all 4,048 directed wing triples reachable by conjugating these cycles with ordinary turns. It selected 24 uniformly per benchmark word. The 4x4x4 library supplied an insertion in 1,148 of 1,152 trials, at a mean net cost of 7.79 moves among hits. The 5x5x5 supplied 1,152 of 1,152, at 7.52 moves. For comparison the same test on centre cycles covered 1,152 of 1,152 on the 4x4x4 and 645 of 1,152 on the 5x5x5. The odd cube has two separate centre orbits.
+
+A search for partial solutions by editing existing answers examined windows up to 14 turns long. It tried every shorter replacement of up to four turns with the same corner action, including both widths, and tested the actual sticker colours. On the 48 cases per size it found zero shorter solved words and zero shorter words leaving only one wing cycle. A search that accepts the defect while constructing the reduction is the next test. At the measured correction costs, the upper targets of 37 and 60 moves would require partial solutions averaging about 29 and 52 moves respectively.
+
+The [standalone example](../examples/wing_insertions.rs) reads one scramble and partial solution per line, separated by a tab, and prints the scramble with the shortest completed word it finds. It walks the actual and desired sticker colours backwards along the partial solution and checks the whole answer on the forward sticker model. It repaired all 24 planted partial solutions per size on a separate CLI replay with the original binary. Those inputs deliberately left one wing cycle.
+
+```sh
+cargo run --release --example wing_insertions -- 4 < partial-solutions.tsv > completed.tsv
+anycube verify --size 4 completed.tsv
+```
+
+For example, the 4x4x4 scramble `D' U' F' Uw' U R' U R Uw U' R2` and the partial sequence `R U' R F D U` leave three wings. The example returns the verified 11-turn solution `R2 U Uw' R' U' R U' Uw F U D`.
