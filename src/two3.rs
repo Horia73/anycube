@@ -201,10 +201,21 @@ impl Two3 {
         deadline: Option<std::time::Instant>,
     ) -> Vec<Vec<u8>> {
         let late = || deadline.is_some_and(|d| std::time::Instant::now() > d);
-        let mut found: Vec<Vec<u8>> = cubes
-            .par_iter()
-            .map(|(_, c)| self.solve(t, c, Effort { depth: if late() { 0 } else { first }, variants: 6 }))
-            .collect();
+        let quick = |c: &C3| self.solve(t, c, Effort { depth: if late() { 0 } else { first }, variants: 6 });
+        let mut found: Vec<Vec<u8>> = if deadline.is_some() {
+            cubes.par_iter().map(|(_, c)| quick(c)).collect()
+        } else {
+            // Larger cubes often reach the same 3x3x3 along several
+            // reductions. The quick search depends only on that cube.
+            let mut slots = std::collections::HashMap::new();
+            let mut unique = Vec::new();
+            let indices: Vec<_> = cubes.iter().map(|(_, c)| *slots.entry(*c).or_insert_with(|| {
+                unique.push(*c);
+                unique.len() - 1
+            })).collect();
+            let solutions: Vec<_> = unique.par_iter().map(quick).collect();
+            indices.into_iter().map(|i| solutions[i].clone()).collect()
+        };
         for &(depth, count) in steps {
             if late() {
                 break;
@@ -257,7 +268,7 @@ impl Two3 {
             return (Some(Vec::new()), 0);
         }
         let ct = cube_tables();
-        let mut variants = Vec::new();
+        let mut variants = Vec::with_capacity(2 * t.frames.len());
         for (r, rinv, rot) in &t.frames {
             let conj = rinv.mul(cube).mul(rot);
             variants.push((conj, *r, false));
@@ -265,8 +276,8 @@ impl Two3 {
         }
         let follow = followers();
         // The roots, and every start two moves in: the pieces of work of the longer lengths.
-        let mut roots = Vec::new();
-        let mut starts = Vec::new();
+        let mut roots = Vec::with_capacity(variants.len());
+        let mut starts = Vec::with_capacity(243 * variants.len());
         for (v, (c, _, _)) in variants.iter().enumerate() {
             let (tw, fl, sl) = t.coords(c);
             let d = self.first.exact(t, tw, fl, sl);

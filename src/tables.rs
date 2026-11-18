@@ -43,18 +43,18 @@ impl BitPerm {
     /// move `m` brings to position `i`.
     pub fn from_src(src: &[[u8; 24]]) -> BitPerm {
         let mut t = vec![[[0u32; 256]; 3]; src.len()];
-        for m in 0..src.len() {
-            let src = &src[m];
-            for k in 0..3 {
-                for byte in 0..256usize {
-                    let mut out = 0u32;
-                    for i in 0..24 {
-                        let s = src[i] as usize;
-                        if s / 8 == k && (byte >> (s % 8)) & 1 == 1 {
-                            out |= 1 << i;
-                        }
+        for (m, sources) in src.iter().enumerate() {
+            let mut destination = [0u32; 24];
+            for (to, &from) in sources.iter().enumerate() {
+                destination[from as usize] |= 1 << to;
+            }
+            for (k, byte) in t[m].iter_mut().enumerate() {
+                for bit in 0..8 {
+                    let half = 1 << bit;
+                    let added = destination[8 * k + bit];
+                    for low in 0..half {
+                        byte[half + low] = byte[low] | added;
                     }
-                    t[m][k][byte] = out;
                 }
             }
         }

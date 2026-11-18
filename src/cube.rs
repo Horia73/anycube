@@ -339,7 +339,9 @@ impl Cube {
     /// Re-express the state so that every centre is on its home face.
     /// Fails unless the centres are solved up to a whole-cube rotation.
     pub fn with_home_centres(&self) -> Option<Cube> {
-        tables().rots.iter().map(|r| self.after_rotation(&r.state)).find(|c| c.ct == SOLVED_CT)
+        let t = tables();
+        let r = t.rots.iter().position(|r| r.state.ct == self.ct)?;
+        Some(self.after_rotation(&t.rots[t.rot_inv[r]].state))
     }
 
     pub fn wing_parity(&self) -> u8 {

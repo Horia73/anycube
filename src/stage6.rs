@@ -56,6 +56,7 @@ pub struct Stage6 {
     pub orbits: Vec<CentreOrbit>,
     pub perms: Vec<BitPerm>,
     mask_moves: [MaskMoves; 3],
+    followers: [u64; 54],
     ranks: Ranks,
     /// Step 1: moves until the R/L inner x centres are on R and L, by mask,
     /// and a lower bound on the moves that pair the obliques, by the mask of
@@ -202,7 +203,8 @@ impl Stage6 {
         });
         let out_ud_mv = table(X_OUT, &m3);
         let mask_moves = [X_IN, OBL_A, OBL_B].map(|o| MaskMoves::new(&perms[o]));
-        Stage6 { g, orbits, perms, mask_moves, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
+        let followers = std::array::from_fn(|m| (0..54).filter(|&k| !skip54(m as u8, k)).fold(0, |mask, k| mask | (1u64 << k)));
+        Stage6 { g, orbits, perms, mask_moves, followers, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -584,16 +586,12 @@ impl Run1<'_> {
     fn dfs(&mut self, n: &[u32; 3], m: u8, rem: usize, depth: usize) -> bool {
         let s = self.s;
         let next = [s.perms[X_IN].apply(m, n[0]), s.perms[OBL_A].apply(m, n[1]), s.perms[OBL_B].apply(m, n[2])];
-        self.enter(&next, m, rem, depth)
+        self.s.h1(&next) < rem && self.enter(&next, m, rem, depth)
     }
 
     /// Judges the state `next` that move `m` led to with `rem` moves left
     /// (that move included), and searches on from it.
     fn enter(&mut self, next: &[u32; 3], m: u8, rem: usize, depth: usize) -> bool {
-        let h = self.s.h1(next);
-        if h > rem - 1 {
-            return false;
-        }
         let done = next[0] == GOAL_RL && next[1] == next[2];
         self.path[depth] = m;
         if rem == 1 {
@@ -614,21 +612,37 @@ impl Run1<'_> {
         // Both tables are larger than the cache: the states one move on are
         // made first and their entries asked for, then judged in order.
         let s = self.s;
-        let kids: [[u32; 54]; 3] = std::array::from_fn(|i| s.mask_moves[i].apply(next[i]));
-        for m2 in 0..54u8 {
-            if !skip54(m, m2) {
-                let k = m2 as usize;
-                crate::search::fetch(&s.in_rl, kids[0][k] as usize);
-                crate::search::fetch(&s.unpaired, (kids[1][k] ^ kids[2][k]) as usize);
-            }
-        }
-        for m2 in 0..54u8 {
-            if !skip54(m, m2) {
-                let k = m2 as usize;
-                let child = [kids[0][k], kids[1][k], kids[2][k]];
-                if self.enter(&child, m2, rem - 1, depth + 1) {
-                    return true;
+        let x = s.mask_moves[0].apply(next[0]);
+        let a = s.mask_moves[1].apply(next[1]);
+        let b = s.mask_moves[2].apply(next[2]);
+        let legal = s.followers[m as usize];
+        if rem == 2 {
+            let mut left = legal;
+            while left != 0 {
+                let k = left.trailing_zeros() as usize;
+                left &= left - 1;
+                if x[k] == GOAL_RL && a[k] == b[k] {
+                    self.path[depth + 1] = k as u8;
+                    self.out.push(self.path[..=depth + 1].to_vec());
+                    if self.order.add(self.job) { return true; }
                 }
+            }
+            return false;
+        }
+        let mut left = legal;
+        while left != 0 {
+            let k = left.trailing_zeros() as usize;
+            left &= left - 1;
+            crate::search::fetch(&s.in_rl, x[k] as usize);
+            crate::search::fetch(&s.unpaired, (a[k] ^ b[k]) as usize);
+        }
+        let mut left = legal;
+        while left != 0 {
+            let k = left.trailing_zeros() as usize;
+            left &= left - 1;
+            let child = [x[k], a[k], b[k]];
+            if s.h1(&child) < rem - 1 && self.enter(&child, k as u8, rem - 1, depth + 1) {
+                return true;
             }
         }
         false
