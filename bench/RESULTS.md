@@ -3812,3 +3812,117 @@ target/release/anycube benchn "$work/blocks" --size 20
 A 30x30x30 with a half-width turn followed by an outer turn also passed
 the sticker check. Above size 28 the general solver uses its existing
 reduction that brings each projected cube’s centres home before its wings.
+
+## Default mode on fresh random-move scrambles, 2x2x2 through 21x21x21
+
+The comparison on 2026-11-18 starts at `38fe0d4`, the last version of this
+branch before this experiment. The new solver is `31962f1`. Both
+release-mode binaries ran on the same 10-core Apple M1 Pro with 16 GB of
+RAM and the existing lookup tables. Every row uses the default settings.
+
+The development and validation sets were generated separately before
+tuning. Each size used a different seed. The held-out set has 212 cubes.
+The CLI received the same random-move scrambles in both runs. The search
+used only the resulting cube state. The scrambler can choose every
+supported turn width. Its seed was `6175103 + 997 * N` for validation
+and `912371 + 997 * N` for development.
+
+Moves are in OBTM. Times are mean wall seconds per cube. Each set was
+split in two. Both binaries processed each half, with their order
+reversed for the second half. The timed interval excludes solver loading.
+It includes any work triggered by the first solve in a batch. The `row`
+command reports per-cube times to the nearest hundredth of a second for
+sizes 2 and 3.
+
+| Cube | Cases | Moves before | Moves after | s before | s after | Shortened |
+|---|---:|---:|---:|---:|---:|---:|
+| 2x2x2 | 20 | 8.80 | 8.80 | <0.005 | <0.005 | 0 |
+| 3x3x3 | 20 | 17.75 | 17.75 | 0.202 | 0.211 | 0 |
+| 4x4x4 | 48 | 40.54 | 40.40 | 1.240 | 1.841 | 6 |
+| 5x5x5 | 48 | 67.46 | 67.00 | 0.588 | 1.093 | 17 |
+| 6x6x6 | 10 | 110.50 | 110.50 | 5.250 | 4.963 | 0 |
+| 7x7x7 | 10 | 151.40 | 151.30 | 2.552 | 2.942 | 1 |
+| 8x8x8 | 6 | 230.00 | 229.17 | 4.470 | 4.515 | 3 |
+| 9x9x9 | 6 | 301.17 | 300.50 | 2.588 | 3.551 | 2 |
+| 10x10x10 | 6 | 388.33 | 387.00 | 5.963 | 6.341 | 5 |
+| 11x11x11 | 4 | 487.25 | 485.75 | 6.715 | 8.200 | 3 |
+| 12x12x12 | 4 | 589.75 | 589.00 | 9.743 | 10.123 | 2 |
+| 13x13x13 | 4 | 701.75 | 700.00 | 9.859 | 11.078 | 2 |
+| 14x14x14 | 4 | 828.00 | 827.75 | 13.755 | 14.397 | 1 |
+| 15x15x15 | 4 | 953.75 | 952.75 | 17.699 | 18.603 | 2 |
+| 16x16x16 | 3 | 1093.67 | 1093.00 | 17.750 | 17.310 | 2 |
+| 17x17x17 | 3 | 1237.67 | 1237.00 | 23.762 | 24.374 | 2 |
+| 18x18x18 | 3 | 1417.00 | 1416.67 | 28.793 | 29.306 | 1 |
+| 19x19x19 | 3 | 1563.33 | 1563.33 | 37.695 | 38.502 | 0 |
+| 20x20x20 | 3 | 1774.33 | 1773.33 | 35.767 | 35.304 | 3 |
+| 21x21x21 | 3 | 1944.33 | 1943.33 | 39.902 | 41.085 | 1 |
+
+53 cases had a shorter solution and 159 tied. All 424 solutions passed
+sticker replay. The 4x4x4 and 5x5x5 saved 7 and 22 moves respectively
+over their 48 cases. The shortest new solutions had 38 and 65 moves.
+The target averages remain 35–37 and 55–60 moves.
+
+On the 4x4x4, the mean moves in reduction and the 3x3x3 finish went
+from 23.62 + 16.92 to 23.81 + 16.58. On the 5x5x5 they went
+from 50.38 + 17.08 to 50.23 + 16.77. The extra search took
+an average of 0.60 seconds on the 4x4x4 and 0.51 seconds on the 5x5x5.
+Sizes 16 through 21 each have three cases.
+
+The 4x4x4 keeps the ordinary solution as an incumbent. An actual opening
+wide turn supplies further reductions. Its cost is combined with any
+commuting moves at the start of each reduction. On longer solves, another
+search revisits the deepest reached centre-staging level, prioritizing
+two-move prefixes by centre distance and separated wings. Distinct
+reduced 3x3x3 positions share a finishing search.
+
+The 5x5x5 searches backwards from the set of reduced positions, tracking
+both centre orbits and the oriented middle edge paired with each wing.
+A short forward search from cuts in a reduction can meet that reverse
+search using all 36 turns. The final 3x3x3 determines whether a new
+reduction actually shortens the complete word. A separate, smaller
+search in the reflected cube can supply a different whole reduction.
+
+From 8x8x8, the ordinary ending stays in contention with six penultimate
+wing reductions ranked using the next orbit. The score charges the moves
+already spent and one move per four remaining misplaced wings, rounded
+up. Each challenger must beat the length of the complete ending. The
+6x6x6 and 7x7x7 also compare reflected finishes on their projected 5x5x5.
+
+The speed changes include in-place sticker turns, shared quick searches
+for identical 3x3x3 states, and reusing phase-one depths already searched.
+On large cubes the distances for opposite centre colours are read from
+the table for agreeing colours by complementing one orbit. A test compares
+all those entries with an independently generated table.
+
+In a separate turn-only measurement, applying 140,000 mixed-width turns
+on a 21x21x21 took 220.2 ms before and 32.1 ms after (6.86×).
+These are medians of eight alternating runs. Both implementations
+produced the same stickers. The table above times complete solves.
+
+The CLI also solved the first validation 4x4x4 and 5x5x5 directly from
+their sticker colours in 39 and 68 moves, matching their benchmark rows.
+Full mode solved the first 8x8x8 in 224 moves and the first 9x9x9 in 302.
+The previous version replayed all four solutions successfully.
+
+### Development controls
+
+On the 24 development cubes per size, an unrestricted backwards search
+from the single winning reduction saved no moves on the 4x4x4 and one
+move on the 5x5x5. Trying state-dependent excursions with R and L quarter
+turns during the 4x4x4 reduction also saved no moves. Scouting up to two
+additional reduction depths saved one move over the 24 cubes at about
+6.2 seconds per cube in that trial. These trials guided the choice of
+the default search. The timing comparison in the table uses the final
+binaries on the separate validation set.
+
+The per-cube file contains the generator seed, one-based case number,
+scramble length, move counts and both timings. [Paired measurements](default-random-paired.tsv)
+
+To regenerate a set, substitute the desired size, count and length from
+the per-cube file. For example, the 5x5x5 validation set can be replayed
+with each release binary from its repository root.
+
+```sh
+anycube scrambles --size 5 --length 150 --count 48 --seed 6180088 > /tmp/anycube-validation-5.txt
+anycube bench5 /tmp/anycube-validation-5.txt --out /tmp/anycube-validation-5.tsv
+```

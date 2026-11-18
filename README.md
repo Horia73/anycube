@@ -97,6 +97,9 @@ run held at once, tables included (for sizes 8 and up of v0.2.0: the most
 the first cube of the run held, which is less). Other solvers
 on the same scrambles: [`bench/README.md`](bench/README.md).
 
+The paired default-mode benchmark compares two solver revisions on 212 fresh
+scrambles. [Moves and seconds by size](bench/RESULTS.md#default-mode-on-fresh-random-move-scrambles-2x2x2-through-21x21x21)
+
 <a name="install"></a>
 
 ## Install local
@@ -222,9 +225,10 @@ the last reduction and compares a solution from a reflected cube. Both
 solvers price the complete sequence, including the final 3x3x3.
 
 From size 8, the default solver compares complete endings for the last
-two sets of wings. It ranks six alternatives by their prefix length and
-the number of wings already paired with their middle edge. Full mode
-also tries the first eight distinct alternatives in reduction order.
+two sets of wings. It ranks the alternatives by their prefix length and
+the number of wings still to pair with their middle edge, then searches
+the best six. Full mode also tries the first eight distinct alternatives
+in reduction order.
 From size 9 it explores different half-turn widths while staging the
 centres. The shortest complete solution wins.
 
