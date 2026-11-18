@@ -301,7 +301,9 @@ impl Two3 {
         let best = AtomicU64::new(max_len.map_or(u64::MAX, |len| (len as u64 + 1) << 32));
         let out: Mutex<Option<(u64, usize, Vec<u8>)>> = Mutex::new(None);
         let mut probes = 0;
-        for d1 in first_depth..=20usize {
+        // No variant can reach the subgroup before its exact root distance.
+        let nearest = roots.iter().map(|s| s.node.d as usize).min().unwrap();
+        for d1 in first_depth.max(nearest)..=20usize {
             let found = best.load(Relaxed);
             if found != u64::MAX && (d1 as u64 >= found >> 32 || d1 > effort.depth) {
                 break;

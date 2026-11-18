@@ -445,18 +445,28 @@ impl First3 {
         &self.raw_move[sym]
     }
 
-    /// Exact distance, found by walking down to the subgroup.
+    /// Follow decreasing residues until the subgroup or a position whose
+    /// exact distance is already recorded in the eight-move bitmap.
     pub fn exact(&self, t: &T3, mut tw: usize, mut fl: usize, mut sl: usize) -> u8 {
         let goal = self.key(0, 0, t.slice_goal()).0;
+        let mut key = self.key(tw, fl, sl).0;
         let mut d = 0u8;
-        let mut cur = self.get(self.key(tw, fl, sl).0);
-        while self.key(tw, fl, sl).0 != goal {
+        let mut cur = self.get(key);
+        while key != goal {
+            if cur == (NEAR + 1) % 3 {
+                let bit = key % BLOCK;
+                let word = self.word(NEXT_BLOCKS + 64 * (key / BLOCK) + 8 * (1 + bit / 64));
+                if word & (1 << (bit % 64)) != 0 {
+                    return d + NEAR + 1;
+                }
+            }
             let want = (cur + 2) % 3;
             let step = (0..18).find_map(|m| {
                 let (a, b, c) = (t.twist_mv[tw][m] as usize, t.flip_mv[fl][m] as usize, t.slice_mv[sl][m] as usize);
-                (self.get(self.key(a, b, c).0) == want).then_some((a, b, c))
+                let child = self.key(a, b, c).0;
+                (self.get(child) == want).then_some((a, b, c, child))
             });
-            (tw, fl, sl) = step.expect("some move leads nearer");
+            (tw, fl, sl, key) = step.expect("some move leads nearer");
             cur = want;
             d += 1;
         }
