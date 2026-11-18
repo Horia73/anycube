@@ -193,7 +193,7 @@ fn main() -> Result<(), String> {
     let mut misses = 0;
     for (i, line) in io::stdin().lock().lines().enumerate() {
         let line = line.map_err(|e| e.to_string())?;
-        if line.trim().is_empty() {
+        if line.trim().is_empty() && !line.contains('\t') {
             continue;
         }
         let (s, w) = line.split_once('\t').ok_or_else(|| {
@@ -236,6 +236,7 @@ mod tests {
             let g = Geometry::new(n);
             let library = corrections(&g);
             assert_eq!(library.len(), 1920);
+            assert_eq!(repair(&g, &library, &[], &[]), Some(Vec::new()));
             let cycle = &library[0].word;
             let prefix = [3, inverse_move(cycle[0])];
             let suffix = [inverse_move(*cycle.last().unwrap()), 6, 9, 0];
