@@ -1104,27 +1104,23 @@ impl Walk<'_> {
         let (grow, salt) = (self.grow, self.salt);
         let (ids, count) = (&grow.ids, grow.ids.len());
         let level = &self.level;
-        let scores: Vec<u16> = level
-            .par_chunks(256)
-            .flat_map_iter(|chunk| {
-                let mut out = vec![u16::MAX; chunk.len() * count];
-                let mut kids: Vec<(usize, Node)> = Vec::with_capacity(count);
-                for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
-                    kids.clear();
-                    for k in 0..count {
-                        if *last == FAR || !skip54(*last, ids[k]) {
-                            let kid = grow.next(n, k);
-                            grow.prefetch(&kid);
-                            kids.push((k, kid));
-                        }
-                    }
-                    for (k, kid) in &kids {
-                        row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
+        let mut scores = vec![u16::MAX; level.len() * count];
+        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
+            let mut kids = Vec::with_capacity(count);
+            for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
+                kids.clear();
+                for (k, &m) in ids.iter().enumerate() {
+                    if *last == FAR || !skip54(*last, m) {
+                        let kid = grow.next(n, k);
+                        grow.prefetch(&kid);
+                        kids.push((k, kid));
                     }
                 }
-                out
-            })
-            .collect();
+                for (k, kid) in &kids {
+                    row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
+                }
+            }
+        });
         // The score at which the level is full, with room for states reached twice.
         let most = self.width + self.width / 2;
         let cut = beam_cut(&scores, most);
@@ -1246,6 +1242,8 @@ struct Short<'a> {
     /// `Step` has them. The scores of all the moves from a state are then
     /// the sum of one such row per slot.
     after: Vec<u8>,
+    /// Per previous move, mark the successors excluded by canonical move order.
+    skipped: Vec<Vec<u8>>,
 }
 
 /// The patterns of a short row: `2 * slot` for the row, `2 * slot + 1` for the row under it.
@@ -1276,7 +1274,11 @@ impl<'a> Short<'a> {
         // The scores are added up in bytes.
         let most = |slot: usize| (0..2).map(|sign| *dist[slots[slot].0][slots[slot].1][sign].iter().max().unwrap() as usize).max().unwrap();
         assert!((0..slots.len()).map(most).sum::<usize>() < FAR as usize);
-        Short { ring, slots: slots.len(), to, after }
+        let mut skipped = vec![Vec::new(); FAR as usize + 1];
+        for &last in &ring.moves {
+            skipped[last as usize] = ring.moves.iter().map(|&m| if skip54(last, m) { FAR } else { 0 }).collect();
+        }
+        Short { ring, slots: slots.len(), to, after, skipped }
     }
 
     fn ranks(&self, n: &Node) -> Ranks {
@@ -1299,12 +1301,19 @@ impl<'a> Short<'a> {
         out
     }
 
-    /// How many centres of the row do not agree with the one under them
-    /// (or are not its opposite, where that is the aim): an even number in
-    /// every slot.
-    fn apart(&self, n: &Ranks, signs: [usize; 3]) -> u32 {
-        let pattern = |r: u8| self.ring.unrank8[r as usize];
-        (0..self.slots).map(|i| (pattern(n[2 * i]) ^ pattern(n[2 * i + 1]) ^ if signs[i % 3] == 1 { 255 } else { 0 }).count_ones()).sum()
+    /// Mismatching centres, stopped once this row is too far for the ending search.
+    fn near(&self, n: &Ranks, signs: [usize; 3]) -> Option<u32> {
+        let mut apart = 0;
+        for i in 0..self.slots {
+            let a = self.ring.unrank8[n[2 * i] as usize];
+            let b = self.ring.unrank8[n[2 * i + 1] as usize];
+            let opposite = if signs[i % 3] == 1 { 255 } else { 0 };
+            apart += (a ^ b ^ opposite).count_ones();
+            if apart > APART {
+                return None;
+            }
+        }
+        Some(apart)
     }
 }
 
@@ -1346,28 +1355,20 @@ impl<'a> Lane<'a> {
         let (short, after) = (self.short, &self.after);
         let (moves, count) = (&short.ring.moves, short.ring.moves.len());
         let level = &self.level;
-        let scores: Vec<u8> = level
-            .par_chunks(256)
-            .flat_map_iter(|chunk| {
-                let mut out = vec![0u8; chunk.len() * count];
-                for ((n, last), sums) in chunk.iter().zip(out.chunks_mut(count)) {
-                    for (s, after) in after.iter().enumerate() {
-                        let pair = n[2 * s] as usize * 70 + n[2 * s + 1] as usize;
-                        for (sum, x) in sums.iter_mut().zip(&after[pair * count..][..count]) {
-                            *sum += x;
-                        }
-                    }
-                    if *last != FAR {
-                        for (sum, &m) in sums.iter_mut().zip(moves) {
-                            if skip54(*last, m) {
-                                *sum = FAR;
-                            }
-                        }
+        let mut scores = vec![0u8; level.len() * count];
+        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
+            for ((n, last), sums) in chunk.iter().zip(out.chunks_mut(count)) {
+                for (s, after) in after.iter().enumerate() {
+                    let pair = n[2 * s] as usize * 70 + n[2 * s + 1] as usize;
+                    for (sum, x) in sums.iter_mut().zip(&after[pair * count..][..count]) {
+                        *sum += x;
                     }
                 }
-                out
-            })
-            .collect();
+                for (sum, &mask) in sums.iter_mut().zip(&short.skipped[*last as usize]) {
+                    *sum |= mask;
+                }
+            }
+        });
         // The score at which the level is full, with room for states reached twice.
         let most = WIDTH + WIDTH / 2;
         let mut tally = [0usize; 256];
@@ -1413,7 +1414,8 @@ impl<'a> Lane<'a> {
     /// The states of the length reached that are worth trying for an
     /// ending, those with the lowest scores first, with their moves.
     fn starts(&self) -> Vec<Start> {
-        let near = (0..self.level.len()).map(|i| (i, self.short.apart(&self.level[i].0, self.signs))).filter(|x| x.1 <= APART).take(NEAR);
+        let near = self.level.iter().enumerate()
+            .filter_map(|(i, (n, _))| self.short.near(n, self.signs).map(|apart| (i, apart))).take(NEAR);
         near.map(|(i, apart)| {
             let mut moves = Vec::with_capacity(self.trail.len());
             let mut at = i;
