@@ -223,6 +223,8 @@ Default mode uses the ordinary reduction and 3x3x3 finishing search.
 With `--mode full`, the 4x4x4 also tries an opening wide turn and
 revisits centre stagings on longer solves. The 5x5x5 searches the last
 reduction from both sides and tries a reflected cube.
+On the 6x6x6 and 7x7x7, full mode also tries a reflected finish on the
+projected 5x5x5.
 
 From size 8, default mode reduces one set of wings at a time. Full mode
 compares complete endings for the last two sets. Starting at size 9 it

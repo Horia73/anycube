@@ -438,6 +438,13 @@ impl Params7 {
     pub fn normal() -> Params7 {
         Params7 { beam: 100_000, match_beam: 300_000, ..Params7::fast() }
     }
+
+    /// Also compare the reflected outer reduction with the ordinary finish.
+    pub fn full() -> Params7 {
+        let mut p = Params7::normal();
+        p.outer.alternate_endings = true;
+        p
+    }
 }
 
 pub struct Solution7 {
