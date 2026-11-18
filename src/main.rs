@@ -763,6 +763,7 @@ fn params5(args: &[String]) -> anycube::solver5::Params5 {
         p_keep: num("--p-keep", d.p_keep),
         e_keep: num("--e-keep", d.e_keep),
         pool: num("--pool", d.pool),
+        alternate_endings: d.alternate_endings,
         depth: num("--depth", d.depth),
         deeper: deeper(args, &d.deeper),
         time_ms: num("--time", d.time_ms as usize) as u64,

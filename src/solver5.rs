@@ -48,6 +48,8 @@ pub struct Params5 {
     /// two-phase search that is tried. Then, step by step, a longer first
     /// phase for fewer of them: (length, how many).
     pub pool: usize,
+    /// Compare alternate reductions and a search in the reflected cube.
+    pub alternate_endings: bool,
     pub depth: usize,
     pub deeper: Vec<(usize, usize)>,
     /// Time the solve aims at, in milliseconds; 0 for no limit. Each step
@@ -68,6 +70,7 @@ impl Params5 {
             p_keep: 300,
             e_keep: 50,
             pool: 30,
+            alternate_endings:false,
             depth: 11,
             deeper: Vec::new(),
             time_ms: 0,
@@ -87,6 +90,7 @@ impl Params5 {
             p_keep: 700,
             e_keep: 100,
             pool: 100,
+            alternate_endings:true,
             depth: 11,
             deeper: vec![(12, 30), (13, 8)],
             time_ms: 0,
@@ -105,6 +109,7 @@ impl Params5 {
             p_keep: 2000,
             e_keep: 400,
             pool: 400,
+            alternate_endings:true,
             depth: 11,
             deeper: vec![(12, 100), (13, 24), (14, 4)],
             time_ms: 0,
@@ -198,7 +203,53 @@ impl Solver5 {
     /// ways, such as the larger cubes: every step here chooses among all of
     /// them by total length.
     pub fn solve_any(&self, cubes: &[(Vec<u8>, usize)], p: &Params5) -> Result<(usize, Solution5), String> {
-        self.run(cubes, p, true, None, None)
+        self.best_ending(cubes, p, None)
+    }
+
+    fn best_ending(
+        &self,
+        cubes: &[(Vec<u8>, usize)],
+        p: &Params5,
+        alternatives: Option<&mut Vec<Vec<u8>>>,
+    ) -> Result<(usize, Solution5), String> {
+        let (base, solution) = self.run(cubes, p, true, None, alternatives)?;
+        if p.time_ms == 0 && p.alternate_endings {
+            let best = cubes[base].1 + solution.moves.len();
+            if let Some(other) = self.reflected_ending(cubes, base, p, best) {
+                return Ok(other);
+            }
+        }
+        Ok((base, solution))
+    }
+
+    /// Explore the opposite handedness. Its centre and edge choices are
+    /// made independently, with a smaller budget. Reflection preserves
+    /// wide turns and reverses their powers.
+    pub(crate) fn reflected_ending(&self, cubes: &[(Vec<u8>, usize)], base: usize, p: &Params5, best: usize) -> Option<(usize, Solution5)> {
+        let mut chosen: Vec<_> = (0..cubes.len()).collect();
+        chosen.sort_by_key(|&i| (i != base, cubes[i].1, i));
+        chosen.truncate(8);
+        let g = &tables5().geometry;
+        let roots: Vec<_> = chosen.iter().map(|&i| (g.reflected(&cubes[i].0), cubes[i].1)).collect();
+        let settings = Params5 {
+            staged: p.staged.min(1200),
+            c_keep: p.c_keep.min(6000),
+            p_keep: p.p_keep.min(450),
+            e_keep: p.e_keep.min(80),
+            pool: p.pool.min(80),
+            joint_extra: None,
+            alternate_endings: false,
+            ..p.clone()
+        };
+        let (i, mut sol) = self.run(&roots, &settings, true, None, None).ok()?;
+        let root = chosen[i];
+        if cubes[root].1 + sol.moves.len() >= best {
+            return None;
+        }
+        for m in &mut sol.moves {
+            *m = crate::cuben::reflected_move(*m as usize) as u8;
+        }
+        Some((root, sol))
     }
 
     /// Experiment (`learned5`): as `solve`, with centre stagings found
@@ -226,7 +277,7 @@ impl Solver5 {
     pub(crate) fn solve_with_alternatives(
         &self, facelets: &[u8], p: &Params5, alternatives: &mut Vec<Vec<u8>>,
     ) -> Result<Solution5, String> {
-        self.run(&[(facelets.to_vec(), 0)], p, true, None, Some(alternatives)).map(|x| x.1)
+        self.best_ending(&[(facelets.to_vec(),0)],p,Some(alternatives)).map(|x|x.1)
     }
 
     fn run(
@@ -429,6 +480,29 @@ impl Solver5 {
             alts.extend(order.into_iter().take(8).map(|k| assemble(&reduced[k], &found[k])));
         }
         let moves = assemble(x, &sol3);
+        if p.time_ms == 0 && p.alternate_endings {
+            let mut order: Vec<_> = (0..reduced.len()).collect();
+            order.sort_by_key(|&k| (left[k].0 + found[k].len(), left[k].0));
+            order.truncate(12);
+            let seeds: Vec<_> = order
+                .iter()
+                .map(|&k| {
+                    let partial = &reduced[k];
+                    crate::rejoin::Seed { root: roots[partial.root][0], prefix: partial.moves.clone(), spent: cubes[partial.root].1 }
+                })
+                .collect();
+            if let Some((slot, route)) = crate::rejoin::improve(&seeds, cubes[x.root].1 + moves.len(), &self.edges.t3, &self.two) {
+                let b = &reduced[order[slot]];
+                let mut ends = [0; 7];
+                for j in 0..4 {
+                    ends[j + 1] = b.ends[j].min(route.kept);
+                }
+                ends[5] = route.reduction;
+                ends[6] = route.moves.len();
+                return Ok((b.root, Solution5 { moves: route.moves, lens: std::array::from_fn(|j| ends[j + 1] - ends[j]) }));
+            }
+        }
+
         let e = &x.ends;
         let lens = [e[0], e[1] - e[0], e[2] - e[1], e[3] - e[2], e[4] - e[3], sol3.len()];
         Ok((x.root, Solution5 { moves, lens }))

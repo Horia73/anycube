@@ -33,6 +33,7 @@ pub mod levels5;
 pub mod nnn;
 pub mod opt3;
 pub mod orbits;
+mod rejoin;
 pub mod rings;
 pub mod search;
 #[cfg(not(target_arch = "wasm32"))]

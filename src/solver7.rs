@@ -428,7 +428,7 @@ impl Params7 {
             inner: Params5 { c_keep: 500, p_keep: 500, e_keep: 100, time_ms: 0, ..Params5::normal() },
             reductions: 16,
             // No clock: a phase cut short can leave the next one nothing to work with.
-            outer: Params5 { c_keep: 6000, p_keep: 2000, e_keep: 600, time_ms: 0, ..Params5::normal() },
+            outer: Params5 { c_keep: 6000, p_keep: 2000, e_keep: 600, time_ms: 0, alternate_endings: false, ..Params5::normal() },
         }
     }
 
@@ -436,7 +436,9 @@ impl Params7 {
     /// its beam can be wide: its length still falls at 300,000 states,
     /// where the staging's has stopped at 100,000.
     pub fn normal() -> Params7 {
-        Params7 { beam: 100_000, match_beam: 300_000, ..Params7::fast() }
+        let mut p = Params7 { beam: 100_000, match_beam: 300_000, ..Params7::fast() };
+        p.outer.alternate_endings = true;
+        p
     }
 }
 
@@ -615,6 +617,16 @@ impl Solver7 {
         let (before, lens, _) = &inner[x.cand];
         let moves: Vec<u8> = before.iter().chain(x.moves.iter()).chain(last.iter()).copied().collect();
         lap("solved", 1, moves.len());
+        if p.outer.time_ms == 0 && p.outer.alternate_endings {
+            if let Some((k, other)) = self.s5.reflected_ending(&cands, x.cand, &p.outer, moves.len()) {
+                let (prefix, lens, _) = &inner[k];
+                let tail = other.lens[5];
+                let red = other.moves.len() - tail;
+                let moves = prefix.iter().chain(&other.moves).copied().collect();
+                return Ok(Solution7 { moves, lens: [lens[0], lens[1], lens[2], red, tail] });
+            }
+        }
+
         Ok(Solution7 { lens: [lens[0], lens[1], lens[2], x.moves.len(), last.len()], moves })
     }
 }

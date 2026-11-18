@@ -19,6 +19,12 @@ const FACES: [([i32; 3], [i32; 3], [i32; 3]); 6] = [
     ([0, 0, -1], [-1, 0, 0], [0, -1, 0]),
 ];
 
+const MIRROR_FACE: [usize; 6] = [0, 4, 2, 3, 1, 5];
+
+pub(crate) fn reflected_move(m: usize) -> usize {
+    m / 18 * 18 + MIRROR_FACE[m / 3 % 6] * 3 + (2 - m % 3)
+}
+
 fn dot(a: [i32; 3], b: [i32; 3]) -> i32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
@@ -38,6 +44,9 @@ pub struct Geometry {
     pub n: usize,
     /// `moves[m][j]` is the facelet whose sticker move `m` brings to facelet `j`.
     moves: Vec<Vec<u32>>,
+    /// Disjoint sticker cycles of each clockwise turn. All three powers
+    /// share them when applying turns in place.
+    cycles: Vec<Vec<[u32; 4]>>,
     /// The same for the whole-cube quarter turns x (about R), y (about U) and z (about F).
     rotations: [Vec<u32>; 3],
 }
@@ -97,7 +106,19 @@ impl Geometry {
             perm
         };
         let rotations = [whole(1), whole(0), whole(2)];
-        Geometry { n, moves, rotations }
+        let cycles = moves.iter().step_by(3).map(|src| {
+            let mut cycles = Vec::new();
+            for (i, &a) in src.iter().enumerate() {
+                let i = i as u32;
+                if a <= i { continue; }
+                let b = src[a as usize];
+                let c = src[b as usize];
+                // Store a four-cycle at its lowest index only.
+                if i < b && i < c { cycles.push([i, a, b, c]); }
+            }
+            cycles
+        }).collect();
+        Geometry { n, moves, rotations, cycles }
     }
 
     /// Where move `m` takes its stickers from.
@@ -217,6 +238,18 @@ impl Geometry {
         out
     }
 
+    /// Reflection in the plane between R and L, including the colours so
+    /// that the solved cube is fixed. Every face reverses its columns.
+    pub(crate) fn reflected(&self, f: &[u8]) -> Vec<u8> {
+        let n = self.n;
+        (0..f.len())
+            .map(|i| {
+                let source = MIRROR_FACE[i / (n * n)] * n * n + (i / n % n) * n + n - 1 - i % n;
+                MIRROR_FACE[f[source] as usize] as u8
+            })
+            .collect()
+    }
+
     pub fn move_count(&self) -> usize {
         self.moves.len()
     }
@@ -226,10 +259,26 @@ impl Geometry {
     }
 
     pub fn apply(&self, facelets: &mut Vec<u8>, m: usize) {
-        let src = &self.moves[m];
-        let old = facelets.clone();
-        for (j, f) in facelets.iter_mut().enumerate() {
-            *f = old[src[j] as usize];
+        let cycles = &self.cycles[m / 3];
+        match m % 3 {
+            0 => for &[i, a, b, c] in cycles {
+                let v = facelets[i as usize];
+                facelets[i as usize] = facelets[a as usize];
+                facelets[a as usize] = facelets[b as usize];
+                facelets[b as usize] = facelets[c as usize];
+                facelets[c as usize] = v;
+            },
+            1 => for &[i, a, b, c] in cycles {
+                facelets.swap(i as usize, b as usize);
+                facelets.swap(a as usize, c as usize);
+            },
+            _ => for &[i, a, b, c] in cycles {
+                let v = facelets[i as usize];
+                facelets[i as usize] = facelets[c as usize];
+                facelets[c as usize] = facelets[b as usize];
+                facelets[b as usize] = facelets[a as usize];
+                facelets[a as usize] = v;
+            },
         }
     }
 
@@ -383,6 +432,38 @@ mod tests {
                     g.apply(&mut original, mapped);
                     assert_eq!(here, g.turned(&original, turns), "size {n}, move {m}");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn in_place_turns_match_the_sticker_permutations() {
+        for n in [2, 5, 12, 21] {
+            let g = Geometry::new(n);
+            let original: Vec<_> = (0..6*n*n).map(|i| (i % 251) as u8).collect();
+            for m in 0..g.move_count() {
+                let expected: Vec<_> = g.move_src(m).iter().map(|&j| original[j as usize]).collect();
+                let mut actual = original.clone();
+                g.apply(&mut actual,m);
+                assert_eq!(actual,expected);
+            }
+        }
+    }
+
+    #[test]
+    fn reflection_commutes_with_every_turn() {
+        for n in [4, 5, 7, 10] {
+            let g = Geometry::new(n);
+            let mut f = g.solved();
+            for i in 0..57 { g.apply(&mut f, (i * 17 + i / 3) % g.move_count()); }
+            let mirror = g.reflected(&f);
+            assert_eq!(g.reflected(&mirror), f);
+            for m in 0..g.move_count() {
+                let mut from = f.clone();
+                let mut other = mirror.clone();
+                g.apply(&mut from, m);
+                g.apply(&mut other, reflected_move(m));
+                assert_eq!(g.reflected(&from), other);
             }
         }
     }
