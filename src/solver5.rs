@@ -212,6 +212,28 @@ impl Solver5 {
         p: &Params5,
         alternatives: Option<&mut Vec<Vec<u8>>>,
     ) -> Result<(usize, Solution5), String> {
+        let wide = self.search_ending(cubes, p, alternatives);
+        if !p.alternate_endings || p.time_ms != 0 {
+            return wide;
+        }
+        // More centre stagings can displace a reduction with a shorter
+        // 3x3x3 finish. Compare both searches at their total cost.
+        let compact = Params5 { alternate_endings: true, ..Params5::normal() };
+        if p.staged <= compact.staged {
+            return wide;
+        }
+        let Ok(other) = self.search_ending(cubes, &compact, None) else { return wide };
+        let Ok(best) = wide else { return Ok(other) };
+        let cost = |(root, sol): &(usize, Solution5)| cubes[*root].1 + sol.moves.len();
+        Ok(if cost(&other) < cost(&best) { other } else { best })
+    }
+
+    fn search_ending(
+        &self,
+        cubes: &[(Vec<u8>, usize)],
+        p: &Params5,
+        alternatives: Option<&mut Vec<Vec<u8>>>,
+    ) -> Result<(usize, Solution5), String> {
         let (base, solution) = self.run(cubes, p, true, None, alternatives)?;
         if p.time_ms == 0 && p.alternate_endings {
             let best = cubes[base].1 + solution.moves.len();

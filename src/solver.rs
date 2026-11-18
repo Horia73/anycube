@@ -496,6 +496,29 @@ impl Solver {
     pub(crate) fn solve_with_alternatives(
         &self, cube: &Cube, p: &Params, alternatives: Option<&mut Vec<Vec<u8>>>,
     ) -> Result<Solution, String> {
+        let wide = self.search_reductions(cube, p, alternatives);
+        if !p.alternate_starts || !p.joint || p.time_limit_ms != 0 {
+            return wide;
+        }
+        // A wider joint search can fill the next phase with different
+        // endpoints. Keep the compact search's best complete solution too.
+        let compact = Params { alternate_starts: true, ..Params::default() };
+        if p.joint_nodes <= compact.joint_nodes {
+            return wide;
+        }
+        let Ok(other) = self.search_reductions(cube, &compact, None) else { return wide };
+        let Ok(mut best) = wide else { return Ok(other) };
+        let shortest = best.shortest_reduction.min(other.shortest_reduction);
+        if other.moves.len() < best.moves.len() {
+            best = other;
+        }
+        best.shortest_reduction = shortest;
+        Ok(best)
+    }
+
+    fn search_reductions(
+        &self, cube: &Cube, p: &Params, alternatives: Option<&mut Vec<Vec<u8>>>,
+    ) -> Result<Solution, String> {
         let t_start = std::time::Instant::now();
         let limit = std::time::Duration::from_millis(p.time_limit_ms);
         let (items,last_level) = self.reductions(cube,p,t_start,None)?;

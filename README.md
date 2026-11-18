@@ -222,7 +222,9 @@ Fw' L D' L U Uw' B2 Rw U' Uw2 R Fw' R2 B2 D2 F' D' Uw2 Fw2 L2 D F D2 Uw2 Rw2 L2 
 Default mode uses the ordinary reduction and 3x3x3 finishing search.
 With `--mode full`, the 4x4x4 also tries an opening wide turn and
 revisits centre stagings on longer solves. The 5x5x5 searches the last
-reduction from both sides and tries a reflected cube.
+reduction from both sides and tries a reflected cube. Full mode on both
+sizes keeps the shorter complete solution from the standard and wider
+reduction searches.
 On the 6x6x6 and 7x7x7, full mode also tries a reflected finish on the
 projected 5x5x5.
 
