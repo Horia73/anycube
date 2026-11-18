@@ -231,7 +231,7 @@ Both general search modes recognize positions whose stickers form uniform
 blocks on all six faces. They try solving the smaller cube described by
 those blocks and lift its moves to the physical layer width. If the
 smaller cube establishes that the result is optimal, the search finishes
-there.
+there. [Paired timings and solution lengths](bench/RESULTS.md#search-speed-and-full-solutions-for-large-cubes-2026-11-18)
 
 Moves are written as on any cube: `U R F D L B`, `'` for a turn the other
 way, `2` for a half turn; `Rw` turns two layers and `3Rw` three.

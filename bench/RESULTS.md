@@ -3690,3 +3690,125 @@ do
     target/release/anycube bench-widths "$file" --size "$size" --length "$length"
 done
 ```
+
+## Search speed and full solutions for large cubes (2026-11-18)
+
+The control was commit `a612527`. Both release binaries solved the same
+long scrambles on an Apple M1 Pro with the lookup tables already built.
+Rayon used its default thread count. Time is the mean elapsed search time
+per cube after the CLI's initial table load. It includes work performed
+lazily during a solve. Each cohort was split in half. Within the first half the control
+ran before the candidate, and within the second half their order was
+reversed. Sizes 4 to 7 repeated each half in the opposite order. Full
+mode ran after the normal pair on the same half for sizes 8 and up.
+
+Each normal solution matched the control move for move. Both normal and
+full words were replayed with the control binary's separate sticker
+verifier. The release averages and these samples use different sets of
+positions. The data file includes the extra word checks and the SHA-256
+digest of each move sequence as UTF-8 text without a trailing newline.
+[Per-cube measurements](search-optimization.tsv)
+
+| Size | Cubes | Normal OBTM | Previous seconds | New seconds | Time saved | Full OBTM | Full seconds | Shorter in full |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 16 | 40.69 | 1.77 | 1.44 | +18.4% | — | — | — |
+| 5 | 16 | 67.19 | 0.83 | 0.68 | +18.4% | — | — | — |
+| 6 | 6 | 107.50 | 6.06 | 5.95 | +1.8% | — | — | — |
+| 7 | 6 | 152.17 | 3.49 | 2.94 | +15.8% | — | — | — |
+| 8 | 6 | 226.17 | 4.37 | 3.56 | +18.6% | 225.33 | 3.85 | 2/6 |
+| 9 | 6 | 299.83 | 3.07 | 2.84 | +7.3% | 299.33 | 6.42 | 3/6 |
+| 10 | 4 | 395.75 | 5.49 | 4.97 | +9.5% | 391.75 | 11.04 | 4/4 |
+| 12 | 2 | 592.50 | 9.76 | 9.13 | +6.5% | 591.50 | 23.25 | 1/2 |
+| 15 | 4 | 960.75 | 19.98 | 19.02 | +4.8% | 955.75 | 32.55 | 3/4 |
+| 20 | 2 | 1771.00 | 39.86 | 37.98 | +4.7% | 1771.00 | 50.13 | 0/2 |
+| 21 | 4 | 1934.25 | 44.12 | 41.89 | +5.1% | 1933.75 | 48.19 | 2/4 |
+
+On the 28 mixed-width positions at sizes 8 and up, full mode shortened 15
+solutions and saved 48 moves in total. The largest individual saving was
+18 moves on size 15, line 12 of its input file. A separate
+development pair on size 21 (lines 3 and 4) went from 1,949 and 1,929
+moves to 1,922 and 1,902. Choosing the wing reductions alone had given
+1,947 and 1,929 on that pair.
+
+A second length check on 46 positions also reproduced the control words.
+It used lines 71–90 on sizes 4 and 5 and lines 71–73 on sizes 6 and 7.
+Six earlier `--lift` improvements on sizes 4 and 5 passed another replay
+with six holds and the size-specific ending enabled. The 35–37 and
+55–60 targets for long mixed-width scrambles remain open. An exploratory
+exact replacement of short corner-projected move sequences shortened
+zero of the 44 initial solutions at sizes 4 through 7.
+
+The 4x4x4 search intersects the possible last moves for all twelve wing
+pairs before playing them. The 5x5x5 reuses centre prefixes in all six
+frames and only considers symmetries that attain the least x-centre
+pattern. The finishing 3x3x3 search skips depths it has exhausted. The
+6x6x6 and 7x7x7 apply centre-mask moves in batches. On larger cubes the
+beam search counts scores with two 256-entry histograms, and rings with
+the same move action share their tables.
+
+Full mode compares the last two wing orbits as a pair. It first solves the
+ordinary reduction, then considers up to eight other distinct positions of
+the outer 5x5x5. From size nine it also tries a second centre staging. Two
+half turns of different widths can act identically on the columns being
+formed and differently on the next column. The solver compares those
+choices on the next seven-layer projection and keeps the shorter complete
+solution. The ordinary answer participates in this comparison.
+
+### Positions scrambled at a single layer width
+
+When all six faces consist of uniform rectangular blocks with the same
+layer boundaries, the solver can reconstruct a 2x2x2 or 3x3x3 from the
+stickers. A single turn on that cube lifts to a single turn of the
+detected physical width. The solver replays each candidate on the
+original stickers. Every physical move induces one face turn on the
+corners, so reaching the optimal 2x2x2 distance proves optimality on the
+large cube. On odd sizes the corners and true middle edges give a second
+lower bound from the exact 3x3x3 search. When the proof exhausts its node
+budget, the lifted solution bounds the ordinary search.
+
+Each row below used a seeded sequence of face turns, mapped to the
+indicated width. Rows with the same scramble length share the underlying
+face sequences. The fixed-width tests exercise this class of positions.
+The table above uses scrambles with mixed widths.
+
+| Size | Layers per turn | Scramble length | Cubes | Previous OBTM | New OBTM | Previous seconds | New seconds |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 8 | 4 | 60 | 3 | 37.33 | 9.00 | 0.642 | 0.002 |
+| 9 | 3 | 8 | 3 | 46.67 | 8.00 | 0.539 | 0.015 |
+| 15 | 5 | 60 | 2 | 232.00 | 18.50 | 2.220 | 3.652 |
+| 20 | 10 | 60 | 3 | 181.67 | 9.00 | 1.836 | <0.001 |
+| 21 | 7 | 8 | 3 | 273.67 | 8.00 | 3.313 | 0.011 |
+
+The 15x15x15 sample spent more time searching its harder 3x3x3 projections.
+Search times in this table use the CLI's millisecond timer. Each binary
+loads its shared large-cube tables before that timer starts.
+
+### Reproduction
+
+The TSV gives the input filename and one-based line for every mixed-width
+position. For example, use these commands on the four 21x21x21 positions.
+The project uses `bench` for size 4, `bench5`, `bench6` and `bench7` for
+the next three sizes, and `benchn --size N` for the remaining sizes.
+
+```sh
+work=$(mktemp -d)
+sed -n '11,14p' bench/scrambles212121-20.txt > "$work/cubes"
+target/release/anycube benchn "$work/cubes" --size 21 --out "$work/normal.tsv"
+target/release/anycube benchn "$work/cubes" --size 21 --mode full --out "$work/full.tsv"
+cut -f5 "$work/full.tsv" > "$work/words"
+paste "$work/cubes" "$work/words" > "$work/replay"
+target/release/anycube verify --size 21 "$work/replay"
+```
+
+To reproduce the 20x20x20 fixed-width row, generate the three face
+sequences and play every turn ten layers wide.
+
+```sh
+target/release/anycube scrambles --size 3 --seed 18711 --length 60 --count 3 |
+  sed -E 's/([URFDLB])/10\1w/g' > "$work/blocks"
+target/release/anycube benchn "$work/blocks" --size 20
+```
+
+A 30x30x30 with a half-width turn followed by an outer turn also passed
+the sticker check. Above size 28 the general solver uses its existing
+reduction that brings each projected cube’s centres home before its wings.
