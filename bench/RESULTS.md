@@ -4073,3 +4073,30 @@ On eight separate development scrambles at seed 80670021, four joint searches ne
 anycube scrambles --size 6 --length 300 --count 30 --seed 68119471 > /tmp/anycube-six-30.txt
 anycube bench6 /tmp/anycube-six-30.txt --out /tmp/anycube-six-30.tsv
 ```
+
+### Default comparison for all 20 sizes
+
+This table brings together the measurements on the same 212 fixed scrambles. The first numbers come from the default with the extra searches (`331cb64`). The final column identifies the run that supplied the most recent measurements shown. The 6x6x6 row uses the original ten cases so both sides use the same scrambles. Sizes 7–21 retain their earlier default measurements. The new wing search is also used in some larger solvers, so their timing on this revision remains unmeasured.
+
+| Cube | Cases | Earlier moves | Latest measured moves | Earlier seconds | Latest measured seconds | Latest run |
+|---|---:|---:|---:|---:|---:|---|
+| 2x2x2 | 20 | 8.80 | 8.80 | <0.005 | <0.005 | Restored default on 212 scrambles |
+| 3x3x3 | 20 | 17.75 | 17.75 | 0.201 | 0.210 | Restored default on 212 scrambles |
+| 4x4x4 | 48 | 40.40 | 40.54 | 1.825 | 1.177 | Standalone repeat after the full-mode change |
+| 5x5x5 | 48 | 67.00 | 67.46 | 1.063 | 0.636 | Standalone follow-up, 48 cases |
+| 6x6x6 | 10 | 110.50 | 110.50 | 5.145 | 3.540 | 6x6x6 follow-up, original 10 cases |
+| 7x7x7 | 10 | 151.30 | 151.40 | 2.774 | 2.529 | Restored default on 212 scrambles |
+| 8x8x8 | 6 | 229.17 | 230.00 | 4.550 | 2.645 | Restored default on 212 scrambles |
+| 9x9x9 | 6 | 300.50 | 301.17 | 3.552 | 2.315 | Restored default on 212 scrambles |
+| 10x10x10 | 6 | 387.00 | 388.33 | 6.389 | 5.113 | Restored default on 212 scrambles |
+| 11x11x11 | 4 | 485.75 | 487.25 | 8.127 | 6.506 | Restored default on 212 scrambles |
+| 12x12x12 | 4 | 589.00 | 589.75 | 9.502 | 8.656 | Restored default on 212 scrambles |
+| 13x13x13 | 4 | 700.00 | 701.75 | 10.829 | 9.412 | Restored default on 212 scrambles |
+| 14x14x14 | 4 | 827.75 | 828.00 | 14.168 | 13.011 | Restored default on 212 scrambles |
+| 15x15x15 | 4 | 952.75 | 953.75 | 18.854 | 17.056 | Restored default on 212 scrambles |
+| 16x16x16 | 3 | 1093.00 | 1093.67 | 17.469 | 16.307 | Restored default on 212 scrambles |
+| 17x17x17 | 3 | 1237.00 | 1237.67 | 25.105 | 23.157 | Restored default on 212 scrambles |
+| 18x18x18 | 3 | 1416.67 | 1417.00 | 28.930 | 27.287 | Restored default on 212 scrambles |
+| 19x19x19 | 3 | 1563.33 | 1563.33 | 38.543 | 36.999 | Restored default on 212 scrambles |
+| 20x20x20 | 3 | 1773.33 | 1774.33 | 35.977 | 35.416 | Restored default on 212 scrambles |
+| 21x21x21 | 3 | 1943.33 | 1944.33 | 40.671 | 38.725 | Restored default on 212 scrambles |
