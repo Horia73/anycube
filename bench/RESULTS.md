@@ -4028,6 +4028,17 @@ anycube verify --size 4 completed.tsv
 
 For example, the 4x4x4 scramble `D' U' F' Uw' U R' U R Uw U' R2` and the partial sequence `R U' R F D U` leave three wings. The example returns the verified 11-turn solution `R2 U Uw' R' U' R U' Uw F U D`.
 
+### Choosing the defect before the solve
+
+A separate end-to-end pilot used four fresh random scrambles per size, with 200 turns at seed 612453 on the 4x4x4 and 250 turns at seed 612454 on the 5x5x5. Each scramble was first solved normally. Two distinct, randomly chosen wing cycles per scramble then defined two virtual starting positions. The ordinary solver supplied one partial word per virtual position, and the insertion example repaired the partial word against the original scramble. The previous binary verified all sixteen complete repairs on sticker colours. Each row averages the shortest of the two candidates at its respective stage.
+
+| Cube | Scrambles | Ordinary moves | Shortest partial moves | Shortest repaired moves | Repairs beating the ordinary solution |
+|---|---:|---:|---:|---:|---:|
+| 4x4x4 | 4 | 41.25 | 40.25 | 46.00 | 0/4 |
+| 5x5x5 | 4 | 67.25 | 66.75 | 74.75 | 0/4 |
+
+Fixing the cycle before an ordinary solve saved too little in the partial word to pay for the insertion on this sample. To test a more permissive search, any of several cycles could satisfy the intermediate goal, with candidates ranked by the total of the partial solve, the 3x3x3 finish and the correction.
+
 ## Faster default 6x6x6 wing searches
 
 The paired benchmark compares the previous default at `b19ceb0` with `e6ddba9` on the 10-core Apple M1 Pro with 16 GB of RAM. Both versions ran one at a time. Five-scramble batches alternated which binary went first. Wall time starts after the solver loads its lookup tables. The original size-6 benchmark used ten 300-turn random-move scrambles. The follow-up used a separate seed and another thirty 300-turn scrambles.
@@ -4053,6 +4064,8 @@ After normal table-load times returned, both binaries reran every one of the 20 
 All forty timed solves finished sooner in these conditions. The median went from 4.554 to 3.135 seconds.
 
 Two changes cut the search work. The six-layer solver reuses its ranked inner wing splits if the joint search falls back to individual starts. It can run two ordinary fallback searches side by side. The projected five-layer solver shares exhausted subtrees across starts in phases P and E. It records the complete phase coordinate, remaining depth and previous turn family. A phase-P entry is saved only after a complete search with zero abstract endpoints, since a different full cube can accept an endpoint that the first cube rejects. Each phase uses up to 4 MiB for these entries.
+
+On the standalone 5x5x5, a separate four-batch comparison used the previous 48 random 150-turn scrambles at seed 6180088. All 48 defaults matched move for move and passed independent sticker replay. The mean was 67.46 moves for both. Mean solve times were 0.630 and 0.636 seconds, with medians of 0.624 and 0.620. [Paired 5x5x5 results](standalone5-wing-search-paired.tsv)
 
 On eight separate development scrambles at seed 80670021, four joint searches needed the fallback. The two edge phases visited about 33.8 and 36.6 million positions per cube before the change, and 15.3 and 14.6 million with the two optimizations. All eight development answers matched move for move.
 
