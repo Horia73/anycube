@@ -201,10 +201,22 @@ impl Two3 {
         deadline: Option<std::time::Instant>,
     ) -> Vec<Vec<u8>> {
         let late = || deadline.is_some_and(|d| std::time::Instant::now() > d);
-        let mut found: Vec<Vec<u8>> = cubes
-            .par_iter()
-            .map(|(_, c)| self.solve(t, c, Effort { depth: if late() { 0 } else { first }, variants: 6 }))
-            .collect();
+        let quick = |c: &C3| self.solve(t, c, Effort { depth: if late() { 0 } else { first }, variants: 6 });
+        let mut found: Vec<Vec<u8>> = if deadline.is_some() {
+            cubes.par_iter().map(|(_, c)| quick(c)).collect()
+        } else {
+            // Larger cubes often reach the same 3x3x3 along several
+            // reductions. The quick search depends only on that cube.
+            let mut slots = std::collections::HashMap::new();
+            let mut unique = Vec::new();
+            let indices: Vec<_> = cubes.iter().map(|(_, c)| *slots.entry(*c).or_insert_with(|| {
+                unique.push(*c);
+                unique.len() - 1
+            })).collect();
+            let solutions: Vec<_> = unique.par_iter().map(quick).collect();
+            indices.into_iter().map(|i| solutions[i].clone()).collect()
+        };
+        let mut searched = vec![first; cubes.len()];
         for &(depth, count) in steps {
             if late() {
                 break;
@@ -221,7 +233,7 @@ impl Two3 {
                     // All six variants through the first depth already gave the incumbent.
                     // A tie with that incumbent cannot change this cube or the global best.
                     let limit = room.min(found[k].len().checked_sub(1)?);
-                    let start = first.saturating_add(1);
+                    let start = searched[k].saturating_add(1);
                     if start > depth || start > limit {
                         return None;
                     }
@@ -236,6 +248,11 @@ impl Two3 {
             // step was found on some runs and not on others. Only the ones
             // that reach it are found every time, and only they are kept,
             // so that the next step starts from the same cubes on every run.
+            // A later bound can only tighten. For these roots, every
+            // earlier phase-one length has already had that opportunity.
+            for &k in &order {
+                searched[k] = searched[k].max(depth);
+            }
             let best = best.into_inner();
             for (k, sol) in deeper {
                 if cubes[k].0 + sol.len() <= best && sol.len() < found[k].len() {
