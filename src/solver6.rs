@@ -1024,6 +1024,8 @@ pub struct Solver6 {
 
 /// A cube part of the way through: moves so far, their count per step, the cube.
 pub(crate) type Partial = (Vec<u8>, [usize; 3], Vec<u8>);
+/// A wing split and the full cube it leaves for the next step.
+type Split = (Vec<u8>, Vec<u8>);
 
 impl Solver6 {
     pub fn load() -> Solver6 {
@@ -1062,7 +1064,7 @@ impl Solver6 {
 
     /// Step 2 from a staged cube, the results that leave step 3 least to do
     /// first: (moves, cube). `matched` is for the quick way.
-    fn splits(&self, f1: &[u8], matched: bool) -> Vec<(Vec<u8>, Vec<u8>)> {
+    fn splits(&self, f1: &[u8], matched: bool) -> Vec<Split> {
         let suits = |path: &[u8]| self.suits(f1, path);
         let mut out: Vec<(usize, Vec<u8>, Vec<u8>)> = self
             .inner
@@ -1088,37 +1090,34 @@ impl Solver6 {
     /// Steps 2 and 3 for one staging: the exact way within the budget, else
     /// the same by beam search, else (no beam, or it found nothing) the quick way.
     pub(crate) fn inner_steps(&self, staging: &[u8], f1: &[u8], budget: u64, beam: usize, splits: usize) -> Vec<Partial> {
+        let starts = if budget > 0 || beam > 0 { self.splits(f1, false) } else { Vec::new() };
+        self.inner_steps_from(staging, f1, &starts, budget, beam, splits)
+    }
+
+    fn inner_steps_from(
+        &self, staging: &[u8], f1: &[u8], starts: &[Split], budget: u64, beam: usize, splits: usize,
+    ) -> Vec<Partial> {
         let mut out = Vec::new();
         if budget > 0 {
-            if let Some((sp, f2)) = self.splits(f1, false).into_iter().next() {
-                let reds = self.inner.reduce(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), true, 99, budget, 4);
+            if let Some((sp, f2)) = starts.first() {
+                let reds = self.inner.reduce(&self.s6, &self.solver4, f2, &self.inner_cube(f2), true, 99, budget, 4);
                 for red in reds.unwrap_or_default() {
                     let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
-                    out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(&f2, &red)));
+                    out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(f2, &red)));
                 }
             }
         }
         if out.is_empty() && beam > 0 {
             // The same step by beam search, from the most promising splits.
-            let (t0, clock) = (crate::clock::cpu_ms(), std::time::Instant::now());
-            let found = self.splits(f1, false);
-            if std::env::var_os("CUBE6_TRACE").is_some() {
-                eprintln!(
-                    "    splits: {} different cubes in {:.0} ms, {:.0} ms of processor",
-                    found.len(),
-                    clock.elapsed().as_secs_f64() * 1e3,
-                    crate::clock::cpu_ms() - t0
-                );
-            }
-            for (i, (sp, f2)) in found.into_iter().take(splits).enumerate() {
+            for (i, (sp, f2)) in starts.iter().take(splits).enumerate() {
                 let t0 = crate::clock::cpu_ms();
-                let reds = self.inner.reduce_beam(&self.s6, &self.solver4, &f2, &self.inner_cube(&f2), beam, 4, i as u32);
+                let reds = self.inner.reduce_beam(&self.s6, &self.solver4, f2, &self.inner_cube(f2), beam, 4, i as u32);
                 if std::env::var_os("CUBE6_TRACE").is_some() {
                     eprintln!("    beam: split {}, {} results of {:?} moves in {:.0} ms of processor", sp.len(), reds.len(), reds.first().map(|r| r.len()), crate::clock::cpu_ms() - t0);
                 }
                 for red in reds {
                     let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
-                    out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(&f2, &red)));
+                    out.push((moves, [staging.len(), sp.len(), red.len()], self.apply(f2, &red)));
                 }
             }
         }
@@ -1157,7 +1156,7 @@ impl Solver6 {
     /// Nothing if the beam runs onto its plateau, which one beam does more
     /// often than the best of several.
     pub(crate) fn inner_joint(&self, f1: &[u8], beam: usize, splits: usize, cap: usize) -> Vec<Partial> {
-        self.inner_joint_many(&[(Vec::new(), f1.to_vec())], beam, splits, cap, 0)
+        self.inner_joint_many(&[(Vec::new(), f1.to_vec())], &[self.splits(f1, false)], beam, splits, cap, 0)
     }
 
     /// `inner_joint` for several stagings of one cube at once, each given
@@ -1165,21 +1164,22 @@ impl Solver6 {
     /// split of every staging, each as many moves behind as it is longer
     /// than the shortest, so that the results are the shortest in total
     /// (and those of `more` lengths after them, up to `cap` of each).
-    pub(crate) fn inner_joint_many(&self, stagings: &[(Vec<u8>, Vec<u8>)], beam: usize, splits: usize, cap: usize, more: usize) -> Vec<Partial> {
-        // (staging, split, cube after the split)
-        let found: Vec<(usize, Vec<u8>, Vec<u8>)> = stagings
-            .par_iter()
-            .enumerate()
-            .flat_map_iter(|(i, (_, f1))| self.splits(f1, false).into_iter().take(splits).map(move |(sp, f2)| (i, sp, f2)))
+    fn inner_joint_many(
+        &self, stagings: &[(Vec<u8>, Vec<u8>)], starts: &[Vec<Split>], beam: usize, splits: usize, cap: usize, more: usize,
+    ) -> Vec<Partial> {
+        let found: Vec<(usize, &Split)> = starts.iter().enumerate()
+            .flat_map(|(i, group)| group.iter().take(splits).map(move |split| (i, split)))
             .collect();
-        let spent = |x: &(usize, Vec<u8>, Vec<u8>)| stagings[x.0].0.len() + x.1.len();
+        let spent = |(i, (sp, _)): &(usize, &Split)| stagings[*i].0.len() + sp.len();
         let least = found.iter().map(spent).min().unwrap_or(0);
-        let cubes: Vec<(&[u8], Cube, usize)> = found.iter().map(|x| (&x.2[..], self.inner_cube(&x.2), spent(x) - least)).collect();
+        let cubes: Vec<(&[u8], Cube, usize)> = found.iter().map(|entry @ (_, (_, f))| {
+            (f.as_slice(), self.inner_cube(f), spent(entry) - least)
+        }).collect();
         let reds = self.inner.reduce_beam_roots(&self.s6, &self.solver4, &cubes, beam, cap, 0, more);
         reds.into_iter()
             .map(|(k, red)| {
-                let (i, sp, f2) = &found[k];
-                let staging = &stagings[*i].0;
+                let (i, (sp, f2)) = found[k];
+                let staging = &stagings[i].0;
                 let moves: Vec<u8> = staging.iter().chain(sp.iter()).chain(red.iter()).copied().collect();
                 (moves, [staging.len(), sp.len(), red.len()], self.apply(f2, &red))
             })
@@ -1209,16 +1209,28 @@ impl Solver6 {
             // one search finds nothing on some cubes; they get the others.
             let stagings: Vec<(Vec<u8>, Vec<u8>)> =
                 staged[..staged.len().min(p.tries)].iter().map(|st| (st.moves.clone(), self.apply(&held, &st.moves))).collect();
+            // The joint search and its fallback start from the same ranked splits.
+            let starts: Vec<Vec<Split>> = if p.joint > 0 || p.budget > 0 || p.beam > 0 {
+                stagings.par_iter().map(|(_, f)| self.splits(f, false)).collect()
+            } else {
+                vec![Vec::new(); stagings.len()]
+            };
             let mut found = match p.joint {
                 0 => Vec::new(),
-                beam => self.inner_joint_many(&stagings, beam, JOINT_SPLITS, JOINT_CAP, JOINT_MORE),
+                beam => self.inner_joint_many(&stagings, &starts, beam, JOINT_SPLITS, JOINT_CAP, JOINT_MORE),
             };
             if trace && p.joint > 0 {
                 eprintln!("    joint: {} results of {:?} to {:?} moves", found.len(), found.first().map(|c| c.0.len()), found.last().map(|c| c.0.len()));
             }
             if found.is_empty() {
-                for (moves, f1) in &stagings {
-                    found.extend(self.inner_steps(moves, f1, p.budget, p.beam, p.splits));
+                // Overlap two ordinary beams to fill idle workers. A wider beam
+                // gets the same memory headroom as a standalone search.
+                let batch_size = if p.beam <= 100_000 && p.budget == 0 { 2 } else { 1 };
+                for (batch, cuts) in stagings.chunks(batch_size).zip(starts.chunks(batch_size)) {
+                    let results: Vec<_> = batch.par_iter().zip(cuts).map(|((moves, f1), cuts)| {
+                        self.inner_steps_from(moves, f1, cuts, p.budget, p.beam, p.splits)
+                    }).collect();
+                    found.extend(results.into_iter().flatten());
                 }
             }
             cands.extend(found.into_iter().map(|c| (hold, c)));
