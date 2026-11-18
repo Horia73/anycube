@@ -886,8 +886,70 @@ pub struct Limits {
     pub floor: usize,
 }
 
+/// An exhausted subtree is useful to other starts of the same phase. Only
+/// an exact key is a hit. Concurrent replacements can evict an entry.
+struct FailedSubtrees {
+    slots: Vec<AtomicU64>,
+}
+
+impl FailedSubtrees {
+    fn new(phase: usize, starts: usize) -> Self {
+        // P and E each use at most 4 MiB, scoped to this phase of this solve.
+        let n = if phase == 0 { 0 } else { starts.clamp(1, 4096).next_power_of_two() * 128 };
+        Self { slots: (0..n).map(|_| AtomicU64::new(0)).collect() }
+    }
+
+    #[inline(always)]
+    fn entry(&self, position: u64, rem: usize, last: u8) -> (&AtomicU64, u64) {
+        // A previous move's power does not affect its allowed successors.
+        // A turn wider than two layers rules out every move on its axis.
+        let face = match last {
+            255 => 15,
+            0..=35 => last / 3,
+            _ => 12 + (last / 3) % 3,
+        };
+        let key = 1 + ((position * 64 + rem as u64) * 16 + face as u64);
+        let mixed = (key ^ (key >> 32)).wrapping_mul(0x9e3779b97f4a7c15);
+        let slot = (mixed >> 32) as usize & (self.slots.len() - 1);
+        (&self.slots[slot], key)
+    }
+}
+
+#[cfg(test)]
+mod failed_subtree_tests {
+    use super::*;
+
+    #[test]
+    fn equal_previous_move_keys_allow_the_same_successors() {
+        let cache = FailedSubtrees { slots: vec![AtomicU64::new(0)] };
+        let mut followers = [None; 16];
+        for last in 0..=255u8 {
+            let (_, key) = cache.entry(0, 5, last);
+            let allowed = (0..36).fold(0u64, |bits, m| {
+                bits | (((last == 255 || !skip_move(last, m)) as u64) << m)
+            });
+            let slot = &mut followers[((key - 1) & 15) as usize];
+            assert_eq!(*slot.get_or_insert(allowed), allowed);
+        }
+    }
+
+    #[test]
+    fn a_collision_cannot_certify_another_position_depth_or_face() {
+        let cache = FailedSubtrees { slots: vec![AtomicU64::new(0)] };
+        let largest = N_Q as u64 * 4900 * 4900 - 1;
+        let (slot, key) = cache.entry(largest, 39, 3);
+        slot.store(key, Relaxed);
+        for (pos, rem, last) in [(0, 39, 3), (largest, 38, 3), (largest, 39, 255)] {
+            let (same_slot, other) = cache.entry(pos, rem, last);
+            assert_ne!(same_slot.load(Relaxed), other);
+        }
+        assert_eq!(cache.entry(largest, 39, 5).1, key);
+    }
+}
+
 /// State shared by the searches of one phase.
 struct Run {
+    failed: FailedSubtrees,
     limits: Limits,
     count: AtomicUsize,
     stop: AtomicBool,
@@ -915,6 +977,9 @@ struct Search<'a> {
     path: [u8; 40],
     out: Vec<Vec<u8>>,
     ticks: u32,
+    // A phase-P endpoint can be accepted for one full cube but rejected for
+    // another with the same four tracked edges. Count both as reached.
+    p_endpoints: u64,
 }
 
 impl Search<'_> {
@@ -1021,7 +1086,10 @@ impl Edges5 {
     ) -> Vec<Found> {
         nodes.sort_by_key(|n| (n.est, n.cost));
         let Some(first) = nodes.first().map(|n| n.est) else { return Vec::new() };
-        let run = Run { limits: *limits, count: AtomicUsize::new(0), stop: AtomicBool::new(false), nodes: AtomicU64::new(0) };
+        let run = Run {
+            limits: *limits, count: AtomicUsize::new(0), stop: AtomicBool::new(false), nodes: AtomicU64::new(0),
+            failed: FailedSubtrees::new(phase, nodes.len()),
+        };
         let trace = std::env::var_os("CUBE5_TRACE").is_some();
         let mut out = Vec::new();
         'totals: for total in first..=first + 12 {
@@ -1035,7 +1103,7 @@ impl Edges5 {
                 let (group, room) = (&nodes[low..high], limits.cap.saturating_sub(out.len()));
                 let found: Vec<Found> = crate::search::InOrder::run(group.len(), room, |job, order| {
                     let n = &group[job];
-                    let mut s = Search { e5: self, run: &run, job, order, path: [0; 40], out: Vec::new(), ticks: 0 };
+                    let mut s = Search { e5: self, run: &run, job, order, path: [0; 40], out: Vec::new(), ticks: 0, p_endpoints: 0 };
                     if !run.stop.load(Relaxed) {
                         search(&mut s, n, total - n.cost);
                     }
@@ -1405,9 +1473,29 @@ impl Search<'_> {
     }
 
     fn dfs_p(&mut self, root: &Cube5, n: &PNode, rem: usize, last: u8, depth: usize) -> bool {
+        if rem < 5 {
+            return self.p_children(root, n, rem, last, depth);
+        }
+        // Both edge coordinates contain the same four middle-edge slots.
+        let edges = n.ml * 1680 + n.mh % 1680;
+        let position = edges as u64 * (4900 * 4900) + (n.fb * 4900 + n.rl) as u64;
+        let (slot, key) = self.run.failed.entry(position, rem, last);
+        if slot.load(Relaxed) == key {
+            return false;
+        }
+        let before = self.p_endpoints;
+        let stop = self.p_children(root, n, rem, last, depth);
+        if !stop && self.p_endpoints == before {
+            slot.store(key, Relaxed);
+        }
+        stop
+    }
+
+    fn p_children(&mut self, root: &Cube5, n: &PNode, rem: usize, last: u8, depth: usize) -> bool {
         let e = self.e5;
         if rem == 0 {
             // Four whole edges are in the middle slice; phase E must also accept the rest.
+            self.p_endpoints += 1;
             let mut c = *root;
             c.apply_seq(&self.path[..depth]);
             return e.e_start(&c).is_some() && self.found(depth);
@@ -1492,6 +1580,25 @@ impl Search<'_> {
     }
 
     fn dfs_e(&mut self, n: &ENode, rem: usize, last: u8, depth: usize) -> bool {
+        if rem < 5 {
+            return self.e_children(n, rem, last, depth);
+        }
+        // The exact pairing distance is determined by lo and hi.
+        let pairs = (n.lo * N_P8 + n.hi) as u64;
+        let position = pairs * (4900 * 36) + (n.ud * 36 + n.side) as u64;
+        let (slot, key) = self.run.failed.entry(position, rem, last);
+        if slot.load(Relaxed) == key {
+            return false;
+        }
+        let before = self.out.len();
+        let stop = self.e_children(n, rem, last, depth);
+        if !stop && self.out.len() == before {
+            slot.store(key, Relaxed);
+        }
+        stop
+    }
+
+    fn e_children(&mut self, n: &ENode, rem: usize, last: u8, depth: usize) -> bool {
         if rem == 0 {
             return n.d == 0 && self.e5.e_centre(n) == 0 && self.found(depth);
         }
