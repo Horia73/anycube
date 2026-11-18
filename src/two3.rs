@@ -216,6 +216,7 @@ impl Two3 {
             let solutions: Vec<_> = unique.par_iter().map(quick).collect();
             indices.into_iter().map(|i| solutions[i].clone()).collect()
         };
+        let mut searched = vec![first; cubes.len()];
         for &(depth, count) in steps {
             if late() {
                 break;
@@ -232,7 +233,7 @@ impl Two3 {
                     // All six variants through the first depth already gave the incumbent.
                     // A tie with that incumbent cannot change this cube or the global best.
                     let limit = room.min(found[k].len().checked_sub(1)?);
-                    let start = first.saturating_add(1);
+                    let start = searched[k].saturating_add(1);
                     if start > depth || start > limit {
                         return None;
                     }
@@ -247,6 +248,11 @@ impl Two3 {
             // step was found on some runs and not on others. Only the ones
             // that reach it are found every time, and only they are kept,
             // so that the next step starts from the same cubes on every run.
+            // A later bound can only tighten. For these roots, every
+            // earlier phase-one length has already had that opportunity.
+            for &k in &order {
+                searched[k] = searched[k].max(depth);
+            }
             let best = best.into_inner();
             for (k, sol) in deeper {
                 if cubes[k].0 + sol.len() <= best && sol.len() < found[k].len() {
