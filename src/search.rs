@@ -421,6 +421,38 @@ where
     beam_roots(p, &roots, score, width, cap, max_len, salt, accept, more).into_iter().map(|found| found.1).collect()
 }
 
+/// Sorted children: score, tie-breaking hash, position, parent and move.
+type BeamChild<N> = (u32, u32, N, u32, u8);
+
+fn solved_paths<N: Eq>(
+    goals: &[BeamChild<N>], trail: &[Vec<(u32, u8)>], cap: usize,
+    accept: &(dyn Fn(&[u8]) -> bool + Sync),
+) -> Vec<(usize, Vec<u8>)> {
+    // One way to each solved state first, then a second one, and so on.
+    let mut order = Vec::with_capacity(goals.len());
+    let mut nth = 0;
+    for (j, goal) in goals.iter().enumerate() {
+        nth = if j > 0 && goal.2 == goals[j - 1].2 { nth + 1 } else { 0 };
+        order.push((nth, j));
+    }
+    order.sort_unstable();
+    order.into_iter().filter_map(|(_, j)| {
+        let (_, _, _, parent, m) = goals[j];
+        let mut path = vec![m];
+        let mut at = parent as usize;
+        for step in trail.iter().rev() {
+            let (parent, m) = step[at];
+            if m == NONE {
+                path.reverse();
+                return accept(&path).then_some((parent as usize, path));
+            }
+            path.push(m);
+            at = parent as usize;
+        }
+        unreachable!("every path in the beam starts at a root")
+    }).take(cap).collect()
+}
+
 /// One beam search for several cubes at once: each root with the number of
 /// moves already spent on it beyond the least of them, so that the states of
 /// a level are the same number of moves from the start whichever root they
@@ -486,6 +518,33 @@ where
             level.clear();
             continue;
         }
+        let most = width + width / 2;
+        // A goal among the leading parents means the beam can often finish
+        // this level outright. Check every possible one-move finish, preserving
+        // the ordinary ranking, without scoring the millions of other children.
+        let last_level = left == 0 && level.iter().take(16).any(|(n, last)| {
+            p.bound(n) <= 1 && followers[*last as usize].iter().any(|&k| p.solved(&p.next(n, k)))
+        });
+        if last_level {
+            let mut goals: Vec<BeamChild<P::Node>> = level.par_iter().enumerate()
+                .filter(|(_, (n, _))| p.bound(n) <= 1)
+                .flat_map_iter(|(i, (n, last))| {
+                    followers[*last as usize].iter().filter_map(move |&k| {
+                        let child = p.next(n, k);
+                        p.solved(&child).then(|| (0, mixed(&child, salt), child, i as u32, moves[k]))
+                    })
+                }).collect();
+            if goals.len() > most {
+                goals.select_nth_unstable(most);
+                goals.truncate(most);
+            }
+            goals.par_sort_unstable();
+            let found = solved_paths(&goals, &trail, cap, accept);
+            if !found.is_empty() {
+                all.extend(found);
+                return all;
+            }
+        }
         scores.resize(level.len() * count, u16::MAX);
         scores.par_chunks_mut(256 * count).zip(level.par_chunks(256))
             .for_each(|(out, chunk)| {
@@ -504,10 +563,9 @@ where
                     }
                 }
             });
-        let most = width + width / 2;
         let cut = beam_cut(&scores, most);
         // Only the states up to that score are built: (score, hash, state, parent, move).
-        let mut next: Vec<(u32, u32, P::Node, u32, u8)> = (0..scores.len())
+        let mut next: Vec<BeamChild<P::Node>> = (0..scores.len())
             .into_par_iter()
             .filter(|&j| scores[j] <= cut)
             .map(|j| {
@@ -531,40 +589,13 @@ where
         next.dedup_by(|x, y| x.0 != 0 && x.2 == y.2);
         let solved = next.iter().take_while(|x| x.0 == 0).count();
         if solved > 0 {
-            // One way to each solved state first, then a second one, and so on.
-            let mut order: Vec<(usize, usize)> = Vec::with_capacity(solved);
-            let mut nth = 0;
-            for j in 0..solved {
-                nth = if j > 0 && next[j].2 == next[j - 1].2 { nth + 1 } else { 0 };
-                order.push((nth, j));
-            }
-            order.sort_unstable();
-            let found: Vec<(usize, Vec<u8>)> = order
-                .iter()
-                .map(|&(_, j)| &next[j])
-                .map(|x| {
-                    let mut path = vec![x.4];
-                    let mut at = x.3 as usize;
-                    let mut root = 0;
-                    for step in trail.iter().rev() {
-                        let (parent, m) = step[at];
-                        if m == NONE {
-                            root = parent as usize;
-                            break;
-                        }
-                        path.push(m);
-                        at = parent as usize;
-                    }
-                    path.reverse();
-                    (root, path)
-                })
-                .filter(|found| accept(&found.1))
-                .take(cap)
-                .collect();
-            let any = !found.is_empty();
-            all.extend(found);
-            if any && left == 0 {
-                return all;
+            if !last_level {
+                let found = solved_paths(&next[..solved], &trail, cap, accept);
+                let any = !found.is_empty();
+                all.extend(found);
+                if any && left == 0 {
+                    return all;
+                }
             }
             next.drain(..solved);
         }
@@ -755,6 +786,17 @@ mod tests {
         let found = beam_roots(&Grid, &[((2, 2), 0)], score, 100, 100, 20, 0, &|_| true, 0);
         assert_eq!(found.len(), 2);
         assert_ne!(found[0].1, found[1].1);
+    }
+
+    #[test]
+    fn a_rejected_one_move_finish_leaves_later_roots_in_the_beam() {
+        let roots = [((2, 3), 0), ((2, 2), 1)];
+        let accept = |moves: &[u8]| moves.len() == 2;
+        let found = beam_roots(&Grid, &roots, score, 100, 2, 5, 0, &accept, 0);
+        let through_next_level = beam_roots(&Grid, &roots, score, 100, 2, 5, 0, &accept, 1);
+        assert_eq!(found, through_next_level);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().all(|(root, _)| *root == 1));
     }
 
     #[test]
