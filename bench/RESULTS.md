@@ -4027,3 +4027,26 @@ anycube verify --size 4 completed.tsv
 ```
 
 For example, the 4x4x4 scramble `D' U' F' Uw' U R' U R Uw U' R2` and the partial sequence `R U' R F D U` leave three wings. The example returns the verified 11-turn solution `R2 U Uw' R' U' R U' Uw F U D`.
+
+## Faster default 6x6x6 wing searches
+
+The paired benchmark compares the previous default at `b19ceb0` with `e6ddba9` on the 10-core Apple M1 Pro with 16 GB of RAM. Both versions ran one at a time. Five-scramble batches alternated which binary went first. Wall time starts after the solver loads its lookup tables. The original size-6 benchmark used ten 300-turn random-move scrambles. The follow-up used a separate seed and another thirty 300-turn scrambles.
+
+| Comparable default timings | Cases | Mean moves before | Mean moves after | Mean seconds before | Mean seconds after |
+|---|---:|---:|---:|---:|---:|
+| Original 6x6x6 set, seed 6181085 | 10 | 110.50 | 110.50 | 4.674 | 3.540 |
+| First ten of fresh 6x6x6 set, seed 68119471 | 10 | 108.20 | 108.20 | 4.804 | 3.149 |
+| Both sets above | 20 | 109.35 | 109.35 | 4.739 | 3.344 |
+
+Every one of these twenty solves finished sooner. Median wall time across them went from 4.278 to 2.964 seconds. All twenty lengths matched and nineteen complete words matched. After the tenth fresh scramble the machine experienced sustained memory pressure during the next batch. Table loading rose from around one second to nine seconds in a diagnostic run. The interrupted batch was restarted for both binaries. The per-scramble file retains the additional timings under variable load. The table above uses the two batches of each seed that finished before the interruption.
+
+Across all 40 paired size-six solves the mean length was 109.15 moves in both versions. All 40 answers passed sticker replay with the previous binary, all 40 lengths matched, and 39 complete words matched. On the remaining 20 fresh scrambles the raw wall-time means were 27.985 and 72.393 seconds. Ten of those twenty favoured each binary. In fresh cases 21–25 the previous binary loaded its tables in 1.17 s and the new one in 8.67 s. Even in the final batch, where both loads took about 9.3 s, solving averaged 81.57 s before and 88.42 s after. The speedup above applies to the earlier, comparable runs. These runs did not establish a speedup under sustained paging. [Per-scramble timings and move counts](six-speed-paired.tsv)
+
+Two changes cut the search work. The six-layer solver reuses its ranked inner wing splits if the joint search falls back to individual starts. It can run two ordinary fallback searches side by side. The projected five-layer solver shares exhausted subtrees across starts in phases P and E. It records the complete phase coordinate, remaining depth and previous turn family. A phase-P entry is saved only after a complete search with zero abstract endpoints, since a different full cube can accept an endpoint that the first cube rejects. Each phase uses up to 4 MiB for these entries.
+
+On eight separate development scrambles at seed 80670021, four joint searches needed the fallback. The two edge phases visited about 33.8 and 36.6 million positions per cube before the change, and 15.3 and 14.6 million with the two optimizations. All eight development answers matched move for move.
+
+```sh
+anycube scrambles --size 6 --length 300 --count 30 --seed 68119471 > /tmp/anycube-six-30.txt
+anycube bench6 /tmp/anycube-six-30.txt --out /tmp/anycube-six-30.tsv
+```
