@@ -4010,6 +4010,8 @@ A second sampling scheme included all 4,048 directed wing triples reachable by c
 
 A search for partial solutions by editing existing answers examined windows up to 14 turns long. It tried every shorter replacement of up to four turns with the same corner action, including both widths, and tested the actual sticker colours. On the 48 cases per size it found zero shorter solved words and zero shorter words leaving only one wing cycle. A search that accepts the defect while constructing the reduction is the next test. At the measured correction costs, the upper targets of 37 and 60 moves would require partial solutions averaging about 29 and 52 moves respectively.
 
+On the same 48 solutions the final wing-reduction phase averaged 11.125 moves on the 4x4x4 and 13.688 on the 5x5x5. The other phases, including the 3x3x3 finish, averaged 29.417 and 53.771 moves. Even deleting the whole final wing phase and adding back the measured average insertion cost gives 37.21 and 61.29 moves at those other phase lengths. This calculation motivates choosing the three wings earlier in the reduction and selecting candidates together with their 3x3x3 finish. It is a comparison with the observed means, and gives no lower bound for a different search.
+
 The [standalone example](../examples/wing_insertions.rs) reads one scramble and partial solution per line, separated by a tab, and prints the scramble with the shortest completed word it finds. It walks the actual and desired sticker colours backwards along the partial solution and checks the whole answer on the forward sticker model. It repaired all 24 planted partial solutions per size on a separate CLI replay with the original binary. Those inputs deliberately left one wing cycle.
 
 ```sh
