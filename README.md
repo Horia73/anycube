@@ -219,18 +219,14 @@ Fw' L D' L U Uw' B2 Rw U' Uw2 R Fw' R2 B2 D2 F' D' Uw2 Fw2 L2 D F D2 Uw2 Rw2 L2 
 41 moves (phases [12, 0, 13, 16]), tables 24 ms, search 3646 ms
 ```
 
-In default mode, the 4x4x4 also tries an opening wide turn and revisits
-centre stagings on longer solves. The 5x5x5 searches from both sides of
-the last reduction and compares a solution from a reflected cube. Both
-solvers price the complete sequence, including the final 3x3x3.
+Default mode uses the ordinary reduction and 3x3x3 finishing search.
+With `--mode full`, the 4x4x4 also tries an opening wide turn and
+revisits centre stagings on longer solves. The 5x5x5 searches the last
+reduction from both sides and tries a reflected cube.
 
-From size 8, the default solver compares complete endings for the last
-two sets of wings. It ranks the alternatives by their prefix length and
-the number of wings still to pair with their middle edge, then searches
-the best six. Full mode also tries the first eight distinct alternatives
-in reduction order.
-From size 9 it explores different half-turn widths while staging the
-centres. The shortest complete solution wins.
+From size 8, default mode reduces one set of wings at a time. Full mode
+compares complete endings for the last two sets. Starting at size 9 it
+also explores different half-turn widths while staging the centres.
 
 ```bash
 anycube solve --size 15 --mode full "$(sed -n '11p' bench/scrambles151515-20.txt)"

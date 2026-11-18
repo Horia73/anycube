@@ -406,7 +406,7 @@ impl SolverN {
     /// The 3-layer turns of the penultimate orbit are wide turns on the
     /// outer 5x5x5 as well. Compare full endings on that projection before
     /// committing either set of turns on the large cube.
-    fn last_two_wings(&self, inner: &[u8], outer: &[u8], p: &Params5, full: bool) -> Result<(Vec<u8>, Solution5), String> {
+    fn last_two_wings(&self, inner: &[u8], outer: &[u8], p: &Params5) -> Result<(Vec<u8>, Solution5), String> {
         let small = &crate::c5::tables5().geometry;
         let residual = |seq: &[u8]| {
             let mut f = outer.to_vec();
@@ -448,11 +448,9 @@ impl SolverN {
         };
         ranked.truncate(6);
         compare(&ranked);
-        if full {
-            let first: Vec<_> = (0..alternatives.len().min(8)).collect();
-            if first != ranked {
-                compare(&first);
-            }
+        let first: Vec<_> = (0..alternatives.len().min(8)).collect();
+        if first != ranked {
+            compare(&first);
         }
         Ok(best)
     }
@@ -599,10 +597,10 @@ impl SolverN {
             let layers = [0, k, mid, last - k, last];
             let sub = g.sub_facelets(&w.f, &layers);
             // Without a clock: the same cube gives the same solution however busy the machine is.
-            let wide = Params5 { c_keep: 6000, time_ms: 0, ..Params5::normal() };
-            if k == 2 {
+            let wide = Params5 { c_keep: 6000, time_ms: 0, alternate_endings: search != Search::Normal, ..Params5::normal() };
+            if k == 2 && search != Search::Normal {
                 let outer = g.sub_facelets(&w.f, &[0, 1, mid, last - 1, last]);
-                let (prefix, ending) = self.last_two_wings(&sub, &outer, &wide, search != Search::Normal)?;
+                let (prefix, ending) = self.last_two_wings(&sub, &outer, &wide)?;
                 w.apply(&prefix, &[1, k + 1]);
                 w.apply(&ending.moves, &[1, 2]);
                 tail = ending.lens[5];

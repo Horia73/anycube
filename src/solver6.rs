@@ -992,7 +992,10 @@ impl Params6 {
     /// The exact step 3 (`budget`) stays off: it takes minutes on some
     /// cubes for less than a move.
     pub fn full() -> Params6 {
-        let outer = Params5 { c_keep: 6000, p_keep: 18_000, e_keep: 9000, pool: 800, deeper: vec![(12, 200), (13, 24)], time_ms: 0, ..Params5::normal() };
+        let outer = Params5 {
+            c_keep: 6000, p_keep: 18_000, e_keep: 9000, pool: 800, deeper: vec![(12, 200), (13, 24)],
+            alternate_endings: true, time_ms: 0, ..Params5::normal()
+        };
         Params6 { width: 16, first: 16, fan: 64, tries: 12, splits: 2, holds: 1, finals: 128, budget: 0, beam: 300_000, joint: 0, outer }
     }
 }

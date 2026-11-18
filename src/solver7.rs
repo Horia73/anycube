@@ -428,7 +428,7 @@ impl Params7 {
             inner: Params5 { c_keep: 500, p_keep: 500, e_keep: 100, time_ms: 0, ..Params5::normal() },
             reductions: 16,
             // No clock: a phase cut short can leave the next one nothing to work with.
-            outer: Params5 { c_keep: 6000, p_keep: 2000, e_keep: 600, time_ms: 0, alternate_endings: false, ..Params5::normal() },
+            outer: Params5 { c_keep: 6000, p_keep: 2000, e_keep: 600, time_ms: 0, ..Params5::normal() },
         }
     }
 
@@ -436,9 +436,7 @@ impl Params7 {
     /// its beam can be wide: its length still falls at 300,000 states,
     /// where the staging's has stopped at 100,000.
     pub fn normal() -> Params7 {
-        let mut p = Params7 { beam: 100_000, match_beam: 300_000, ..Params7::fast() };
-        p.outer.alternate_endings = true;
-        p
+        Params7 { beam: 100_000, match_beam: 300_000, ..Params7::fast() }
     }
 }
 
