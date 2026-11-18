@@ -97,8 +97,8 @@ run held at once, tables included (for sizes 8 and up of v0.2.0: the most
 the first cube of the run held, which is less). Other solvers
 on the same scrambles: [`bench/README.md`](bench/README.md).
 
-The default-mode benchmark compares the current and previous searches on the same
-212 random scrambles. [Moves and seconds for sizes 2 through 21](bench/RESULTS.md#faster-defaults-on-the-same-212-random-scrambles)
+The default-mode benchmarks track 212 fixed random scrambles and identify the
+latest measured version for each size. [Moves and seconds for sizes 2 through 21](bench/RESULTS.md#default-comparison-for-all-20-sizes)
 
 A follow-up on the 6x6x6 cut mean solve time from 4.94 to 3.40 seconds on 40
 random scrambles. Every solution matched its previous length.

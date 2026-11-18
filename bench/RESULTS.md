@@ -4074,6 +4074,10 @@ anycube scrambles --size 6 --length 300 --count 30 --seed 68119471 > /tmp/anycub
 anycube bench6 /tmp/anycube-six-30.txt --out /tmp/anycube-six-30.tsv
 ```
 
+A diagnostic build requested random-read advice from the operating system for lookup files of at least 4 MiB. In two fresh six-cube cases, alternating which setting ran first, the ordinary mapping took 4.992 and 3.459 seconds. With the advice it took 7.250 and 3.027 seconds. Table-load times had returned to around one second for these tests. The release code retains the ordinary mapping.
+
+Additional sticker replays passed for 6x6x6 in fast and full modes and from direct sticker input, plus one ordinary 7x7x7, 8x8x8 and 9x9x9. The full-mode regression covering the 4x4x4 and 5x5x5 also passed.
+
 ### Default comparison for all 20 sizes
 
 This table brings together the measurements on the same 212 fixed scrambles. The first numbers come from the default with the extra searches (`331cb64`). The final column identifies the run that supplied the most recent measurements shown. The 6x6x6 row uses the original ten cases so both sides use the same scrambles. Sizes 7–21 retain their earlier default measurements. The new wing search is also used in some larger solvers, so their timing on this revision remains unmeasured.
