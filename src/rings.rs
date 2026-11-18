@@ -687,10 +687,14 @@ impl Ring {
     /// one under it agree, and until they are each other's opposite.
     fn pair_tables(&self) -> Vec<[[Vec<u8>; 2]; 3]> {
         let every: Vec<usize> = (0..self.moves.len()).collect();
+        let complement: [usize; 70] = std::array::from_fn(|r| self.rank8[(!self.unrank8[r] & 255) as usize] as usize);
         let table = |k: usize, axis: usize| {
-            [false, true].map(|opposite| {
-                pair_table(&self.moves, &every, &self.perms[2 * k], &self.perms[2 * k + 1], &self.rank8, &self.unrank8, axis, opposite)
-            })
+            let same = pair_table(&self.moves, &every, &self.perms[2*k], &self.perms[2*k+1], &self.rank8, &self.unrank8, axis, false);
+            // Complementing one orbit commutes with every permutation of
+            // its eight slots. The same weighted distances therefore give
+            // the cost of bringing the two patterns to opposite colours.
+            let opposite = (0..4900).map(|i| same[i/70*70 + complement[i%70]]).collect();
+            [same, opposite]
         };
         (0..self.level.len()).map(|k| [0, 1, 2].map(|axis| table(k, axis))).collect()
     }
@@ -1730,6 +1734,7 @@ mod tests {
                     })
                 })
                 .collect();
+            assert_eq!(ring.pair_tables(), dist);
             let choices: Vec<(u32, [usize; 3])> = (0..8usize).map(|bits| (0, [bits & 1, bits >> 1 & 1, bits >> 2])).collect();
             let (_, moves, ending) = ring.whole(&root, &dist, &choices).expect("a matching");
             assert!(ending <= EASY + 1 && moves.len() < 45);

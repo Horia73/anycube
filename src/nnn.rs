@@ -406,7 +406,7 @@ impl SolverN {
     /// The 3-layer turns of the penultimate orbit are wide turns on the
     /// outer 5x5x5 as well. Compare full endings on that projection before
     /// committing either set of turns on the large cube.
-    fn last_two_wings(&self, inner: &[u8], outer: &[u8], p: &Params5) -> Result<(Vec<u8>, Solution5), String> {
+    fn last_two_wings(&self, inner: &[u8], outer: &[u8], p: &Params5, full: bool) -> Result<(Vec<u8>, Solution5), String> {
         let small = &crate::c5::tables5().geometry;
         let residual = |seq: &[u8]| {
             let mut f = outer.to_vec();
@@ -418,25 +418,40 @@ impl SolverN {
         let mut paths = self.six.outer.reductions(inner, p)?.into_iter();
         let first = paths.next().ok_or("no penultimate wing reduction found")?;
         let base = residual(&first);
-        let mut seen = std::collections::HashSet::from([base.clone()]);
         let mut best = (first, self.six.outer.solve(&base, p)?);
-        let mut roots = Vec::new();
-        let mut prefixes = Vec::new();
+        let mut seen = std::collections::HashSet::from([base]);
+        let mut alternatives = Vec::new();
         for path in paths {
             let f = residual(&path);
             if seen.insert(f.clone()) {
-                roots.push((f, path.len()));
-                prefixes.push(path);
-                if roots.len() == 8 {
-                    break;
-                }
+                // Each inner slice turn can put at most four wings beside
+                // their own oriented middle edge. Prefer an outer orbit
+                // that already has more of these wings in place.
+                let cube = crate::c5::Cube5::from_facelets(&f)?;
+                let wrong = (0..24).filter(|&i| cube.c4.ep[i] != cube.mid.ep[i % 12] + 12 * (cube.mid.eo[i % 12] ^ (i / 12) as u8)).count();
+                alternatives.push((path.len() + wrong.div_ceil(4), wrong, path, f));
             }
         }
-        if !roots.is_empty() {
+        let mut ranked: Vec<_> = (0..alternatives.len()).collect();
+        ranked.sort_by_key(|&i| (alternatives[i].0, alternatives[i].1, i));
+        let mut compare = |ids: &[usize]| {
+            if ids.is_empty() {
+                return;
+            }
+            let roots: Vec<_> = ids.iter().map(|&i| (alternatives[i].3.clone(), alternatives[i].2.len())).collect();
             if let Ok((k, tail)) = self.six.outer.solve_any(&roots, p) {
-                if prefixes[k].len() + tail.moves.len() < best.0.len() + best.1.moves.len() {
-                    best = (std::mem::take(&mut prefixes[k]), tail);
+                let prefix = &alternatives[ids[k]].2;
+                if prefix.len() + tail.moves.len() < best.0.len() + best.1.moves.len() {
+                    best = (prefix.clone(), tail);
                 }
+            }
+        };
+        ranked.truncate(6);
+        compare(&ranked);
+        if full {
+            let first: Vec<_> = (0..alternatives.len().min(8)).collect();
+            if first != ranked {
+                compare(&first);
             }
         }
         Ok(best)
@@ -585,9 +600,9 @@ impl SolverN {
             let sub = g.sub_facelets(&w.f, &layers);
             // Without a clock: the same cube gives the same solution however busy the machine is.
             let wide = Params5 { c_keep: 6000, time_ms: 0, ..Params5::normal() };
-            if k == 2 && search != Search::Normal {
+            if k == 2 {
                 let outer = g.sub_facelets(&w.f, &[0, 1, mid, last - 1, last]);
-                let (prefix, ending) = self.last_two_wings(&sub, &outer, &wide)?;
+                let (prefix, ending) = self.last_two_wings(&sub, &outer, &wide, search != Search::Normal)?;
                 w.apply(&prefix, &[1, k + 1]);
                 w.apply(&ending.moves, &[1, 2]);
                 tail = ending.lens[5];
