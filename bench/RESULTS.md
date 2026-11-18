@@ -3926,3 +3926,65 @@ with each release binary from its repository root.
 anycube scrambles --size 5 --length 150 --count 48 --seed 6180088 > /tmp/anycube-validation-5.txt
 anycube bench5 /tmp/anycube-validation-5.txt --out /tmp/anycube-validation-5.tsv
 ```
+
+## Faster defaults on the same 212 random scrambles
+
+The previous default at `331cb64` included extra searches for short solutions. The timed default at `3a080fc` uses the search budgets and reduction choices from before that experiment (`38fe0d4`). Full mode retains the alternative 4x4x4 openings, 5x5x5 reduction endings, reflected finishes on 6x6x6 and 7x7x7, and joint selection of the last two wing reductions on larger cubes.
+
+On 2026-11-18 both release binaries solved the same random-move scrambles on the 10-core Apple M1 Pro with 16 GB of RAM. Each size ran in two batches. The execution order reversed between them, with one solve running at a time. The figures are mean moves in OBTM and mean wall seconds per cube. Timing starts after the solver loads and includes work first triggered during a solve. The 2x2x2 and 3x3x3 batch command rounds individual times to 0.01 s. Sizes 16 through 21 have three samples each.
+
+| Cube | Cases | Previous moves | Current moves | Previous seconds | Current seconds |
+|---|---:|---:|---:|---:|---:|
+| 2x2x2 | 20 | 8.80 | 8.80 | <0.005 | <0.005 |
+| 3x3x3 | 20 | 17.75 | 17.75 | 0.201 | 0.210 |
+| 4x4x4 | 48 | 40.40 | 40.54 | 1.825 | 1.184 |
+| 5x5x5 | 48 | 67.00 | 67.46 | 1.063 | 0.581 |
+| 6x6x6 | 10 | 110.50 | 110.50 | 5.145 | 4.701 |
+| 7x7x7 | 10 | 151.30 | 151.40 | 2.774 | 2.529 |
+| 8x8x8 | 6 | 229.17 | 230.00 | 4.550 | 2.645 |
+| 9x9x9 | 6 | 300.50 | 301.17 | 3.552 | 2.315 |
+| 10x10x10 | 6 | 387.00 | 388.33 | 6.389 | 5.113 |
+| 11x11x11 | 4 | 485.75 | 487.25 | 8.127 | 6.506 |
+| 12x12x12 | 4 | 589.00 | 589.75 | 9.502 | 8.656 |
+| 13x13x13 | 4 | 700.00 | 701.75 | 10.829 | 9.412 |
+| 14x14x14 | 4 | 827.75 | 828.00 | 14.168 | 13.011 |
+| 15x15x15 | 4 | 952.75 | 953.75 | 18.854 | 17.056 |
+| 16x16x16 | 3 | 1093.00 | 1093.67 | 17.469 | 16.307 |
+| 17x17x17 | 3 | 1237.00 | 1237.67 | 25.105 | 23.157 |
+| 18x18x18 | 3 | 1416.67 | 1417.00 | 28.930 | 27.287 |
+| 19x19x19 | 3 | 1563.33 | 1563.33 | 38.543 | 36.999 |
+| 20x20x20 | 3 | 1773.33 | 1774.33 | 35.977 | 35.416 |
+| 21x21x21 | 3 | 1943.33 | 1944.33 | 40.671 | 38.725 |
+
+The current default reproduced the original fast solver’s exact sequence on every one of the 212 positions. All solutions passed sticker replay. The previous default saved seven moves over all 48 cases on the 4x4x4 and 22 over all 48 on the 5x5x5.
+
+The current default took 35.1% less time on the 4x4x4 and 45.3% less on the 5x5x5 than the previous default. It finished sooner on 48 of 48 and 47 of 48 scrambles respectively. The per-cube measurements include the seed, scramble length and move counts for all three versions. The original fast timing comes from the earlier experiment. The final two columns record the repeat on sizes 4 and 5 after the full-mode change. [Per-cube timings and lengths](default-speed-paired.tsv)
+
+### Search work avoided
+
+The 3x3x3 finish uses the existing eight-move bitmap when it recovers an exact distance, and skips subgroup depths below the closest root. Once the beam detects a possible finish in one move on its final level, it can enumerate all eligible finishes directly in the original tie order.
+
+The first 6x6x6 centre step uses an index of the last three moves. The inner-centre mask selects the possible endings. The differing oblique centres rule out paths that cannot repair those slots. The remaining paths are replayed in the same order as the forward search. On larger cubes, centre matching writes directly into the score array and stops counting mismatching centres once a position exceeds the ending search’s limit.
+
+Compared with the restored search before these changes, the first 6x6x6 centre step used 783 → 310 ms of processor time per cube on 12 additional random 300-move scrambles (seed 786301). Matching the first row of centres took 0.79 → 0.69 s on 8 staged 8x8x8 cubes and 3.30 → 3.14 s on 8 staged 11x11x11 cubes. These are wall times with four cases each at seeds 81207 and 82130. All comparisons use alternating batches. These timings cover only the specified step.
+
+At the restored search settings, the solver before and after the speed-only changes took 1.348 → 1.302 s on 4x4x4 and 0.557 → 0.611 s on 5x5x5. This separate comparison used 24 development scrambles per size and reproduced all 48 solution sequences.
+
+The 5x5x5 medians at fixed search settings were 0.520 and 0.522 s. The first timed cube took 0.560 and 1.912 s respectively and is included in the means.
+
+An exact reverse index of the last five 5x5x5 reduction moves gave the same solutions on 24 development scrambles and took 0.604 s per solve against 0.557 s without the index. It was dropped.
+
+Direct sticker input gave 41 moves on the first 4x4x4 and 68 on the first 5x5x5 in default mode. Full mode on the first position of sizes 4 through 9 gave 39, 68, 108, 147, 224, 302 moves respectively. The original solver applied each answer to the scrambled stickers and checked the result.
+
+### Keeping short solutions in full mode
+
+Full mode at `ebabc0a` also compares the compact and wide 4x4x4 and 5x5x5 searches. Their reduction pools can contain different endpoints. On 4x4x4 case 1, the wide search gave 41 moves and the combined search recovered 39. On case 2, the wide search supplied the 38-move winner while the compact search found 40. On 5x5x5 case 14, keeping the compact result improved 66 to 65 moves. All six selected full-mode checks returned the shorter of the two verified results.
+
+The full-mode change was followed by another paired default run on all 48 cases per size. Previous and final times were 1.854 → 1.177 s on the 4x4x4 and 1.060 → 0.592 s on the 5x5x5. All 96 final default solutions matched the table move for move. A further default solve at each of sizes 6, 7, 8, 9 and 21 also matched the timed version and passed independent sticker replay.
+
+The scramble generator uses `6175103 + 997 * N` for each size. The same CLI commands regenerate the set for each version. For example, these commands time the 48 default 5x5x5 solves.
+
+```sh
+anycube scrambles --size 5 --length 150 --count 48 --seed 6180088 > /tmp/anycube-speed-5.txt
+anycube bench5 /tmp/anycube-speed-5.txt --out /tmp/anycube-speed-5.tsv
+```

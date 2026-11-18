@@ -97,8 +97,8 @@ run held at once, tables included (for sizes 8 and up of v0.2.0: the most
 the first cube of the run held, which is less). Other solvers
 on the same scrambles: [`bench/README.md`](bench/README.md).
 
-The paired default-mode benchmark compares two solver revisions on 212 fresh
-scrambles. [Moves and seconds by size](bench/RESULTS.md#default-mode-on-fresh-random-move-scrambles-2x2x2-through-21x21x21)
+The default-mode benchmark compares the current and previous searches on the same
+212 random scrambles. [Moves and seconds for sizes 2 through 21](bench/RESULTS.md#faster-defaults-on-the-same-212-random-scrambles)
 
 <a name="install"></a>
 
