@@ -265,6 +265,7 @@ impl Solver {
         variants: &[Variant],
         p: &Params,
         deadline: Option<std::time::Instant>,
+        revisit: Option<usize>,
     ) -> Result<Vec<P2Cand>, String> {
         // Variants come in groups of six per frame. Only the first frame is searched;
         // every staged sequence is then also tried in its partner of the other two frames.
@@ -353,7 +354,7 @@ impl Solver {
         let budget = p.joint_nodes.max(0) as u64;
         let mut found: Vec<P2Cand> = Vec::new();
         let mut spent = 0u64;
-        for depth in lower..=24 {
+        for depth in revisit.unwrap_or(lower).max(lower)..=revisit.unwrap_or(24) {
             // One job for every two first moves that can still lead to staged centres.
             let mut jobs: Vec<(usize, Vec<u8>, Node)> = Vec::new();
             for (vi, root) in roots.iter().enumerate().filter(|(_, root)| root.d as usize <= depth) {
@@ -372,7 +373,22 @@ impl Solver {
                 }
                 jobs.extend(level.into_iter().map(|(path, n)| (vi, path, n)));
             }
-            let order = crate::search::mixed_order(jobs.len());
+            let mut order = crate::search::mixed_order(jobs.len());
+            if revisit.is_some() {
+                // Start at the far end of the previous level. Among jobs
+                // with the same remaining centre distance, prefer the
+                // first turns which already put more wings opposite their
+                // partners. Stable ties retain the spread of prefix moves.
+                order.reverse();
+                let quality: Vec<_> = jobs.iter().map(|(v,path,n)| {
+                    let mut at = variants[*v].cube;
+                    at.apply_seq(path);
+                    let mut low = 0u32;
+                    for &wing in &at.ep[..12] {low |= 1 << (wing % 12);}
+                    (n.d, 12-low.count_ones())
+                }).collect();
+                order.sort_by_key(|&i| quality[i]);
+            }
             shared.stop_at.store(usize::MAX, Relaxed);
             let next = AtomicUsize::new(0);
             let front = Mutex::new(Front { done: vec![None; jobs.len()], at: 0, spent, found: found.len(), decided: false });

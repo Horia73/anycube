@@ -28,6 +28,8 @@ pub struct Params {
     pub k3: usize,
     /// 3x3x3: the longest first phase of the two-phase search tried for every reduction ...
     pub first333: usize,
+    /// Explore additional physical first turns, sharing the finishing search.
+    pub alternate_starts: bool,
     /// ... and then, step by step, for the reductions with the shortest totals so far: a
     /// length of first phase and how many of them are searched to it.
     pub deeper333: Vec<(usize, usize)>,
@@ -67,6 +69,7 @@ impl Default for Params {
             n2: 10_000,
             k3: 10_000,
             first333: 11,
+            alternate_starts: true,
             deeper333: vec![(13, 48)],
             n3: 2000,
             extra3: 1,
@@ -90,6 +93,7 @@ impl Params {
             k3: 300,
             joint_nodes: 20_000_000,
             first333: 10,
+            alternate_starts: false,
             deeper333: vec![(12, 24)],
             n3: 200,
             ..Params::default()
@@ -146,6 +150,48 @@ struct P1Cand {
     mask: u32,
     parity: u8,
     value: u8,
+}
+
+struct Reduction {
+    prefix: Vec<u8>,
+    lens: [usize; 3],
+    frame: usize,
+    c3: C3,
+}
+
+impl Reduction {
+    fn finish(&self, tail: &[u8], shortest: usize) -> Solution {
+        let map = &cube_tables().relabel[self.frame];
+        let mut moves = self.prefix.clone();
+        moves.extend(tail.iter().map(|&m| map[m as usize]));
+        Solution { moves, lens: [self.lens[0], self.lens[1], self.lens[2], tail.len()], shortest_reduction: shortest }
+    }
+
+    /// Charge the physical first turn at its actual cost. It commutes
+    /// through the initial run about its axis and can cancel a turn from
+    /// any of the three reduction phases.
+    fn prepend(&mut self, m: u8) {
+        let same = self.prefix.iter().take_while(|&&x| x / 3 % 3 == m / 3 % 3).position(|&x| x / 3 == m / 3);
+        if let Some(i) = same {
+            let turns = (self.prefix[i] % 3 + m % 3 + 2) % 4;
+            if turns != 0 {
+                self.prefix[i] = m / 3 * 3 + turns - 1;
+            } else {
+                let phase = if i < self.lens[0] {
+                    0
+                } else if i < self.lens[0] + self.lens[1] {
+                    1
+                } else {
+                    2
+                };
+                self.lens[phase] -= 1;
+                self.prefix.remove(i);
+            }
+        } else {
+            self.prefix.insert(0, m);
+            self.lens[0] += 1;
+        }
+    }
 }
 
 /// A state from which phase 3 can start.
@@ -207,9 +253,7 @@ impl Solver {
         self.solve_with_alternatives(cube, p, None)
     }
 
-    pub(crate) fn solve_with_alternatives(
-        &self, cube: &Cube, p: &Params, alternatives: Option<&mut Vec<Vec<u8>>>,
-    ) -> Result<Solution, String> {
+    fn reductions(&self, cube: &Cube, p: &Params, t_start: std::time::Instant, revisit: Option<usize>) -> Result<(Vec<Reduction>,usize), String> {
         cube.validate()?;
         let ct = cube_tables();
         let tabs = &self.tabs;
@@ -232,10 +276,9 @@ impl Solver {
         }
 
         let debug = std::env::var_os("ANYCUBE_DEBUG").is_some();
-        let t_start = std::time::Instant::now();
         let limit = std::time::Duration::from_millis(p.time_limit_ms);
         let mut found: Vec<P2Cand> = if p.joint {
-            self.joint_endpoints(&variants, p, (p.time_limit_ms > 0).then(|| t_start + limit.mul_f64(0.4)))?
+            self.joint_endpoints(&variants, p, (p.time_limit_ms > 0).then(|| t_start + limit.mul_f64(0.4)), revisit)?
         } else {
         // Phase 1: enumerate solutions by increasing length.
         let mut cands: Vec<P1Cand> = Vec::new();
@@ -412,31 +455,27 @@ impl Solver {
             reds.extend(far);
         }
 
-        let t_123 = t_start.elapsed();
-        // 3x3x3 stage: solve every distinct reduced cube, keep the shortest total.
-        struct Item {
-            red: usize,
-            len123: usize,
-            c3: C3,
-        }
         let mut seen = std::collections::HashSet::new();
         let mut items = Vec::new();
-        for (ri, (i, moves3)) in reds.iter().enumerate() {
+        for (i, moves3) in &reds {
             let c2 = &found[*i];
             let mut reduced = c2.cube;
             reduced.apply_seq(moves3);
             let home = reduced.with_home_centres().ok_or("centres are not solved after phase 3")?;
             let c3 = C3::from_cube(&home).ok_or("dedges are not paired after phase 3")?;
             if seen.insert(c3) {
-                items.push(Item { red: ri, len123: c2.len12 as usize + moves3.len(), c3 });
+                let frame = variants[c2.variant].frame;
+                let prefix = c2.moves.iter().chain(moves3).map(|&m| ct.relabel[frame][m as usize]).collect();
+                let first = c2.len1 as usize;
+                items.push(Reduction { prefix, lens: [first, c2.moves.len() - first, moves3.len()], frame, c3 });
             }
         }
-        if std::env::var_os("ANYCUBE_DEBUG").is_some() {
+        if debug {
             let mut by_len = std::collections::BTreeMap::new();
             for it in &items {
-                *by_len.entry(it.len123).or_insert(0usize) += 1;
+                *by_len.entry(it.prefix.len()).or_insert(0usize) += 1;
             }
-            let ends: std::collections::HashSet<usize> = reds.iter().map(|r| r.0).collect();
+            let ends: std::collections::HashSet<_> = reds.iter().map(|r| r.0).collect();
             eprintln!(
                 "debug: {} reductions, {} distinct reduced cubes by length {:?}, from {} phase-2 endpoints",
                 reds.len(),
@@ -444,14 +483,29 @@ impl Solver {
                 by_len,
                 ends.len()
             );
+            eprintln!(
+                "debug: time phases 1+2 {:.0} ms, phase 3 {:.0} ms",
+                t_12.as_secs_f64() * 1e3,
+                (t_start.elapsed() - t_12).as_secs_f64() * 1e3
+            );
         }
+        Ok((items, found.iter().map(|c| c.len12 as usize).max().unwrap_or(0)))
+
+    }
+
+    pub(crate) fn solve_with_alternatives(
+        &self, cube: &Cube, p: &Params, alternatives: Option<&mut Vec<Vec<u8>>>,
+    ) -> Result<Solution, String> {
+        let t_start = std::time::Instant::now();
+        let limit = std::time::Duration::from_millis(p.time_limit_ms);
+        let (items,last_level) = self.reductions(cube,p,t_start,None)?;
         // Pass 1: two-phase search on every reduction, then deeper on the ones that came out
         // best. Past its share of the time limit each takes the first solution it finds.
-        let reduced: Vec<(usize, C3)> = items.iter().map(|it| (it.len123, it.c3)).collect();
+        let reduced: Vec<(usize, C3)> = items.iter().map(|it| (it.prefix.len(), it.c3)).collect();
         let two = self.two.finish(&self.t3, &reduced, p.first333, &p.deeper333, (p.time_limit_ms > 0).then(|| t_start + limit.mul_f64(0.8)));
         let mut best = (usize::MAX, 0usize, Vec::new());
         for (k, sol) in two.iter().enumerate() {
-            let total = items[k].len123 + sol.len();
+            let total = items[k].prefix.len() + sol.len();
             if total < best.0 {
                 best = (total, k, sol.clone());
             }
@@ -462,7 +516,7 @@ impl Solver {
             let opt = Opt3::new(&self.t3, &self.big2);
             let roots: Vec<Root> = items.par_iter().map(|it| opt.prepare(&it.c3)).collect();
             let mut order: Vec<usize> = (0..items.len()).collect();
-            order.sort_by_key(|&k| (items[k].len123, two[k].len()));
+            order.sort_by_key(|&k| (items[k].prefix.len(), two[k].len()));
             let best_total = AtomicUsize::new(best.0);
             let budget = AtomicI64::new(p.exact_nodes);
             // Per reduction: the longest length already shown to have no solution.
@@ -476,7 +530,7 @@ impl Solver {
                         break;
                     }
                     let k = order[j];
-                    let Some(room) = best_total.load(Relaxed).checked_sub(items[k].len123 + 1) else {
+                    let Some(room) = best_total.load(Relaxed).checked_sub(items[k].prefix.len() + 1) else {
                         continue;
                     };
                     let bound = room.min(cap);
@@ -486,7 +540,7 @@ impl Solver {
                     }
                     match opt.solve(&roots[k], known + 1, bound, &budget) {
                         Outcome::Solved(sol) => {
-                            let total = items[k].len123 + sol.len();
+                            let total = items[k].prefix.len() + sol.len();
                             best_total.fetch_min(total, Relaxed);
                             // The solution is optimal: nothing shorter is left to find here.
                             proven[k].store(usize::MAX, Relaxed);
@@ -522,42 +576,66 @@ impl Solver {
                 }
             }
         }
-        if debug {
-            eprintln!(
-                "debug: time phases 1+2 {:.0} ms, phase 3 {:.0} ms, 3x3x3 {:.0} ms",
-                t_12.as_secs_f64() * 1e3,
-                (t_123 - t_12).as_secs_f64() * 1e3,
-                (t_start.elapsed() - t_123).as_secs_f64() * 1e3
-            );
-        }
-        let shortest_reduction = items.iter().map(|it| it.len123).min().unwrap_or(0);
-        let (_, item, moves333) = best;
-        let assemble = |item: usize, end: &[u8]| {
-            let (i, moves3) = &reds[items[item].red];
-            let c2 = &found[*i];
-            let frame = variants[c2.variant].frame;
-            c2.moves.iter().chain(moves3).chain(end)
-                .map(|&m| ct.relabel[frame][m as usize]).collect::<Vec<u8>>()
-        };
+        let shortest = items.iter().map(|it| it.prefix.len()).min().unwrap_or(0);
+        let (_, k, tail) = best;
+        let mut result = items[k].finish(&tail, shortest);
         if let Some(alts) = alternatives {
             let mut order: Vec<_> = (0..items.len()).collect();
-            order.sort_by_key(|&k| (items[k].len123 + two[k].len(), items[k].len123));
-            alts.extend(order.into_iter().take(8).map(|k| assemble(k, &two[k])));
+            order.sort_by_key(|&k| (items[k].prefix.len() + two[k].len(), items[k].prefix.len()));
+            alts.extend(order.into_iter().take(8).map(|k| items[k].finish(&two[k], shortest).moves));
         }
-        let moves = assemble(item, &moves333);
-        let (i, moves3) = &reds[items[item].red];
-        let c2 = &found[*i];
+        if p.alternate_starts && p.joint && p.time_limit_ms == 0 && result.moves.len() > 37 {
+            let settings = Params {
+                joint_nodes: if result.moves.len() > 40 { 12_000_000 } else { 4_000_000 },
+                k3: 3000,
+                n3: 400,
+                alternate_starts: false,
+                ..Params::default()
+            };
+            let mut extra = if result.moves.len() > 40 {
+                self.reductions(cube, &settings, std::time::Instant::now(), Some(last_level)).map(|r| r.0).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let mut next = *cube;
+            let m = 21; // Rw
+            next.apply(m);
+            if let Ok((mut batch, _)) = self.reductions(&next, &settings, std::time::Instant::now(), None) {
+                for r in &mut batch {
+                    r.prepend(m);
+                }
+                extra.extend(batch);
+            }
+            extra.sort_by_key(|r| r.prefix.len());
+            let mut seen: std::collections::HashMap<C3, usize> = items.iter().map(|r| (r.c3, r.prefix.len())).collect();
+            extra.retain(|r| {
+                if seen.get(&r.c3).is_some_and(|&cost| cost <= r.prefix.len()) {
+                    return false;
+                }
+                seen.insert(r.c3, r.prefix.len());
+                true
+            });
+            extra.truncate(600);
+            if let Some(r) = extra.first() {
+                result.shortest_reduction = result.shortest_reduction.min(r.prefix.len());
+            }
+            let prices: Vec<_> = extra.iter().map(|r| (r.prefix.len(), r.c3)).collect();
+            if !prices.is_empty() {
+                let tails = self.two.finish(&self.t3, &prices, 10, &[(11, 64), (12, 24), (13, 6)], None);
+                if let Some((r, tail)) = extra.iter().zip(&tails).min_by_key(|(r, t)| r.prefix.len() + t.len()) {
+                    if r.prefix.len() + tail.len() < result.moves.len() {
+                        result = r.finish(tail, result.shortest_reduction);
+                    }
+                }
+            }
+        }
         let mut check = *cube;
-        check.apply_seq(&moves);
+        check.apply_seq(&result.moves);
         if !check.is_solved() {
             return Err("internal error: solution does not solve the cube".into());
         }
-        let len1 = c2.len1 as usize;
-        Ok(Solution {
-            moves,
-            lens: [len1, c2.moves.len() - len1, moves3.len(), moves333.len()],
-            shortest_reduction,
-        })
+        Ok(result)
+
     }
 
     /// The length of the shortest phase-3 solution of a cube phase 3 can start from.
@@ -722,5 +800,26 @@ impl Solver {
 impl Default for Solver {
     fn default() -> Solver {
         Solver::new()
+    }
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use super::*;
+
+    #[test]
+    fn setup_cost_and_phase_counts_agree_after_commuting() {
+        for prefix in [vec![], vec![0], vec![0, 27, 11, 3], vec![4, 13, 22, 7], vec![6, 34, 8]] {
+            for m in 0..36 {
+                for split in 0..=prefix.len() {
+                    let mut r = Reduction { prefix: prefix.clone(), lens: [split, 0, prefix.len() - split], frame: 0, c3: C3::identity() };
+                    r.prepend(m);
+                    let mut expected = Cube::from_moves(&[m]);
+                    expected.apply_seq(&prefix);
+                    assert_eq!(Cube::from_moves(&r.prefix), expected);
+                    assert_eq!(r.lens.iter().sum::<usize>(), r.prefix.len());
+                }
+            }
+        }
     }
 }
