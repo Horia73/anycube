@@ -4008,6 +4008,13 @@ A possible full-mode search would accept a reduction with a single three-wing cy
 
 A second sampling scheme included all 4,048 directed wing triples reachable by conjugating these cycles with ordinary turns. It selected 24 uniformly per benchmark word. The 4x4x4 library supplied an insertion in 1,148 of 1,152 trials, at a mean net cost of 7.79 moves among hits. The 5x5x5 supplied 1,152 of 1,152, at 7.52 moves. For comparison the same test on centre cycles covered 1,152 of 1,152 on the 4x4x4 and 645 of 1,152 on the 5x5x5. The odd cube has two separate centre orbits.
 
+Grouping those same 24 sampled wing cycles per word into sets of four, eight or 24 gives a measure of the value of choosing the defect. The table reports the lowest net insertion cost in each group. All groups of four or more had a valid insertion. Each candidate was checked by composing the labelled sticker permutations. In this experiment the same ordinary word was given different target defects. A solver for a single scrambled cube would have to generate distinct compatible partial solutions to exploit the choice.
+
+| Cube | One cycle | Best of 4 | Best of 8 | Best of 24 |
+|---|---:|---:|---:|---:|
+| 4x4x4 | 7.79 | 6.70 | 6.24 | 5.58 |
+| 5x5x5 | 7.52 | 6.54 | 6.09 | 5.27 |
+
 A search for partial solutions by editing existing answers examined windows up to 14 turns long. It tried every shorter replacement of up to four turns with the same corner action, including both widths, and tested the actual sticker colours. On the 48 cases per size it found zero shorter solved words and zero shorter words leaving only one wing cycle. A search that accepts the defect while constructing the reduction is the next test. At the measured correction costs, the upper targets of 37 and 60 moves would require partial solutions averaging about 29 and 52 moves respectively.
 
 On the same 48 solutions the final wing-reduction phase averaged 11.125 moves on the 4x4x4 and 13.688 on the 5x5x5. The other phases, including the 3x3x3 finish, averaged 29.417 and 53.771 moves. Even deleting the whole final wing phase and adding back the measured average insertion cost gives 37.21 and 61.29 moves at those other phase lengths. This calculation motivates choosing the three wings earlier in the reduction and selecting candidates together with their 3x3x3 finish. It is a comparison with the observed means, and gives no lower bound for a different search.
