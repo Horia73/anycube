@@ -17,12 +17,13 @@
 //!    even). The score adds the exact tables of the parts. As two searches,
 //!    one after the other, this took 17.3 moves; together 15.8.
 
-use crate::cube::Cube;
+use crate::cube::{compose_src, inv_move, Cube};
 use crate::cuben::Geometry;
 use crate::orbits::{centre_orbits, CentreOrbit};
 use crate::stage5::Stage5;
 use crate::tables::{gen_stage, load_or_gen, load_or_gen_quiet, table_dir, BitPerm, Bytes, MaskMoves, Ranks};
 use rayon::prelude::*;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 const GOAL_RL: u32 = 0xFF_0000;
@@ -51,12 +52,127 @@ fn moves_where(keep: impl Fn(usize, usize, usize) -> bool) -> Vec<u8> {
     (0..54u8).filter(|&m| keep(m as usize / 3 % 6, m as usize / 18 + 1, m as usize % 3)).collect()
 }
 
+#[derive(Clone, Copy)]
+struct Suffix {
+    moves: [u8; 3],
+    /// Only these positions can start with different colours in the two
+    /// oblique orbits and end with the colours paired.
+    may_differ: u32,
+}
+
+#[derive(Default)]
+struct SuffixGroup {
+    paths: Vec<Suffix>,
+    /// In a large bucket, the paths in each block that can repair each slot.
+    by_slot: Vec<[u64; 24]>,
+}
+
+impl SuffixGroup {
+    fn index(&mut self) {
+        self.paths.sort_unstable_by_key(|s| s.moves);
+        if self.paths.len() > 64 {
+            self.by_slot = self.paths.chunks(64).map(|block| {
+                let mut slots = [0; 24];
+                for (j, suffix) in block.iter().enumerate() {
+                    let mut mask = suffix.may_differ;
+                    while mask != 0 {
+                        slots[mask.trailing_zeros() as usize] |= 1 << j;
+                        mask &= mask - 1;
+                    }
+                }
+                slots
+            }).collect();
+        }
+    }
+
+    fn visit(&self, mismatch: u32, mut visit: impl FnMut(&Suffix) -> bool) -> bool {
+        if self.by_slot.is_empty() || mismatch == 0 {
+            return self.paths.iter().any(|s| mismatch & !s.may_differ == 0 && visit(s));
+        }
+        for (block, slots) in self.paths.chunks(64).zip(&self.by_slot) {
+            let mut live = u64::MAX >> (64 - block.len());
+            let mut mask = mismatch;
+            while mask != 0 && live != 0 {
+                live &= slots[mask.trailing_zeros() as usize];
+                mask &= mask - 1;
+            }
+            while live != 0 {
+                if visit(&block[live.trailing_zeros() as usize]) {
+                    return true;
+                }
+                live &= live - 1;
+            }
+        }
+        false
+    }
+}
+
+/// Index the last one, two and three moves of the first staging step by
+/// the exact inner-centre mask that each sequence brings home.
+fn staging_suffixes(orbits: &[CentreOrbit], inner: &BitPerm) -> [HashMap<u32, SuffixGroup>; 3] {
+    let mut tables: [HashMap<u32, SuffixGroup>; 3] = std::array::from_fn(|_| HashMap::new());
+    let identity = std::array::from_fn(|i| i as u8);
+    let mut level = vec![(GOAL_RL, identity, identity, [255; 3])];
+    for (depth, table) in tables.iter_mut().enumerate() {
+        let mut deeper = Vec::new();
+        for (x, a, b, tail) in level {
+            for m in 0..54u8 {
+                if tail[0] != 255 && skip54(m, tail[0]) {
+                    continue;
+                }
+                let x = inner.apply(inv_move(m), x);
+                let a = compose_src(&orbits[OBL_A].src[m as usize], &a);
+                let b = compose_src(&orbits[OBL_B].src[m as usize], &b);
+                let mut may_differ = 0;
+                for (&i, &j) in a.iter().zip(&b) {
+                    if i != j {
+                        may_differ |= 1 << i;
+                    }
+                }
+                // This suffix preserves the entire goal set. Taking it
+                // would already have reached the goal at an earlier step.
+                if x == GOAL_RL && may_differ == 0 {
+                    continue;
+                }
+                let moves = [m, tail[0], tail[1]];
+                table.entry(x).or_default().paths.push(Suffix { moves, may_differ });
+                if depth < 2 {
+                    deeper.push((x, a, b, moves));
+                }
+            }
+        }
+        for candidates in table.values_mut() {
+            candidates.index();
+        }
+        level = deeper;
+    }
+    tables
+}
+
+/// The index has already checked the final inner centres. Keep the paths
+/// that pair both obliques and reach the goal for the first time at the end.
+fn completes_staging(perms: &[BitPerm], [mut x, mut a, mut b]: [u32; 3], moves: &[u8]) -> bool {
+    for (i, &m) in moves.iter().enumerate() {
+        a = perms[OBL_A].apply(m, a);
+        b = perms[OBL_B].apply(m, b);
+        if i + 1 == moves.len() {
+            return a == b;
+        }
+        x = perms[X_IN].apply(m, x);
+        if x == GOAL_RL && a == b {
+            return false;
+        }
+    }
+    false
+}
+
 pub struct Stage6 {
     pub g: Geometry,
     pub orbits: Vec<CentreOrbit>,
     pub perms: Vec<BitPerm>,
     mask_moves: [MaskMoves; 3],
     followers: [u64; 54],
+    suffixes: [HashMap<u32, SuffixGroup>; 3],
     ranks: Ranks,
     /// Step 1: moves until the R/L inner x centres are on R and L, by mask,
     /// and a lower bound on the moves that pair the obliques, by the mask of
@@ -204,7 +320,8 @@ impl Stage6 {
         let out_ud_mv = table(X_OUT, &m3);
         let mask_moves = [X_IN, OBL_A, OBL_B].map(|o| MaskMoves::new(&perms[o]));
         let followers = std::array::from_fn(|m| (0..54).filter(|&k| !skip54(m as u8, k)).fold(0, |mask, k| mask | (1u64 << k)));
-        Stage6 { g, orbits, perms, mask_moves, followers, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
+        let suffixes = staging_suffixes(&orbits, &perms[X_IN]);
+        Stage6 { g, orbits, perms, mask_moves, followers, suffixes, ranks, in_rl, unpaired, m3, in_ud_mv, in_ud, obl_ud_mv, obl_ud, out_ud_mv }
     }
 
     /// Positions of the centres of one axis colour pair (0 U/D, 1 R/L, 2 F/B) in an orbit.
@@ -609,26 +726,30 @@ impl Run1<'_> {
         if self.order.over(self.job) {
             return true;
         }
+        let s = self.s;
+        let legal = s.followers[m as usize];
+        if rem <= 4 {
+            let len = rem - 1;
+            let mismatch = next[1] ^ next[2];
+            let Some(group) = s.suffixes[len - 1].get(&next[0]) else { return false };
+            return group.visit(mismatch, |suffix| {
+                let moves = &suffix.moves[..len];
+                if legal >> moves[0] & 1 != 0 && completes_staging(&s.perms, *next, moves) {
+                    let end = depth + 1 + len;
+                    self.path[depth + 1..end].copy_from_slice(moves);
+                    self.out.push(self.path[..end].to_vec());
+                    if self.order.add(self.job) {
+                        return true;
+                    }
+                }
+                false
+            });
+        }
         // Both tables are larger than the cache: the states one move on are
         // made first and their entries asked for, then judged in order.
-        let s = self.s;
         let x = s.mask_moves[0].apply(next[0]);
         let a = s.mask_moves[1].apply(next[1]);
         let b = s.mask_moves[2].apply(next[2]);
-        let legal = s.followers[m as usize];
-        if rem == 2 {
-            let mut left = legal;
-            while left != 0 {
-                let k = left.trailing_zeros() as usize;
-                left &= left - 1;
-                if x[k] == GOAL_RL && a[k] == b[k] {
-                    self.path[depth + 1] = k as u8;
-                    self.out.push(self.path[..=depth + 1].to_vec());
-                    if self.order.add(self.job) { return true; }
-                }
-            }
-            return false;
-        }
         let mut left = legal;
         while left != 0 {
             let k = left.trailing_zeros() as usize;
@@ -646,5 +767,69 @@ impl Run1<'_> {
             }
         }
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexed_staging_suffixes_match_forward_search_in_move_order() {
+        let orbits = centre_orbits(&Geometry::new(6));
+        let perms: Vec<_> = orbits.iter().map(|o| BitPerm::from_src(&o.src)).collect();
+        let tables = staging_suffixes(&orbits, &perms[X_IN]);
+        let step = |n: [u32; 3], m| {
+            [perms[X_IN].apply(m, n[0]), perms[OBL_A].apply(m, n[1]), perms[OBL_B].apply(m, n[2])]
+        };
+        let goal = |n: [u32; 3]| n[0] == GOAL_RL && n[1] == n[2];
+        let mut positive = [0; 3];
+        for seed in 0..16 {
+            let mask = (0..8).fold(0, |bits, k| bits | 1 << ((seed + 5 * k) % 24));
+            let mut start = [GOAL_RL, mask, mask];
+            let len = 1 + seed % 3;
+            for i in 0..len {
+                start = step(start, ((41 + seed * 3 + i * 7) % 54) as u8);
+            }
+            if goal(start) {
+                continue;
+            }
+            for last in [255, (seed * 3) as u8] {
+                let legal = |prev, m| prev == 255 || !skip54(prev, m);
+                let mut frontier = vec![(start, Vec::new(), last)];
+                let mut expected = Vec::new();
+                for depth in 1..=len {
+                    let mut next = Vec::new();
+                    for (n, path, prev) in frontier {
+                        for m in (0..54).filter(|&m| legal(prev, m)) {
+                            let child = step(n, m);
+                            let mut path = path.clone();
+                            path.push(m);
+                            if goal(child) {
+                                if depth == len {
+                                    expected.push(path);
+                                }
+                            } else if depth < len {
+                                next.push((child, path, m));
+                            }
+                        }
+                    }
+                    frontier = next;
+                }
+                let mut indexed = Vec::new();
+                if let Some(group) = tables[len - 1].get(&start[0]) {
+                    group.visit(start[1] ^ start[2], |s| {
+                        let path = &s.moves[..len];
+                        if legal(last, path[0]) && completes_staging(&perms, start, path) {
+                            indexed.push(path.to_vec());
+                        }
+                        false
+                    });
+                }
+                assert_eq!(indexed, expected, "length {len}, seed {seed}, previous move {last}");
+                positive[len - 1] += indexed.len();
+            }
+        }
+        assert!(positive.iter().all(|&count| count > 0));
     }
 }
