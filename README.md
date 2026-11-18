@@ -100,7 +100,7 @@ on the same scrambles: [`bench/README.md`](bench/README.md).
 The default-mode benchmark compares the current and previous searches on the same
 212 random scrambles. [Moves and seconds for sizes 2 through 21](bench/RESULTS.md#faster-defaults-on-the-same-212-random-scrambles)
 
-A follow-up on the 6x6x6 cut mean solve time from 4.74 to 3.34 seconds on 20
+A follow-up on the 6x6x6 cut mean solve time from 4.94 to 3.40 seconds on 40
 random scrambles. Every solution matched its previous length.
 [Paired 6x6x6 timings](bench/RESULTS.md#faster-default-6x6x6-wing-searches)
 
