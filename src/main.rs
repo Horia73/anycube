@@ -83,6 +83,16 @@ fn solve(args: &[String]) {
         (None, Some(len)) if len > 294 => (8..100).find(|n| 6 * n * n == len).unwrap_or(size),
         _ => size,
     };
+    // Stickers can be anything; they are checked as the interface checks
+    // them (a flipped edge, a twisted corner, two pieces exchanged) before a
+    // solver sees them. Some solvers would otherwise solve the nearest real cube.
+    if let Some(s) = state {
+        if size >= 2 {
+            let g = anycube::cuben::Geometry::new(size);
+            let facelets = g.from_string(s).unwrap_or_else(|e| fail(&e));
+            anycube::api::check::validate(size, &facelets).unwrap_or_else(|e| fail(&e.message));
+        }
+    }
     if size >= 8 {
         return solven(size, state, args);
     }
@@ -107,10 +117,39 @@ fn solve(args: &[String]) {
         }
     };
     match size {
-        2 => solve2(&cube),
-        3 => solve3(&cube, args),
-        4 => solve4(&cube, args),
+        2 => solve2(&cube, state, args),
+        3 => solve3(&cube, state, args),
+        4 => solve4(&cube, state, args),
         _ => fail("supported sizes: 2 to 7"),
+    }
+}
+
+/// The cube given on the command line, as stickers or as the moves that scrambled it,
+/// in the model of any size.
+fn given(size: usize, state: Option<&str>, args: &[String]) -> Vec<u8> {
+    let g = anycube::cuben::Geometry::new(size);
+    match state {
+        Some(s) => g.from_string(s).unwrap_or_else(|e| fail(&e)),
+        None => {
+            let moves = g.parse_moves(&move_text(args)).unwrap_or_else(|e| fail(&e));
+            let mut f = g.solved();
+            g.apply_seq(&mut f, &moves);
+            f
+        }
+    }
+}
+
+/// Fails unless `solution` solves the given cube in the model of any size,
+/// which no solver shares: every solution is checked before it is printed.
+fn check_solution(size: usize, state: Option<&str>, args: &[String], solution: &str) {
+    let g = anycube::cuben::Geometry::new(size);
+    let mut f = given(size, state, args);
+    let moves = g
+        .parse_moves(solution)
+        .unwrap_or_else(|e| fail(&format!("the solution found cannot be read back: {}", e)));
+    g.apply_seq(&mut f, &moves);
+    if !g.is_solved(&f) {
+        fail("the solution found does not solve the cube");
     }
 }
 
@@ -148,6 +187,7 @@ fn solve5(state: Option<&str>, args: &[String]) {
     match solver.solve(&facelets, &p) {
         Ok(sol) => {
             let names: Vec<String> = sol.moves.iter().map(|&m| g.move_name(m as usize)).collect();
+            check_solution(5, state, args, &names.join(" "));
             println!("{}", names.join(" "));
             eprintln!(
                 "{} moves (centres {} + {}, edges {} + {} + {}, 3x3x3 {}), tables {:.0} ms, search {:.0} ms",
@@ -604,10 +644,11 @@ fn params5(args: &[String]) -> anycube::solver5::Params5 {
     }
 }
 
-fn solve2(cube: &Cube) {
+fn solve2(cube: &Cube, state: Option<&str>, args: &[String]) {
     let t0 = Instant::now();
     let t = anycube::c2::T2::load();
     let sol = t.solve(cube);
+    check_solution(2, state, args, &format_moves(&sol));
     println!("{}", format_moves(&sol));
     eprintln!("{} moves, optimal, {:.0} ms", sol.len(), t0.elapsed().as_secs_f64() * 1e3);
 }
@@ -627,7 +668,7 @@ fn effort3(args: &[String]) -> anycube::two3::Effort {
     }
 }
 
-fn solve3(cube: &Cube, args: &[String]) {
+fn solve3(cube: &Cube, state: Option<&str>, args: &[String]) {
     use anycube::c3::{C3, T3};
     use anycube::two3::{Effort, Two3};
     let c3 = cube
@@ -664,16 +705,18 @@ fn solve3(cube: &Cube, args: &[String]) {
             None => format!("not proven optimal: no solution shorter than {} moves", res.proven_lower_bound),
         };
     }
+    check_solution(3, state, args, &format_moves(&sol));
     println!("{}", format_moves(&sol));
     eprintln!("{} moves, {}, {:.0} ms", sol.len(), note, t0.elapsed().as_secs_f64() * 1e3);
 }
 
-fn solve4(cube: &Cube, args: &[String]) {
+fn solve4(cube: &Cube, state: Option<&str>, args: &[String]) {
     let t0 = Instant::now();
     let solver = Solver::new();
     let t1 = Instant::now();
     match solver.solve(cube, &params(args)) {
         Ok(sol) => {
+            check_solution(4, state, args, &format_moves(&sol.moves));
             println!("{}", format_moves(&sol.moves));
             eprintln!(
                 "{} moves (phases {:?}), tables {:.0} ms, search {:.0} ms",
