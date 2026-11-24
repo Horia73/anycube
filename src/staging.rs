@@ -35,16 +35,20 @@ pub struct Staging {
     pub beam: usize,
     /// Whether the order of the axes is chosen.
     pub axes: bool,
+    /// How many lengths beyond the shortest a beam search of a step gives
+    /// its results for. With none, only the cubes that reach the shortest
+    /// total go on, and on some steps that is one cube of the sixteen.
+    pub more: usize,
 }
 
 impl Staging {
     pub fn normal() -> Staging {
-        Staging { width: 16, fan: 8, beam: 100_000, axes: true }
+        Staging { width: 16, fan: 8, beam: 100_000, axes: true, more: 1 }
     }
 
     /// One cube, one axis order: the staging as it was before candidates.
     pub fn single() -> Staging {
-        Staging { width: 1, fan: 1, beam: 20_000, axes: false }
+        Staging { width: 1, fan: 1, beam: 20_000, axes: false, more: 0 }
     }
 }
 
@@ -224,7 +228,7 @@ impl SolverN {
                 // A beam that finds nothing is rare; a wider one then does.
                 let found = [(1, 0), (10, 1), (50, 2)]
                     .iter()
-                    .map(|&(times, salt)| self.s7.rows(stage5, pass, &subs, p.beam * times, p.fan * cands.len(), salt, free))
+                    .map(|&(times, salt)| self.s7.rows(stage5, pass, &subs, p.beam * times, p.fan * cands.len(), salt, free, p.more))
                     .find(|found| !found.is_empty())
                     .unwrap_or_default();
                 (found, &depths[..])

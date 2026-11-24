@@ -588,19 +588,20 @@ impl Stage7 {
     /// `pass` 0: the R/L triples formed, from cubes whose inner R/L centres
     /// are on R and L (step 2). `pass` 1: the U/D inner centres on U and D
     /// and the U/D triples formed (step 4); with `free` the parity of the
-    /// inner wings is left as it comes, otherwise it is made even.
+    /// inner wings is left as it comes, otherwise it is made even. With
+    /// `more`, the solutions of that many further lengths come too.
     #[allow(clippy::too_many_arguments)]
-    pub fn rows(&self, s5: &Stage5, pass: usize, cubes: &[(Vec<u8>, usize)], beam: usize, cap: usize, salt: u32, free: bool) -> Vec<(usize, Vec<u8>)> {
+    pub fn rows(&self, s5: &Stage5, pass: usize, cubes: &[(Vec<u8>, usize)], beam: usize, cap: usize, salt: u32, free: bool, more: usize) -> Vec<(usize, Vec<u8>)> {
         let all = &|_: &[u8]| true;
         match pass {
             0 => {
                 let roots: Vec<([u32; 3], usize)> =
                     cubes.iter().map(|(f, late)| ([self.mask(OBL_A, f, 1), self.mask(T_OUT, f, 1), self.mask(OBL_B, f, 1)], *late)).collect();
-                beam_roots(&Step2 { s: self }, &roots, |n| self.score2(n), beam, cap, 40, salt, all, 0)
+                beam_roots(&Step2 { s: self }, &roots, |n| self.score2(n), beam, cap, 40, salt, all, more)
             }
             _ => {
                 let roots: Vec<(Node4, usize)> = cubes.iter().map(|(f, late)| (self.node4(f), *late)).collect();
-                beam_roots(&Step4 { s: self, s5, free }, &roots, |n| self.score4(s5, n, free), beam, cap, 40, salt, all, 0)
+                beam_roots(&Step4 { s: self, s5, free }, &roots, |n| self.score4(s5, n, free), beam, cap, 40, salt, all, more)
             }
         }
     }

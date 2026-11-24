@@ -3646,3 +3646,65 @@ The final solver also ran on the first two entries of each of `bench/scrambles17
 | 21 | 2 | 2 | 93.31 | 78.08 |
 
 Two proposed changes failed their pilots. Staging adjacent rows together raised the first two 17x17x17 staging lengths from 549 and 533 to 557 and 547. On an isolated first-row search at size 17 with one Rayon thread, the scalar compact-state variant used 63.68 seconds of user CPU time on seed 123 against 44.58 seconds for the baseline, with identical moves. Batching all successor scores used 68.22 seconds. The final solver retains the baseline long-row coordinates, scoring loop and exact ending. It reuses equivalent pruning tables and builds the pair tables on demand.
+
+## Any size: the staging keeps the results one move longer (2026-11-24)
+
+The staging of a large cube carries sixteen cubes from step to step
+(`src/staging.rs`), and a step that forms rows as a 7x7x7 is one beam search
+from all of them. That search returned the solutions of the first length at
+which it found any, so only the cubes that reached the shortest total went
+on. On the first 15x15x15 of the benchmark one cube of the sixteen was left
+after 6 of the 42 steps and two or fewer after 12 (`CUBEN_TRACE=1`): from
+there the staging was a greedy one, and the choice among the three axes was
+made by the fifth step.
+
+The search now also gives the solutions one move longer (`Staging::more`,
+`--more` in `stagen`); which cubes go on is still decided by total length.
+
+The staging alone, the same binary with `--more 0` and `--more 1`, every
+result checked:
+
+| Size | Cubes | Before | Now | Difference (standard error) | Shorter | Longer |
+|---|---:|---:|---:|---:|---:|---:|
+| 8 | 20 | 84.70 | 84.95 | +0.25 (0.49) | 5 | 4 |
+| 9 | 20 | 114.05 | 112.75 | -1.30 (0.59) | 12 | 4 |
+| 10 | 20 | 154.45 | 153.40 | -1.05 (0.90) | 9 | 6 |
+| 12 | 5 | 241.20 | 242.80 | +1.60 (3.04) | 3 | 2 |
+| 15 | 20 | 404.85 | 399.55 | -5.30 (1.70) | 16 | 4 |
+| 17 | 5 | 537.40 | 529.00 | -8.40 (2.06) | 5 | 0 |
+
+Two lengths more (`--more 2`) give 398.85 at 15x15x15, about what one
+gives, and took a fifth longer than none in these runs; not kept.
+
+Whole solves, the binary of `68db550` and the new one in turn on each cube
+(the moves counted from the printed solutions, which the solver checks on
+the sticker model):
+
+| Size | Cubes | Before | Now | Difference (standard error) | Shorter | Longer |
+|---|---:|---:|---:|---:|---:|---:|
+| 15 | 20 | 953.50 | 949.55 | -3.95 (3.78) | 12 | 8 |
+| 21 | 5 (release file) | 1940.20 | 1923.80 | -16.40 (8.76) | 4 | 1 |
+
+The five 21x21x21 cubes: 1927, 1939, 1949, 1929, 1957 became 1910, 1952,
+1923, 1917, 1917. On whole solves the gain of the staging is there on
+average but not shown beyond doubt by twenty cubes: another staging gives
+the matching another cube, and its length moves by 20 to 30 moves either
+way on a single cube.
+
+Times were not compared: another session's benchmark ran on all cores
+during these runs. The staging alone took no longer (5.7 s against 6.5 s a
+cube at 15x15x15, in runs one after the other on the busy machine).
+
+Also measured on the way, on one cube each with `/usr/bin/sample` (share of
+processor time): at 15x15x15 the exact endings of the long rows
+(`Grow::finish`) take 37%, the beam of those rows 14%, the short rows 5%,
+the edge phases 18% and the beams of the staging 18%; at 6x6x6 the edge
+phases of the outer 5x5x5 take 71% (`dfs_e` alone 37%) and its 3x3x3 11%;
+at 7x7x7 the beams take 53%, the edge phases 36% and the 3x3x3 9%. And
+merging the turns of one axis that follow one another, across the steps,
+saves nothing: 0 or 1 move on thirteen solutions of sizes 5 to 21.
+
+```sh
+anycube stagen bench/scrambles151515-20.txt --size 15 --more 0
+anycube stagen bench/scrambles151515-20.txt --size 15 --more 1
+```

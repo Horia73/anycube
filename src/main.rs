@@ -548,6 +548,7 @@ fn staging(args: &[String], d: &anycube::staging::Staging) -> anycube::staging::
         fan: num("--fan", d.fan),
         beam: num("--beam", d.beam),
         axes: num("--axes", d.axes as usize) == 1,
+        more: num("--more", d.more),
     }
 }
 
