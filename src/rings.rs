@@ -996,7 +996,7 @@ impl Grow<'_> {
     fn arrive_once(&self, from: &Node, salt: u32, width: usize, deeper: bool) -> Option<Vec<u8>> {
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let clock = std::time::Instant::now();
-        let mut walk = Walk { grow: self, original: from, transitions: RowTransitions::new(self), width, salt, level: vec![(self.pack(from), FAR)], scores: Vec::new(), trail: Vec::new() };
+        let mut walk = Walk { grow: self, original: from, width, salt, level: vec![(self.pack(from), FAR)], scores: Vec::new(), trail: Vec::new() };
         let mut best: Option<Vec<u8>> = None;
         let mut since = 0;
         // The lowest score so far, and for how many levels it has not gone down.
@@ -1119,73 +1119,12 @@ impl Grow<'_> {
     }
 }
 
-// A row step permits the 18 face turns and six half turns at each of
-// three depths. One pattern lookup gives its rank after all those turns.
-const STEP_MOVES: usize = 36;
-type RankRow = [u8; STEP_MOVES];
-
-struct RowTransitions {
-    by_orbit: Vec<[Vec<RankRow>; 3]>,
-}
-
-impl RowTransitions {
-    fn new(grow: &Grow<'_>) -> Self {
-        assert!(grow.places.len() <= STEP_MOVES);
-        let by_orbit = grow.orbits.iter().map(|&orbit| std::array::from_fn(|axis| {
-            let shift = 8 * axis;
-            grow.ring.unrank8.iter().map(|&mask| {
-                let mut row = [0; STEP_MOVES];
-                for (k, &place) in grow.places.iter().enumerate() {
-                    let moved = grow.ring.perms[orbit].apply(place as u8, mask << shift);
-                    row[k] = grow.ring.rank8[(moved >> shift) as usize];
-                }
-                row
-            }).collect()
-        })).collect();
-        Self { by_orbit }
-    }
-
-    /// Accumulate each pruning table’s contribution across all successor moves.
-    fn scores(&self, grow: &Grow<'_>, n: &Active, out: &mut [u16]) {
-        let ranks = |o: usize, axis: usize| {
-            let mask = (n[o] >> (8 * axis)) as u8;
-            &self.by_orbit[o][axis][grow.ring.rank8[mask as usize] as usize]
-        };
-        out.fill(0);
-        for (group, dist) in grow.groups.iter().zip(&grow.dist) {
-            for (axis, table) in dist.iter().enumerate() {
-                let [a, b, c, d] = [0, 1, 2, 3].map(|i| ranks(group[i], axis));
-                for (k, value) in out.iter_mut().enumerate() {
-                    let index = a[k] as usize + 70 * b[k] as usize + 4900 * c[k] as usize + 343000 * d[k] as usize;
-                    *value += u16::from(table[index]);
-                }
-            }
-        }
-        for (x, y, tables) in &grow.twos {
-            let pair: [[u16; STEP_MOVES]; 3] = std::array::from_fn(|axis| {
-                let (a, b) = (ranks(*x, axis), ranks(*y, axis));
-                std::array::from_fn(|k| u16::from(a[k]) * 70 + u16::from(b[k]))
-            });
-            let mut maximum = [0u8; STEP_MOVES];
-            for (&(a, b), table) in TWO.iter().zip(tables) {
-                for (k, value) in maximum[..out.len()].iter_mut().enumerate() {
-                    *value = (*value).max(table[pair[a][k] as usize * 4900 + pair[b][k] as usize]);
-                }
-            }
-            for (value, extra) in out.iter_mut().zip(maximum) {
-                *value += u16::from(extra);
-            }
-        }
-    }
-}
-
 /// A beam search for a step of `Ring::alike`, taken a level at a time so
 /// that its states can be tried for an ending on the way (as `Lane` is for
 /// a short row; the search itself is `search::beam`).
 struct Walk<'a> {
     grow: &'a Grow<'a>,
     original: &'a Node,
-    transitions: RowTransitions,
     width: usize,
     /// Which of the states with the same score are kept depends on this.
     salt: u32,
@@ -1203,12 +1142,18 @@ impl Walk<'_> {
         let level = &self.level;
         let mut scores = vec![u16::MAX; level.len() * count];
         scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
+            let mut kids = Vec::with_capacity(count);
             for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
-                self.transitions.scores(grow, n, row);
-                if *last != FAR {
-                    for (value, &m) in row.iter_mut().zip(ids) {
-                        if skip54(*last, m) { *value = u16::MAX; }
+                kids.clear();
+                for (k, &m) in ids.iter().enumerate() {
+                    if *last == FAR || !skip54(*last, m) {
+                        let kid = grow.next_active(n, k);
+                        grow.prefetch(&kid);
+                        kids.push((k, kid));
                     }
+                }
+                for (k, kid) in &kids {
+                    row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
                 }
             }
         });
@@ -1831,29 +1776,6 @@ mod tests {
             assert!(ending <= EASY + 1 && moves.len() < 45);
             g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
             assert!(ring.matched(&f));
-        }
-    }
-
-    #[test]
-    fn batched_row_scores_match_every_scalar_successor() {
-        for (size, offset, active) in [(14, 0, 4), (15, 1, 6)] {
-            let g = Geometry::new(size);
-            let ring = Ring::new(&g, 1);
-            let deepest = *ring.level.iter().max().unwrap();
-            let like = ring.level.iter().position(|&d| d == deepest).unwrap();
-            let level = deepest - offset;
-            let new: Vec<_> = (0..ring.len()).filter(|&k| ring.level[k] == level && k != like).collect();
-            let step = ring.step(level, like, &new);
-            assert_eq!(step.orbits.len(), active);
-            let transitions = RowTransitions::new(&step);
-            for seed in [11, 24, 570] {
-                let n = step.pack(&ring.node(&staged(&g, seed)).unwrap());
-                let mut scores = vec![0; step.ids.len()];
-                transitions.scores(&step, &n, &mut scores);
-                for (k, &score) in scores.iter().enumerate() {
-                    assert_eq!(u32::from(score), step.score(&step.next_active(&n, k)));
-                }
-            }
         }
     }
 
