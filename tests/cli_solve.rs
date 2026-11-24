@@ -91,3 +91,15 @@ fn a_real_2x2_is_solved_and_the_solution_checked() {
     let after = facelets(2, &format!("R U F' L2 D B2 R' {}", solution.trim()));
     assert!(after.as_bytes().chunks(4).all(|f| f.iter().all(|&c| c == f[0])), "{}", after);
 }
+
+#[test]
+fn shorter_accepts_stickers_and_replays_the_printed_solution() {
+    let scramble = "Rw U Fw2";
+    let state = facelets(4, scramble);
+    let out = anycube(&["solve", "--state", &state, "--mode", "shorter"]);
+    let details = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success() && details.contains("projected 3x3x3"), "{details}");
+    let solution = String::from_utf8(out.stdout).unwrap();
+    let after = facelets(4, &format!("{scramble} {}", solution.trim()));
+    assert!(after.as_bytes().chunks(16).all(|face| face.iter().all(|&c| c == face[0])));
+}
