@@ -279,3 +279,72 @@ test("under a shadow across each face, a 3x3x3 comes out right or is mended, not
   assert.equal(tally.unseen, 0, JSON.stringify(tally));
   assert.ok(tally.right + tally.mended >= 38, JSON.stringify(tally));
 });
+
+// Glare: a glossy sticker that throws a lamp's light straight back is clipped
+// to white in the picture, whatever its colour.
+const GLARE = [255, 255, 255];
+const centresOf = (n) => {
+  const out = [];
+  for (let f = 0; f < 6; f++) for (let r = 1; r < n - 1; r++) for (let c = 1; c < n - 1; c++) out.push(f * n * n + r * n + c);
+  return out;
+};
+
+test("a 3x3x3 sticker turned white by glare is exchanged back, or the scan refused, never wrong", () => {
+  const n = 3;
+  let mended = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const rnd = random(500 + seed);
+    const cube = scrambled(n, rnd);
+    const samples = photograph(cube, n, rnd);
+    // A coloured sticker that is not a middle one.
+    const coloured = [...cube.keys()].filter((i) => cube[i] !== 0 && i % 9 !== 4);
+    samples[coloured[Math.floor(rnd() * coloured.length)]] = GLARE;
+    const { sorted, made } = assembleScan(n, samples);
+    if (made.kind === "none" || made.kind === "several") continue;
+    const read = named(n, sorted, arrange(n, made.labels, made)).facelets;
+    assert.ok(sameCube(n, read, cube), `seed ${seed}: a wrong cube (${made.kind})`);
+    mended++;
+  }
+  assert.ok(mended >= 10, `only ${mended} of 12 mended`);
+});
+
+test("glare on the middle stickers of an odd cube is refused: they no longer say which colour is which", () => {
+  // A torch beside the lens throws its light back from the middle of every face.
+  for (const n of [3, 5]) {
+    const nn = n * n;
+    for (const faces of [[0, 1, 2, 3, 4, 5], [1, 2], [0, 3]]) {
+      const rnd = random(70 + n);
+      const cube = scrambled(n, rnd);
+      const samples = photograph(cube, n, rnd);
+      for (const f of faces) samples[f * nn + (nn - 1) / 2] = GLARE;
+      const { made } = assembleScan(n, samples);
+      assert.ok(made.kind === "several" || made.kind === "none", `${n}x${n}x${n}, faces ${faces}: ${made.kind}`);
+    }
+  }
+});
+
+// Samples of two rendered 4x4x4 cubes (MultiCuber's tools/vision_eval.py,
+// "glare_torch_on_axis") that were read as other cubes before glare was looked for.
+const GLARE_SCANS = JSON.parse(readFileSync(new URL("./fixtures/glare-4x4.json", import.meta.url), "utf8"));
+
+for (const { name, size, rgb, expected } of GLARE_SCANS) {
+  test(`glare on the centres of a 4x4x4 is refused, not read as another cube: ${name}`, () => {
+    // Centres are on no piece, so no check of the pieces catches one read wrong.
+    const { made } = assembleScan(size, rgb);
+    assert.equal(made.kind, "several");
+    assert.ok(made.hidden.length > 0);
+    assert.ok(made.hidden.every((i) => centresOf(size).includes(i)));
+    assert.equal(expected.length, 6 * size * size);
+  });
+}
+
+test("in a bright picture with every white sticker clipped, the cube still reads", () => {
+  for (const n of [3, 4, 5]) {
+    const rnd = random(40 + n);
+    const cube = scrambled(n, rnd);
+    const samples = photograph(cube, n, rnd).map((rgb, i) => (cube[i] === 0 ? GLARE : rgb));
+    const { sorted, made } = assembleScan(n, samples);
+    assert.ok(made.kind === "taken", `${n}x${n}x${n}: ${made.kind}`);
+    assert.ok(sameCube(n, named(n, sorted, arrange(n, made.labels, made)).facelets, cube));
+  }
+});

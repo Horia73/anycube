@@ -148,6 +148,13 @@ the browser's solver against the native one on the same cubes.
   cube, the original Lab colour groups are tried again, requiring exact
   counts and a valid cube in the captured face order. Other sizes, makers,
   lighting, logos and fingers over stickers still need more real cases.
+- **Glare** that clips a sticker to white hides its colour. On a 3x3x3 one
+  such sticker is exchanged with the one it pushed out of the white group
+  when that alone makes a cube. Glare on two or more middle stickers, or
+  on centre stickers of a 4x4x4 or larger (which no piece check covers), is
+  refused unless the washed-out stickers all read as one colour and nothing
+  else had to move for them; the page then asks for the light to be moved.
+  Measured on rendered pictures only (MultiCuber's `tools/vision_eval.py`).
 - **Windows**: no window of its own and no application entry there yet.
 - **The camera inside the macOS window** has not been tried on a real
   camera: the page finds the camera interface there, and the bundle

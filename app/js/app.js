@@ -919,7 +919,7 @@ export async function mount(root, options = {}) {
           sources,
           facelets: state.model.toText(facelets),
           palette,
-          assembly: { kind: made.kind, from: made.from, rot: made.rot, swapped: made.swapped },
+          assembly: { kind: made.kind, from: made.from, rot: made.rot, swapped: made.swapped, hidden: made.hidden },
           uncertainty: Array.from(doubt, (value) => Math.round(value * 1000) / 1000),
           centre_mismatch: centreMismatch,
         });
@@ -941,6 +941,8 @@ export async function mount(root, options = {}) {
         note = `${made.moved.length > 2 ? "Some" : "Two"} faces were shown out of order and moved into place. Check against your cube.`;
       } else if (made.kind === "recoloured") {
         note = "Two similar sticker colours were swapped to make a valid cube. Check against your cube.";
+      } else if (made.kind === "several" && made.hidden?.length) {
+        note = "Glare hid the colour of some stickers. Move the light or tilt the cube, then scan again.";
       } else if (made.kind === "several") {
         note = "These pictures fit together as more than one cube. Scan again, or correct it here.";
       } else if (made.kind === "none") {

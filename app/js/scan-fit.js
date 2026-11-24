@@ -386,15 +386,76 @@ function fitWithoutRecolouring(n, sorted) {
   return null;
 }
 
-/** Uses the distinct observed colours when they fit together as a cube. */
+// A sample clipped to white in all three channels: the camera saw only the
+// reflection of a light there (glare on a glossy sticker), nothing of the
+// sticker's own colour, which may be any.
+const BLOWN = 235;
+export function isBlown(rgb) {
+  return Math.min(rgb[0], rgb[1], rgb[2]) >= BLOWN;
+}
+
+// A sample that glare has washed out: a channel clipped and much white in
+// all three. Its hue is no longer the sticker's (a washed orange looks a
+// pale red). A white sticker in a bright picture is one too.
+export function isWashed(rgb) {
+  return Math.max(rgb[0], rgb[1], rgb[2]) >= 250 && Math.min(rgb[0], rgb[1], rgb[2]) >= 100;
+}
+
+// The facelets of the centres: on no corner, edge or wing, so that no check
+// of the pieces says anything of their colours.
+function centreCells(n) {
+  const { model, corners, edges, wings } = shape(n);
+  const onPiece = new Set([...corners, ...edges, ...wings].flatMap((p) => p.cells));
+  return Array.from({ length: model.count }, (_, i) => i).filter((i) => !onPiece.has(i));
+}
+
+/**
+ * The cube six pictures' samples make: the distinct observed colours when
+ * they fit together as a cube, else the sorting of `sortColours` and
+ * `assemble`.
+ *
+ * On a cube of odd size, two middle stickers washed out by glare cannot be
+ * told apart, and so neither can the colours they name: "several".
+ * On a cube of 4x4x4 or more, a centre sticker read wrong still makes a
+ * cube. So when glare has washed out centre stickers (`isWashed`), the cube
+ * is believed only if those all fell into one group (they are all white,
+ * as in a bright picture) and no other sticker had to leave the group it
+ * is nearest for them; else the answer is "several", with `hidden` the
+ * washed-out centre stickers, as taken.
+ */
 export function assembleScan(n, samples) {
+  const read = assembleSeen(n, samples);
+  const { kind } = read.made;
+  if (kind === "none" || kind === "several") return read;
+  const refuse = (hidden) => ({
+    sorted: read.sorted,
+    made: { kind: "several", ...SAME, moved: [], turned: [], hidden: hidden.sort((a, b) => a - b), labels: read.sorted.labels },
+  });
+  const nn = n * n;
+  // The middle stickers of an odd cube name the colours. One washed out is
+  // the white one in a bright picture; two cannot be told apart.
+  if (n % 2 === 1) {
+    const middles = [0, 1, 2, 3, 4, 5].map((f) => f * nn + (nn - 1) / 2).filter((i) => isWashed(samples[i]));
+    if (middles.length > 1) return refuse(middles);
+  }
+  if (n < 4) return read;
+  const lying = arrange(n, Int32Array.from(samples, (_, i) => i), read.made);
+  const washed = centreCells(n).map((cell) => lying[cell]).filter((i) => isWashed(samples[i]));
+  if (!washed.length) return read;
+  const labels = read.made.labels;
+  const groups = new Set(washed.map((i) => labels[i]));
+  const pushed = read.sorted.doubt.some((d) => d >= 0.999);
+  return groups.size === 1 && !pushed ? read : refuse(washed);
+}
+
+function assembleSeen(n, samples) {
   const distinct = sortDistinctColours(samples, n);
   if (distinct) {
     const made = fitWithoutRecolouring(n, distinct);
     if (made?.kind === "taken" || made?.kind === "placed") return { sorted: distinct, made };
   }
   const sorted = sortColours(samples, n);
-  const made = assemble(n, sorted);
+  const made = assemble(n, sorted, samples);
   if (made.kind === "none" || made.kind === "several") {
     // A clipped channel or a shaded sticker can mislead the glare model.
     // Retry the measured Lab colours with each sticker's nearest group,
@@ -422,6 +483,9 @@ export function reviewStickers(n, doubt) {
  * The cube the six pictures make.
  *
  * @param sorted what `sortColours` gave for the samples as taken
+ * @param samples the samples themselves, if at hand: a sample all glare
+ *   (`isBlown`) can then be exchanged with any sticker that would rather
+ *   be in its group
  * @returns `{ kind, from, rot, moved, turned, swapped, ways }`:
  *   kind "taken": the pictures make a cube as they were taken;
  *   "placed": only when placed or turned another way, the one way there is;
@@ -431,20 +495,28 @@ export function reviewStickers(n, doubt) {
  *   For "taken", "placed" and "recoloured", `labels` are the groups to go
  *   on with (those of `sorted`, two exchanged for "recoloured").
  */
-export function assemble(n, sorted) {
+export function assemble(n, sorted, samples = null) {
   const fitted = fitWithoutRecolouring(n, sorted);
   if (fitted) return fitted;
   // Two stickers each of which was nearly sorted where the other is: the likeliest mistake.
   const { labels, doubt, second } = sorted;
   const nn = n * n;
   const mid = n % 2 === 1 ? (nn - 1) / 2 : -1;
+  // A sticker under glare went to the palest group and its second choice
+  // says nothing: it may belong to any group, so it is paired with any
+  // sticker that would rather be in the group it went to (often a white one
+  // it pushed out), as the least sure of all.
+  // Not when glare is on a middle sticker of an odd cube, which names its
+  // face's colour: then the groups themselves are not to be trusted.
+  const middles = mid >= 0 && samples ? [0, 1, 2, 3, 4, 5].map((f) => samples[f * nn + mid]) : [];
+  const blown = samples && !middles.some(isWashed) ? samples.map(isBlown) : [];
   const pairs = [];
   for (let i = 0; i < labels.length; i++) {
     if (i % nn === mid) continue;
     for (let j = i + 1; j < labels.length; j++) {
-      if (j % nn === mid || labels[i] === labels[j]) continue;
-      if (second[i] !== labels[j] || second[j] !== labels[i]) continue;
-      pairs.push([doubt[i] + doubt[j], i, j]);
+      if (j % nn === mid || labels[i] === labels[j] || (blown[i] && blown[j])) continue;
+      if ((second[i] !== labels[j] && !blown[i]) || (second[j] !== labels[i] && !blown[j])) continue;
+      pairs.push([(blown[i] ? 1 : doubt[i]) + (blown[j] ? 1 : doubt[j]), i, j]);
     }
   }
   pairs.sort((a, b) => b[0] - a[0]);
