@@ -57,7 +57,7 @@
 //!   and brought back: a last resort.
 
 use crate::cuben::Geometry;
-use crate::search::{beam_cut, beam_from, fetch, mixed, Problem};
+use crate::search::{beam_from, fetch, mixed, Problem};
 use crate::stage6::skip54;
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
@@ -114,8 +114,6 @@ const TRIES: [(u32, usize); 3] = [(0, 1), (1000, 3), (2000, 10)];
 const STUCK: usize = 5;
 
 type Node = [u32; MAX];
-/// Two rows of the reference column and at most two new columns.
-type Active = [u32; 6];
 
 /// The tables kept as files, by fingerprint: whoever asks first makes or
 /// loads one, the others wait for it.
@@ -640,7 +638,7 @@ impl Ring {
             let from = self.node(&f).ok()?;
             let found = grow.arrive(&from);
             if trace {
-                eprintln!("      level {}: alike, {} moves to choose from, score {} -> {:?} moves", level, grow.ids.len(), grow.score(&grow.pack(&from)), found.as_ref().map(|m| m.len()));
+                eprintln!("      level {}: alike, {} moves to choose from, score {} -> {:?} moves", level, grow.ids.len(), grow.score(&from), found.as_ref().map(|m| m.len()));
             }
             let moves = found?;
             g.apply_seq(&mut f, &moves.iter().map(|&m| m as usize).collect::<Vec<_>>());
@@ -678,11 +676,7 @@ impl Ring {
         let pairs: Vec<(usize, usize)> = new.iter().flat_map(|&k| [(2 * like, 2 * k), (2 * like + 1, 2 * k + 1)]).collect();
         let wanted: Vec<(usize, usize)> = (0..pairs.len()).flat_map(|i| (0..3).map(move |t| (i, t))).collect();
         let made: Vec<std::sync::Arc<Bytes>> = wanted.par_iter().map(|&(i, t)| self.two_axes(&ids, &places, pairs[i].0, pairs[i].1, TWO[t])).collect();
-        // Keep the active orbits in their original ordering. The tables were
-        // built with physical orbit numbers, but score only these six slots.
-        let slot = |orbit| orbits.binary_search(&orbit).unwrap();
-        let groups = groups.iter().map(|group| group.iter().map(|&j| slot(j)).collect()).collect();
-        let twos = (0..pairs.len()).map(|i| (slot(pairs[i].0), slot(pairs[i].1), [made[3 * i].clone(), made[3 * i + 1].clone(), made[3 * i + 2].clone()])).collect();
+        let twos = (0..pairs.len()).map(|i| (pairs[i].0, pairs[i].1, [made[3 * i].clone(), made[3 * i + 1].clone(), made[3 * i + 2].clone()])).collect();
         let cuts = ids.iter().map(|&m| m as usize / 18 == level).collect();
         Grow { ring: self, ids, places, orbits, groups, dist, twos, cuts }
     }
@@ -852,7 +846,7 @@ const TWO: [(usize, usize); 3] = [(0, 1), (1, 2), (0, 2)];
 
 impl Grow<'_> {
     #[inline(always)]
-    fn halves(&self, n: &[u32]) -> u32 {
+    fn halves(&self, n: &Node) -> u32 {
         let mut sum = 0u32;
         for (group, dist) in self.groups.iter().zip(&self.dist) {
             for axis in 0..3 {
@@ -870,7 +864,7 @@ impl Grow<'_> {
 impl Grow<'_> {
     /// Never more than the moves still needed: a move costs two half moves
     /// over the three axes, and every group needs its own.
-    fn least(&self, n: &Active) -> usize {
+    fn least(&self, n: &Node) -> usize {
         let mut most = 0u32;
         for (group, dist) in self.groups.iter().zip(&self.dist) {
             let mut sum = 0u32;
@@ -889,7 +883,7 @@ impl Grow<'_> {
     /// Whether the state is done, or `None` if it certainly needs more than
     /// `left` moves (`least`, stopped at the first table that says so).
     #[inline(always)]
-    fn within(&self, n: &Active, left: usize) -> Option<bool> {
+    fn within(&self, n: &Node, left: usize) -> Option<bool> {
         let rank = |j: usize, axis: usize| self.ring.rank8[(n[j] >> (8 * axis) & 255) as usize] as usize;
         let mut all = 0u32;
         for (group, dist) in self.groups.iter().zip(&self.dist) {
@@ -914,7 +908,7 @@ impl Grow<'_> {
 
     /// Asks for the table entries that the score and the bound of a state read (`search::fetch`).
     #[inline(always)]
-    fn prefetch(&self, n: &Active) {
+    fn prefetch(&self, n: &Node) {
         let rank = |j: usize, axis: usize| self.ring.rank8[(n[j] >> (8 * axis) & 255) as usize] as usize;
         for (group, dist) in self.groups.iter().zip(&self.dist) {
             for axis in 0..3 {
@@ -932,14 +926,14 @@ impl Grow<'_> {
     /// The score of a step of `Ring::alike`: what each axis needs by itself
     /// and what each pair of orbits needs on two axes together.
     #[inline(always)]
-    fn score(&self, n: &Active) -> u32 {
+    fn score(&self, n: &Node) -> u32 {
         self.halves(n) + self.two(n).1
     }
 
     /// From the tables of two axes: the most that any pair of orbits needs
     /// on any two axes, and the sum over the pairs of what each needs most.
     #[inline(always)]
-    fn two(&self, n: &Active) -> (u32, u32) {
+    fn two(&self, n: &Node) -> (u32, u32) {
         let (mut most, mut sum) = (0u32, 0u32);
         for (x, y, tables) in &self.twos {
             let at: [usize; 3] = std::array::from_fn(|axis| {
@@ -951,23 +945,6 @@ impl Grow<'_> {
             sum += need;
         }
         (most, sum)
-    }
-
-    fn pack(&self, n: &Node) -> Active {
-        let mut active = Active::default();
-        for (slot, &orbit) in self.orbits.iter().enumerate() {
-            active[slot] = n[orbit];
-        }
-        active
-    }
-
-    #[inline]
-    fn next_active(&self, n: &Active, k: usize) -> Active {
-        let mut next = Active::default();
-        for (slot, &orbit) in self.orbits.iter().enumerate() {
-            next[slot] = self.ring.perms[orbit].apply(self.places[k] as u8, n[slot]);
-        }
-        next
     }
 
     /// A step of `Ring::alike`: a beam search, and from the best states of
@@ -996,13 +973,13 @@ impl Grow<'_> {
     fn arrive_once(&self, from: &Node, salt: u32, width: usize, deeper: bool) -> Option<Vec<u8>> {
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let clock = std::time::Instant::now();
-        let mut walk = Walk { grow: self, original: from, width, salt, level: vec![(self.pack(from), FAR)], scores: Vec::new(), trail: Vec::new() };
+        let mut walk = Walk { grow: self, width, salt, level: vec![(*from, FAR)], scores: Vec::new(), trail: Vec::new() };
         let mut best: Option<Vec<u8>> = None;
         let mut since = 0;
         // The lowest score so far, and for how many levels it has not gone down.
         let (mut lowest, mut flat) = (u32::MAX, 0);
         // The states tried and not finished, for a longer ending should none be found: (bound, score, moves, state).
-        let mut spare: Vec<(usize, u32, Vec<u8>, Active)> = Vec::new();
+        let mut spare: Vec<(usize, u32, Vec<u8>, Node)> = Vec::new();
         for len in 1..=50 {
             walk.advance();
             if walk.level.is_empty() {
@@ -1019,14 +996,13 @@ impl Grow<'_> {
                 }
             } else {
                 let starts = &walk.level[..walk.level.len().min(STARTS)];
-                let bounds: Vec<_> = starts.iter().map(|(n, _)| self.least(n)).collect();
                 for depth in 1..=END_MOVES {
                     if len + depth >= cap {
                         break;
                     }
                     let hit = starts.par_iter().enumerate().find_map_first(|(i, (at, last))| {
                         let mut path = Vec::new();
-                        (bounds[i] + END_GAP <= depth && self.finish(at, depth, *last, &mut path)).then_some((i, path))
+                        (self.least(at) + END_GAP <= depth && self.finish(at, depth, *last, &mut path)).then_some((i, path))
                     });
                     if let Some((i, path)) = hit {
                         if trace {
@@ -1039,7 +1015,7 @@ impl Grow<'_> {
                     }
                 }
                 if best.is_none() {
-                    let near = (0..starts.len()).map(|i| (bounds[i], i)).filter(|x| x.0 <= END_MOVES);
+                    let near = (0..starts.len()).map(|i| (self.least(&starts[i].0), i)).filter(|x| x.0 <= END_MOVES);
                     spare.extend(near.map(|(least, i)| (least, walk.scores[i], walk.path(i), starts[i].0)));
                     spare.sort();
                     spare.truncate(STARTS);
@@ -1078,34 +1054,19 @@ impl Grow<'_> {
 
     /// Whether at most `left` moves finish from here; they are left in
     /// `path`, the last one first.
-    fn finish(&self, n: &Active, left: usize, last: u8, path: &mut Vec<u8>) -> bool {
-        if left <= 1 {
-            // Only a cut through the new columns can change equality. At
-            // the last turn the four masks themselves decide the result.
-            let matched = |state: &Active| self.groups.iter().all(|g| state[g[0]] == state[g[2]] && state[g[1]] == state[g[3]]);
-            if matched(n) { return true; }
-            if left == 1 {
-                for (k, &m) in self.ids.iter().enumerate() {
-                    if self.cuts[k] && (last == FAR || !skip54(last, m)) && matched(&self.next_active(n, k)) {
-                        path.push(m);
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
+    fn finish(&self, n: &Node, left: usize, last: u8, path: &mut Vec<u8>) -> bool {
         match self.within(n, left) {
             None => return false,
             Some(true) => return true,
             Some(false) => (),
         }
         // The states one move on are made first and their table entries asked for.
-        let mut kids: Vec<(usize, Active)> = Vec::with_capacity(self.ids.len());
+        let mut kids: Vec<(usize, Node)> = Vec::with_capacity(self.ids.len());
         for (k, &m) in self.ids.iter().enumerate() {
-            if last != FAR && skip54(last, m) {
+            if (last != FAR && skip54(last, m)) || (left == 1 && !self.cuts[k]) {
                 continue;
             }
-            let kid = self.next_active(n, k);
+            let kid = self.next(n, k);
             self.prefetch(&kid);
             kids.push((k, kid));
         }
@@ -1124,12 +1085,11 @@ impl Grow<'_> {
 /// a short row; the search itself is `search::beam`).
 struct Walk<'a> {
     grow: &'a Grow<'a>,
-    original: &'a Node,
     width: usize,
     /// Which of the states with the same score are kept depends on this.
     salt: u32,
     /// The states of the length reached, the lowest scores first, each with the move that led to it.
-    level: Vec<(Active, u8)>,
+    level: Vec<(Node, u8)>,
     scores: Vec<u32>,
     /// Per length: each state's parent in the level before, and that move.
     trail: Vec<Vec<(u32, u8)>>,
@@ -1140,39 +1100,45 @@ impl Walk<'_> {
         let (grow, salt) = (self.grow, self.salt);
         let (ids, count) = (&grow.ids, grow.ids.len());
         let level = &self.level;
-        let mut scores = vec![u16::MAX; level.len() * count];
-        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
-            let mut kids = Vec::with_capacity(count);
-            for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
-                kids.clear();
-                for (k, &m) in ids.iter().enumerate() {
-                    if *last == FAR || !skip54(*last, m) {
-                        let kid = grow.next_active(n, k);
-                        grow.prefetch(&kid);
-                        kids.push((k, kid));
+        let scores: Vec<u16> = level
+            .par_chunks(256)
+            .flat_map_iter(|chunk| {
+                let mut out = vec![u16::MAX; chunk.len() * count];
+                let mut kids: Vec<(usize, Node)> = Vec::with_capacity(count);
+                for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
+                    kids.clear();
+                    for k in 0..count {
+                        if *last == FAR || !skip54(*last, ids[k]) {
+                            let kid = grow.next(n, k);
+                            grow.prefetch(&kid);
+                            kids.push((k, kid));
+                        }
+                    }
+                    for (k, kid) in &kids {
+                        row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
                     }
                 }
-                for (k, kid) in &kids {
-                    row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
-                }
-            }
-        });
+                out
+            })
+            .collect();
         // The score at which the level is full, with room for states reached twice.
         let most = self.width + self.width / 2;
-        let cut = beam_cut(&scores, most);
-        let mut next: Vec<(u32, u32, Active, u32, u8)> = (0..scores.len())
+        let mut tally = vec![0usize; 1 << 16];
+        for &x in &scores {
+            tally[x as usize] += 1;
+        }
+        let (mut cut, mut total) = (0, tally[0]);
+        while total < most && cut < u16::MAX as usize - 1 {
+            cut += 1;
+            total += tally[cut];
+        }
+        let mut next: Vec<(u32, u32, Node, u32, u8)> = (0..scores.len())
             .into_par_iter()
-            .filter(|&j| scores[j] <= cut)
+            .filter(|&j| scores[j] as usize <= cut)
             .map(|j| {
                 let (i, k) = (j / count, j % count);
-                let to = grow.next_active(&level[i].0, k);
-                // Equal scores use the legacy full-state hash. Inactive slots
-                // are constant throughout this search and need only be restored here.
-                let mut full = *self.original;
-                for (slot, &orbit) in grow.orbits.iter().enumerate() {
-                    full[orbit] = to[slot];
-                }
-                (scores[j] as u32, mixed(&full, salt), to, i as u32, ids[k])
+                let to = grow.next(&level[i].0, k);
+                (scores[j] as u32, mixed(&to, salt), to, i as u32, ids[k])
             })
             .collect();
         if next.len() > most {
@@ -1284,8 +1250,6 @@ struct Short<'a> {
     /// `Step` has them. The scores of all the moves from a state are then
     /// the sum of one such row per slot.
     after: Vec<u8>,
-    /// Per previous move, mark the successors excluded by canonical move order.
-    skipped: Vec<Vec<u8>>,
 }
 
 /// The patterns of a short row: `2 * slot` for the row, `2 * slot + 1` for the row under it.
@@ -1316,11 +1280,7 @@ impl<'a> Short<'a> {
         // The scores are added up in bytes.
         let most = |slot: usize| (0..2).map(|sign| *dist[slots[slot].0][slots[slot].1][sign].iter().max().unwrap() as usize).max().unwrap();
         assert!((0..slots.len()).map(most).sum::<usize>() < FAR as usize);
-        let mut skipped = vec![Vec::new(); FAR as usize + 1];
-        for &last in &ring.moves {
-            skipped[last as usize] = ring.moves.iter().map(|&m| if skip54(last, m) { FAR } else { 0 }).collect();
-        }
-        Short { ring, slots: slots.len(), to, after, skipped }
+        Short { ring, slots: slots.len(), to, after }
     }
 
     fn ranks(&self, n: &Node) -> Ranks {
@@ -1343,19 +1303,12 @@ impl<'a> Short<'a> {
         out
     }
 
-    /// Mismatching centres, stopped once this row is too far for the ending search.
-    fn near(&self, n: &Ranks, signs: [usize; 3]) -> Option<u32> {
-        let mut apart = 0;
-        for i in 0..self.slots {
-            let a = self.ring.unrank8[n[2 * i] as usize];
-            let b = self.ring.unrank8[n[2 * i + 1] as usize];
-            let opposite = if signs[i % 3] == 1 { 255 } else { 0 };
-            apart += (a ^ b ^ opposite).count_ones();
-            if apart > APART {
-                return None;
-            }
-        }
-        Some(apart)
+    /// How many centres of the row do not agree with the one under them
+    /// (or are not its opposite, where that is the aim): an even number in
+    /// every slot.
+    fn apart(&self, n: &Ranks, signs: [usize; 3]) -> u32 {
+        let pattern = |r: u8| self.ring.unrank8[r as usize];
+        (0..self.slots).map(|i| (pattern(n[2 * i]) ^ pattern(n[2 * i + 1]) ^ if signs[i % 3] == 1 { 255 } else { 0 }).count_ones()).sum()
     }
 }
 
@@ -1397,20 +1350,28 @@ impl<'a> Lane<'a> {
         let (short, after) = (self.short, &self.after);
         let (moves, count) = (&short.ring.moves, short.ring.moves.len());
         let level = &self.level;
-        let mut scores = vec![0u8; level.len() * count];
-        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
-            for ((n, last), sums) in chunk.iter().zip(out.chunks_mut(count)) {
-                for (s, after) in after.iter().enumerate() {
-                    let pair = n[2 * s] as usize * 70 + n[2 * s + 1] as usize;
-                    for (sum, x) in sums.iter_mut().zip(&after[pair * count..][..count]) {
-                        *sum += x;
+        let scores: Vec<u8> = level
+            .par_chunks(256)
+            .flat_map_iter(|chunk| {
+                let mut out = vec![0u8; chunk.len() * count];
+                for ((n, last), sums) in chunk.iter().zip(out.chunks_mut(count)) {
+                    for (s, after) in after.iter().enumerate() {
+                        let pair = n[2 * s] as usize * 70 + n[2 * s + 1] as usize;
+                        for (sum, x) in sums.iter_mut().zip(&after[pair * count..][..count]) {
+                            *sum += x;
+                        }
+                    }
+                    if *last != FAR {
+                        for (sum, &m) in sums.iter_mut().zip(moves) {
+                            if skip54(*last, m) {
+                                *sum = FAR;
+                            }
+                        }
                     }
                 }
-                for (sum, &mask) in sums.iter_mut().zip(&short.skipped[*last as usize]) {
-                    *sum |= mask;
-                }
-            }
-        });
+                out
+            })
+            .collect();
         // The score at which the level is full, with room for states reached twice.
         let most = WIDTH + WIDTH / 2;
         let mut tally = [0usize; 256];
@@ -1456,8 +1417,7 @@ impl<'a> Lane<'a> {
     /// The states of the length reached that are worth trying for an
     /// ending, those with the lowest scores first, with their moves.
     fn starts(&self) -> Vec<Start> {
-        let near = self.level.iter().enumerate()
-            .filter_map(|(i, (n, _))| self.short.near(n, self.signs).map(|apart| (i, apart))).take(NEAR);
+        let near = (0..self.level.len()).map(|i| (i, self.short.apart(&self.level[i].0, self.signs))).filter(|x| x.1 <= APART).take(NEAR);
         near.map(|(i, apart)| {
             let mut moves = Vec::with_capacity(self.trail.len());
             let mut at = i;
