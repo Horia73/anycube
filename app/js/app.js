@@ -568,7 +568,13 @@ export async function mount(root, options = {}) {
     $("stage-size").textContent = name(n);
     const here = solver.inBrowser(n);
     // The 2x2x2 has one answer, the shortest; a cube too large to solve has none.
-    for (const b of $("mode-field").children) b.disabled = n === 2 || !solvable(n);
+    const shorter = (n === 4 || n === 5) && solver.config.modes.includes("shorter") && solvable(n);
+    if (state.mode === "shorter" && !shorter) state.mode = "normal";
+    for (const b of $("mode-field").children) {
+      b.hidden = b.dataset.mode === "shorter" && !shorter;
+      b.disabled = b.hidden || n === 2 || !solvable(n);
+      b.setAttribute("aria-checked", String(b.dataset.mode === state.mode));
+    }
     const half = Math.floor(n / 2);
     const wide = half === 1 ? "" : half === 2 ? ", wide turns as <code>Rw</code>" : `, wide turns as <code>Rw</code> to <code>${half}Rw</code>`;
     $("notation").innerHTML =

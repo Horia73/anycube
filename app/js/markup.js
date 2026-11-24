@@ -183,6 +183,7 @@ export const APP_HTML = `
       <div class="modes" id="mode-field" role="radiogroup" aria-label="Search">
         <button type="button" role="radio" aria-checked="false" data-mode="fast" title="A fraction of the time, about a move longer">Fast</button>
         <button type="button" role="radio" aria-checked="true" data-mode="normal" title="The solver's defaults">Normal</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="shorter" title="Try other turn widths for a shorter solution" hidden>Shorter</button>
       </div>
       <button type="button" class="button primary large" id="solve">Solve</button>
     </div>

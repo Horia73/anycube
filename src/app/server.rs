@@ -93,7 +93,7 @@ fn failed(code: &str, message: &str) -> Value {
 fn solve_here(request: &Value, max_size: usize, started: impl FnOnce()) -> Value {
     let size = request["size"].as_u64().unwrap_or(0) as usize;
     let Some(mode) = Mode::parse(request["mode"].as_str().unwrap_or("normal")) else {
-        return failed("bad_mode", "the mode is fast or normal");
+        return failed("bad_mode", "unknown search mode");
     };
     let text = request["input"].as_str().unwrap_or("");
     let input = if request["kind"] == "moves" { Input::Moves(text) } else { Input::Facelets(text) };
@@ -386,7 +386,7 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
             respond_json(request, 200, json!({
                 "max_size": shared.max_size,
                 "browser_sizes": api::BROWSER_SIZES,
-                "modes": ["fast", "normal"],
+                "modes": ["fast", "normal", "shorter"],
                 "queue": 0,
                 "time_cap_s": 0,
                 "max_scramble_moves": api::MAX_SCRAMBLE_MOVES,
@@ -447,8 +447,8 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
             let job = parsed().and_then(|b| {
                 let (size, kind, input) = cube_of(&b)?;
                 let mode = b["mode"].as_str().unwrap_or("normal").to_string();
-                if Mode::parse(&mode).is_none() {
-                    return Err(error("bad_mode", "the mode is fast or normal", false));
+                if !Mode::parse(&mode).is_some_and(|m| m.supports(size)) {
+                    return Err(error("bad_mode", "unsupported search mode for this size", false));
                 }
                 checked(size, kind, &input, shared.max_size)?;
                 Ok(json!({"size": size, "kind": kind, "input": input, "mode": mode}))

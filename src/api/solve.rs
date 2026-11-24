@@ -17,6 +17,8 @@ pub enum Mode {
     Fast,
     /// The solver's defaults.
     Normal,
+    /// Search alternative turn widths on a 4x4x4 or 5x5x5.
+    Shorter,
 }
 
 impl Mode {
@@ -24,14 +26,20 @@ impl Mode {
         match s {
             "fast" => Some(Mode::Fast),
             "normal" => Some(Mode::Normal),
+            "shorter" => Some(Mode::Shorter),
             _ => None,
         }
+    }
+
+    pub fn supports(self, size: usize) -> bool {
+        self != Mode::Shorter || matches!(size, 4 | 5)
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Mode::Fast => "fast",
             Mode::Normal => "normal",
+            Mode::Shorter => "shorter",
         }
     }
 }
@@ -119,8 +127,16 @@ fn renamed(n: usize, f: &[u8]) -> Vec<u8> {
 /// Solves a checked cube. The solution is applied to the stickers as they
 /// were given before it is returned.
 pub fn solve(c: &Checked, mode: Mode) -> Result<Solved, ApiError> {
+    if !mode.supports(c.size) {
+        return Err(ApiError::new("bad_mode", "shorter mode needs a 4x4x4 or 5x5x5"));
+    }
     let owned;
-    let g = if c.size == 2 { Geometry::pocket() } else { owned = Geometry::new(c.size); &owned };
+    let g = if c.size == 2 {
+        Geometry::pocket()
+    } else {
+        owned = Geometry::new(c.size);
+        &owned
+    };
     if g.is_solved(&c.facelets) {
         return Ok(Solved { moves: Vec::new(), solution: String::new(), parts: Vec::new(), optimal: true });
     }
@@ -231,6 +247,15 @@ mod big {
     pub fn run(g: &Geometry, f: &[u8], mode: Mode) -> Result<Answer, ApiError> {
         // A solver that panics takes this request with it, not the process.
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Answer, String> {
+            if mode == Mode::Shorter {
+                use crate::lift::Search;
+                let answer = if g.n == 4 {
+                    Search::Four { solver: s4(), params: &Params::default(), last_face: false }.solve(g, f, 1)?
+                } else {
+                    Search::Five { solver: s5(), params: &Params5::normal(), shell: None }.solve(g, f, 1)?
+                };
+                return Ok((answer.moves.into_iter().map(usize::from).collect(), Vec::new(), false));
+            }
             Ok(match g.n {
                 4 => {
                     let cube = Cube::from_facelets(&g.to_string(f))?;
@@ -333,6 +358,9 @@ mod tests {
     fn modes() {
         assert_eq!(Mode::parse("fast"), Some(Mode::Fast));
         assert_eq!(Mode::parse("normal"), Some(Mode::Normal));
+        assert_eq!(Mode::parse("shorter"), Some(Mode::Shorter));
+        assert!(Mode::Shorter.supports(4) && Mode::Shorter.supports(5));
+        assert!(!Mode::Shorter.supports(2) && !Mode::Shorter.supports(6));
         assert_eq!(Mode::parse("full"), None);
         assert_eq!(Mode::Fast.name(), "fast");
     }

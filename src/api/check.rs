@@ -124,7 +124,12 @@ pub fn check(size: usize, input: Input, max_size: usize) -> Result<Checked, ApiE
     match input {
         Input::Moves(text) => {
             let owned;
-            let g = if size == 2 { Geometry::pocket() } else { owned = Geometry::new(size); &owned };
+            let g = if size == 2 {
+                Geometry::pocket()
+            } else {
+                owned = Geometry::new(size);
+                &owned
+            };
             let moves = parse_scramble(g, text)?;
             let mut facelets = g.solved();
             g.apply_seq(&mut facelets, &moves);
