@@ -425,20 +425,20 @@ function centreCells(n) {
  */
 export function assembleScan(n, samples) {
   const read = assembleSeen(n, samples);
-  const { kind } = read.made;
-  if (kind === "none" || kind === "several") return read;
   const refuse = (hidden) => ({
     sorted: read.sorted,
     made: { kind: "several", ...SAME, moved: [], turned: [], hidden: hidden.sort((a, b) => a - b), labels: read.sorted.labels },
   });
   const nn = n * n;
   // The middle stickers of an odd cube name the colours. One washed out is
-  // the white one in a bright picture; two cannot be told apart.
+  // the white one in a bright picture; two cannot be told apart. Said even
+  // when no cube was made, so that the cause is known.
   if (n % 2 === 1) {
     const middles = [0, 1, 2, 3, 4, 5].map((f) => f * nn + (nn - 1) / 2).filter((i) => isWashed(samples[i]));
     if (middles.length > 1) return refuse(middles);
   }
-  if (n < 4) return read;
+  const { kind } = read.made;
+  if (n < 4 || kind === "none" || kind === "several") return read;
   const lying = arrange(n, Int32Array.from(samples, (_, i) => i), read.made);
   const washed = centreCells(n).map((cell) => lying[cell]).filter((i) => isWashed(samples[i]));
   if (!washed.length) return read;
@@ -483,9 +483,9 @@ export function reviewStickers(n, doubt) {
  * The cube the six pictures make.
  *
  * @param sorted what `sortColours` gave for the samples as taken
- * @param samples the samples themselves, if at hand: a sample all glare
- *   (`isBlown`) can then be exchanged with any sticker that would rather
- *   be in its group
+ * @param samples the samples themselves, if at hand: a sample under glare
+ *   (`isBlown`, `isWashed`) can then be exchanged with any sticker that
+ *   would rather be in its group
  * @returns `{ kind, from, rot, moved, turned, swapped, ways }`:
  *   kind "taken": the pictures make a cube as they were taken;
  *   "placed": only when placed or turned another way, the one way there is;
@@ -502,21 +502,24 @@ export function assemble(n, sorted, samples = null) {
   const { labels, doubt, second } = sorted;
   const nn = n * n;
   const mid = n % 2 === 1 ? (nn - 1) / 2 : -1;
-  // A sticker under glare went to the palest group and its second choice
-  // says nothing: it may belong to any group, so it is paired with any
-  // sticker that would rather be in the group it went to (often a white one
-  // it pushed out), as the least sure of all.
+  // A sticker under glare (`isBlown`, `isWashed`) shows little or nothing
+  // of its own hue, so its first and second choices say little: it may
+  // belong to any group. It is paired with any sticker that would rather be
+  // in the group it went to (often a white one it pushed out), and counts
+  // as the least sure of all (a washed orange and a washed red are read as
+  // each other, and exchanging two others instead makes another cube).
   // Not when glare is on a middle sticker of an odd cube, which names its
   // face's colour: then the groups themselves are not to be trusted.
   const middles = mid >= 0 && samples ? [0, 1, 2, 3, 4, 5].map((f) => samples[f * nn + mid]) : [];
-  const blown = samples && !middles.some(isWashed) ? samples.map(isBlown) : [];
+  const wild = samples && !middles.some(isWashed) ? samples.map((rgb) => isBlown(rgb) || isWashed(rgb)) : [];
+  const unsure = (i) => (wild[i] ? 1 : doubt[i]);
   const pairs = [];
   for (let i = 0; i < labels.length; i++) {
     if (i % nn === mid) continue;
     for (let j = i + 1; j < labels.length; j++) {
-      if (j % nn === mid || labels[i] === labels[j] || (blown[i] && blown[j])) continue;
-      if ((second[i] !== labels[j] && !blown[i]) || (second[j] !== labels[i] && !blown[j])) continue;
-      pairs.push([(blown[i] ? 1 : doubt[i]) + (blown[j] ? 1 : doubt[j]), i, j]);
+      if (j % nn === mid || labels[i] === labels[j]) continue;
+      if ((second[i] !== labels[j] && !wild[i]) || (second[j] !== labels[i] && !wild[j])) continue;
+      pairs.push([unsure(i) + unsure(j), i, j]);
     }
   }
   pairs.sort((a, b) => b[0] - a[0]);

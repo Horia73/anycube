@@ -338,6 +338,20 @@ for (const { name, size, rgb, expected } of GLARE_SCANS) {
   });
 }
 
+// A rendered 3x3x3 where glare washed out a red and two oranges: the red and
+// an orange were read as each other, and two other stickers were exchanged
+// into another cube before washed-out stickers counted as the least sure.
+const GLARE_3X3 = JSON.parse(readFileSync(new URL("./fixtures/glare-3x3.json", import.meta.url), "utf8"));
+
+test("washed-out stickers read as each other are exchanged back, not two others", () => {
+  for (const { size, rgb, expected } of GLARE_3X3) {
+    const { sorted, made } = assembleScan(size, rgb);
+    assert.equal(made.kind, "recoloured");
+    const read = named(size, sorted, arrange(size, made.labels, made)).facelets;
+    assert.ok(sameCube(size, read, new CubeModel(size).fromText(expected)));
+  }
+});
+
 test("in a bright picture with every white sticker clipped, the cube still reads", () => {
   for (const n of [3, 4, 5]) {
     const rnd = random(40 + n);
