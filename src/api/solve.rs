@@ -119,14 +119,15 @@ fn renamed(n: usize, f: &[u8]) -> Vec<u8> {
 /// Solves a checked cube. The solution is applied to the stickers as they
 /// were given before it is returned.
 pub fn solve(c: &Checked, mode: Mode) -> Result<Solved, ApiError> {
-    let g = Geometry::new(c.size);
+    let owned;
+    let g = if c.size == 2 { Geometry::pocket() } else { owned = Geometry::new(c.size); &owned };
     if g.is_solved(&c.facelets) {
         return Ok(Solved { moves: Vec::new(), solution: String::new(), parts: Vec::new(), optimal: true });
     }
     // Scrambles go to the solvers as the command line gives them; a picture
     // of an even cube is first written the standard way round.
     let work = if c.size % 2 == 0 && c.scramble.is_none() { renamed(c.size, &c.facelets) } else { c.facelets.clone() };
-    let (moves, parts, optimal) = run(&g, &work, mode)?;
+    let (moves, parts, optimal) = run(g, &work, mode)?;
     let mut after = c.facelets.clone();
     g.apply_seq(&mut after, &moves);
     if !g.is_solved(&after) {

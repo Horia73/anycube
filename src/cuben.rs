@@ -43,6 +43,12 @@ pub struct Geometry {
 }
 
 impl Geometry {
+    /// Shared sticker permutations for the frequently requested pocket cube.
+    pub(crate) fn pocket() -> &'static Geometry {
+        static G: std::sync::OnceLock<Geometry> = std::sync::OnceLock::new();
+        G.get_or_init(|| Geometry::new(2))
+    }
+
     pub fn new(n: usize) -> Geometry {
         assert!(n >= 2);
         let nn = n as i32;

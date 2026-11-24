@@ -121,10 +121,11 @@ pub fn check(size: usize, input: Input, max_size: usize) -> Result<Checked, ApiE
     if size < 2 || size > max {
         return Err(ApiError::new("bad_size", format!("the size must be between 2 and {}, got {}", max, size)));
     }
-    let g = Geometry::new(size);
     match input {
         Input::Moves(text) => {
-            let moves = parse_scramble(&g, text)?;
+            let owned;
+            let g = if size == 2 { Geometry::pocket() } else { owned = Geometry::new(size); &owned };
+            let moves = parse_scramble(g, text)?;
             let mut facelets = g.solved();
             g.apply_seq(&mut facelets, &moves);
             let names: Vec<String> = moves.iter().map(|&m| g.move_name(m)).collect();
