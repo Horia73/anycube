@@ -216,6 +216,11 @@ Fw' L D' L U Uw' B2 Rw U' Uw2 R Fw' R2 B2 D2 F' D' Uw2 Fw2 L2 D F D2 Uw2 Rw2 L2 
 41 moves (phases [12, 0, 13, 16]), tables 24 ms, search 3646 ms
 ```
 
+On 4x4x4 and 5x5x5, select **Shorter** in the local app or pass
+`--mode shorter` to try other turn widths after a normal solve. The extra
+search keeps the shortest solution it verifies on the starting stickers.
+See [search flags](docs/search-flags.md#projected-face-turns-on-the-4x4x4-and-5x5x5) for the optional searches and benchmark command.
+
 Moves are written as on any cube: `U R F D L B`, `'` for a turn the other
 way, `2` for a half turn; `Rw` turns two layers and `3Rw` three.
 

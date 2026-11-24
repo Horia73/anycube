@@ -123,6 +123,6 @@ anycube widths --size 5 --state "$state" --word "U R' F2"
 `bench-widths` measures this last step in isolation. It takes the first L
 turns of each input scramble and supplies the projected inverse with every
 width erased. The corresponding sticker-only benchmark is `bench-lift`.
-[Measurements for both experiments](../bench/RESULTS.md#projected-face-turns-on-4x4x4-and-5x5x5-2026-11-17)
+[Measurements for both experiments](https://github.com/Horia73/anycube/blob/eee8872/bench/RESULTS.md#projected-face-turns-on-4x4x4-and-5x5x5-2026-11-17)
 
 The interface and the native CLI offer **Shorter** on 4x4x4 and 5x5x5. Use `anycube solve --size 5 --mode shorter "Rw U Fw2"`. It starts with a normal solution, tries projected face turns with different widths, and checks the shortest answer on the input stickers. A search with no improvement returns the ordinary answer. The extra search takes time even when it saves no moves.

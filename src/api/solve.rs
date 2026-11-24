@@ -361,6 +361,8 @@ mod tests {
         assert_eq!(Mode::parse("shorter"), Some(Mode::Shorter));
         assert!(Mode::Shorter.supports(4) && Mode::Shorter.supports(5));
         assert!(!Mode::Shorter.supports(2) && !Mode::Shorter.supports(6));
+        let cube = check(3, Input::Moves("R"), 3).unwrap();
+        assert_eq!(solve(&cube, Mode::Shorter).unwrap_err().code, "bad_mode");
         assert_eq!(Mode::parse("full"), None);
         assert_eq!(Mode::Fast.name(), "fast");
     }
