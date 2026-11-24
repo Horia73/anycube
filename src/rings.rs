@@ -57,7 +57,7 @@
 //!   and brought back: a last resort.
 
 use crate::cuben::Geometry;
-use crate::search::{beam_from, fetch, mixed, Problem};
+use crate::search::{beam_cut, beam_from, fetch, mixed, Problem};
 use crate::stage6::skip54;
 use crate::tables::{load_or_gen, table_dir, BitPerm, Bytes};
 use rayon::prelude::*;
@@ -121,6 +121,12 @@ type Active = [u32; 6];
 /// loads one, the others wait for it.
 type Slot = std::sync::Arc<std::sync::OnceLock<std::sync::Arc<Bytes>>>;
 static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<u64, Slot>>> = std::sync::LazyLock::new(Default::default);
+
+// Four eight-position permutations describe the action of a move on
+// two orbits and two axes. Identical move sets share the expanded table.
+type PairAction = [[u8; 8]; 4];
+static PAIR_ACTIONS: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<Vec<PairAction>, Slot>>> =
+    std::sync::LazyLock::new(Default::default);
 
 pub struct Ring {
     row: usize,
@@ -317,6 +323,11 @@ impl Ring {
                 })
                 .clone()
             }
+            3 => {
+                let print = fingerprint(&to, &costs, flips, pairs);
+                let slot = SHARED.lock().unwrap().entry(print).or_default().clone();
+                slot.get_or_init(|| std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips, pairs)))).clone()
+            }
             _ => std::sync::Arc::new(Bytes::Owned(self.make_group_table(&to, &costs, flips, pairs))),
         };
         self.tables.lock().unwrap().insert(key, table.clone());
@@ -328,11 +339,30 @@ impl Ring {
     /// two axes at once, which the tables of one axis cannot see; this one
     /// sees it for one pair of orbits. Kept as a file, like the others.
     fn two_axes(&self, ids: &[u8], places: &[usize], x: usize, y: usize, axes: (usize, usize)) -> std::sync::Arc<Bytes> {
+        let orbit_axis = [(x, axes.0), (y, axes.0), (x, axes.1), (y, axes.1)];
+        let still = std::array::from_fn(|i| 1u8 << i);
+        let mut actions: Vec<PairAction> = places.iter().map(|&k| {
+            orbit_axis.map(|(o, axis)| {
+                let shift = 8 * axis;
+                std::array::from_fn(|i| (self.perms[o].apply(k as u8, 1 << (shift + i)) >> shift) as u8)
+            })
+        }).filter(|m| *m != [still; 4]).collect();
+        actions.sort_unstable();
+        actions.dedup();
+        let slot = PAIR_ACTIONS.lock().unwrap().entry(actions).or_default().clone();
+        slot.get_or_init(|| self.load_two_axes(ids, places, x, y, axes)).clone()
+    }
+
+    /// Expand the 70 by 70 products only for a new action. The ordering
+    /// and byte fingerprint here also open tables made by previous releases.
+    fn load_two_axes(&self, ids: &[u8], places: &[usize], x: usize, y: usize, axes: (usize, usize)) -> std::sync::Arc<Bytes> {
         // Per move and axis: where it takes the two patterns, as one number.
         let pair = |i: usize, axis: usize| -> Vec<u16> {
             let shift = 8 * axis as u32;
             let to = |orbit: usize, r: usize| self.rank8[(self.perms[orbit].apply(places[i] as u8, self.unrank8[r] << shift) >> shift) as usize] as u16;
-            (0..4900).map(|s| to(x, s / 70) * 70 + to(y, s % 70)).collect()
+            let a: [u16; 70] = std::array::from_fn(|r| to(x, r) * 70);
+            let b: [u16; 70] = std::array::from_fn(|r| to(y, r));
+            a.into_iter().flat_map(|row| b.into_iter().map(move |col| row + col)).collect()
         };
         let mut moves: Vec<(Vec<u16>, Vec<u16>)> = (0..ids.len()).map(|i| (pair(i, axes.0), pair(i, axes.1))).collect();
         moves.sort();
@@ -656,10 +686,14 @@ impl Ring {
     /// one under it agree, and until they are each other's opposite.
     fn pair_tables(&self) -> Vec<[[Vec<u8>; 2]; 3]> {
         let every: Vec<usize> = (0..self.moves.len()).collect();
+        let complement: [usize; 70] = std::array::from_fn(|r| self.rank8[(!self.unrank8[r] & 255) as usize] as usize);
         let table = |k: usize, axis: usize| {
-            [false, true].map(|opposite| {
-                pair_table(&self.moves, &every, &self.perms[2 * k], &self.perms[2 * k + 1], &self.rank8, &self.unrank8, axis, opposite)
-            })
+            let same = pair_table(&self.moves, &every, &self.perms[2*k], &self.perms[2*k+1], &self.rank8, &self.unrank8, axis, false);
+            // Complementing one orbit commutes with every permutation of
+            // its eight slots. The same weighted distances therefore give
+            // the cost of bringing the two patterns to opposite colours.
+            let opposite = (0..4900).map(|i| same[i/70*70 + complement[i%70]]).collect();
+            [same, opposite]
         };
         (0..self.level.len()).map(|k| [0, 1, 2].map(|axis| table(k, axis))).collect()
     }
@@ -707,8 +741,8 @@ impl Ring {
         let root = self.node(f)?;
         let deepest = *self.level.iter().max().unwrap();
         let all: Vec<usize> = (0..self.level.len()).collect();
-        let dist = self.pair_tables();
-        let choices = self.choices(&dist, &root);
+        let dist = std::cell::LazyCell::new(|| self.pair_tables());
+        let choices = std::cell::LazyCell::new(|| self.choices(&dist, &root));
         let step = |columns: Vec<usize>, signs: [usize; 3]| Step { ring: self, columns, dist: &dist, signs };
         let trace = std::env::var_os("CUBEN_TRACE").is_some();
         let clock = std::time::Instant::now();
@@ -1085,41 +1119,29 @@ impl Walk<'_> {
         let (grow, salt) = (self.grow, self.salt);
         let (ids, count) = (&grow.ids, grow.ids.len());
         let level = &self.level;
-        let scores: Vec<u16> = level
-            .par_chunks(256)
-            .flat_map_iter(|chunk| {
-                let mut out = vec![u16::MAX; chunk.len() * count];
-                let mut kids: Vec<(usize, Active)> = Vec::with_capacity(count);
-                for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
-                    kids.clear();
-                    for k in 0..count {
-                        if *last == FAR || !skip54(*last, ids[k]) {
-                            let kid = grow.next_active(n, k);
-                            grow.prefetch(&kid);
-                            kids.push((k, kid));
-                        }
-                    }
-                    for (k, kid) in &kids {
-                        row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
+        let mut scores = vec![u16::MAX; level.len() * count];
+        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
+            let mut kids = Vec::with_capacity(count);
+            for ((n, last), row) in chunk.iter().zip(out.chunks_mut(count)) {
+                kids.clear();
+                for (k, &m) in ids.iter().enumerate() {
+                    if *last == FAR || !skip54(*last, m) {
+                        let kid = grow.next_active(n, k);
+                        grow.prefetch(&kid);
+                        kids.push((k, kid));
                     }
                 }
-                out
-            })
-            .collect();
+                for (k, kid) in &kids {
+                    row[*k] = grow.score(kid).min(u16::MAX as u32 - 1) as u16;
+                }
+            }
+        });
         // The score at which the level is full, with room for states reached twice.
         let most = self.width + self.width / 2;
-        let mut tally = vec![0usize; 1 << 16];
-        for &x in &scores {
-            tally[x as usize] += 1;
-        }
-        let (mut cut, mut total) = (0, tally[0]);
-        while total < most && cut < u16::MAX as usize - 1 {
-            cut += 1;
-            total += tally[cut];
-        }
+        let cut = beam_cut(&scores, most);
         let mut next: Vec<(u32, u32, Active, u32, u8)> = (0..scores.len())
             .into_par_iter()
-            .filter(|&j| scores[j] as usize <= cut)
+            .filter(|&j| scores[j] <= cut)
             .map(|j| {
                 let (i, k) = (j / count, j % count);
                 let to = grow.next_active(&level[i].0, k);
@@ -1241,6 +1263,8 @@ struct Short<'a> {
     /// `Step` has them. The scores of all the moves from a state are then
     /// the sum of one such row per slot.
     after: Vec<u8>,
+    /// Per previous move, mark the successors excluded by canonical move order.
+    skipped: Vec<Vec<u8>>,
 }
 
 /// The patterns of a short row: `2 * slot` for the row, `2 * slot + 1` for the row under it.
@@ -1271,7 +1295,11 @@ impl<'a> Short<'a> {
         // The scores are added up in bytes.
         let most = |slot: usize| (0..2).map(|sign| *dist[slots[slot].0][slots[slot].1][sign].iter().max().unwrap() as usize).max().unwrap();
         assert!((0..slots.len()).map(most).sum::<usize>() < FAR as usize);
-        Short { ring, slots: slots.len(), to, after }
+        let mut skipped = vec![Vec::new(); FAR as usize + 1];
+        for &last in &ring.moves {
+            skipped[last as usize] = ring.moves.iter().map(|&m| if skip54(last, m) { FAR } else { 0 }).collect();
+        }
+        Short { ring, slots: slots.len(), to, after, skipped }
     }
 
     fn ranks(&self, n: &Node) -> Ranks {
@@ -1294,12 +1322,19 @@ impl<'a> Short<'a> {
         out
     }
 
-    /// How many centres of the row do not agree with the one under them
-    /// (or are not its opposite, where that is the aim): an even number in
-    /// every slot.
-    fn apart(&self, n: &Ranks, signs: [usize; 3]) -> u32 {
-        let pattern = |r: u8| self.ring.unrank8[r as usize];
-        (0..self.slots).map(|i| (pattern(n[2 * i]) ^ pattern(n[2 * i + 1]) ^ if signs[i % 3] == 1 { 255 } else { 0 }).count_ones()).sum()
+    /// Mismatching centres, stopped once this row is too far for the ending search.
+    fn near(&self, n: &Ranks, signs: [usize; 3]) -> Option<u32> {
+        let mut apart = 0;
+        for i in 0..self.slots {
+            let a = self.ring.unrank8[n[2 * i] as usize];
+            let b = self.ring.unrank8[n[2 * i + 1] as usize];
+            let opposite = if signs[i % 3] == 1 { 255 } else { 0 };
+            apart += (a ^ b ^ opposite).count_ones();
+            if apart > APART {
+                return None;
+            }
+        }
+        Some(apart)
     }
 }
 
@@ -1341,28 +1376,20 @@ impl<'a> Lane<'a> {
         let (short, after) = (self.short, &self.after);
         let (moves, count) = (&short.ring.moves, short.ring.moves.len());
         let level = &self.level;
-        let scores: Vec<u8> = level
-            .par_chunks(256)
-            .flat_map_iter(|chunk| {
-                let mut out = vec![0u8; chunk.len() * count];
-                for ((n, last), sums) in chunk.iter().zip(out.chunks_mut(count)) {
-                    for (s, after) in after.iter().enumerate() {
-                        let pair = n[2 * s] as usize * 70 + n[2 * s + 1] as usize;
-                        for (sum, x) in sums.iter_mut().zip(&after[pair * count..][..count]) {
-                            *sum += x;
-                        }
-                    }
-                    if *last != FAR {
-                        for (sum, &m) in sums.iter_mut().zip(moves) {
-                            if skip54(*last, m) {
-                                *sum = FAR;
-                            }
-                        }
+        let mut scores = vec![0u8; level.len() * count];
+        scores.par_chunks_mut(256 * count).zip(level.par_chunks(256)).for_each(|(out, chunk)| {
+            for ((n, last), sums) in chunk.iter().zip(out.chunks_mut(count)) {
+                for (s, after) in after.iter().enumerate() {
+                    let pair = n[2 * s] as usize * 70 + n[2 * s + 1] as usize;
+                    for (sum, x) in sums.iter_mut().zip(&after[pair * count..][..count]) {
+                        *sum += x;
                     }
                 }
-                out
-            })
-            .collect();
+                for (sum, &mask) in sums.iter_mut().zip(&short.skipped[*last as usize]) {
+                    *sum |= mask;
+                }
+            }
+        });
         // The score at which the level is full, with room for states reached twice.
         let most = WIDTH + WIDTH / 2;
         let mut tally = [0usize; 256];
@@ -1408,7 +1435,8 @@ impl<'a> Lane<'a> {
     /// The states of the length reached that are worth trying for an
     /// ending, those with the lowest scores first, with their moves.
     fn starts(&self) -> Vec<Start> {
-        let near = (0..self.level.len()).map(|i| (i, self.short.apart(&self.level[i].0, self.signs))).filter(|x| x.1 <= APART).take(NEAR);
+        let near = self.level.iter().enumerate()
+            .filter_map(|(i, (n, _))| self.short.near(n, self.signs).map(|apart| (i, apart))).take(NEAR);
         near.map(|(i, apart)| {
             let mut moves = Vec::with_capacity(self.trail.len());
             let mut at = i;

@@ -1227,16 +1227,6 @@ impl Edges5 {
         })
     }
 
-    fn p_node(&self, cube: &Cube5, classes: &[u8; 4], slots: &([u8; 12], [u8; 12], [u8; 12])) -> PNode {
-        let at = |slots: &[u8; 12]| classes.map(|c| self.outer_index[slots[c as usize] as usize]);
-        let (x, t) = (primary(&cube.c4.ct), primary(&cube.t));
-        let id = |shift: u32| {
-            self.rank8[(x >> shift & 255) as usize] as usize * 70 + self.rank8[(t >> shift & 255) as usize] as usize
-        };
-        let (ml, mh) = q_parts(&self.rank8, &self.rank1680, &at(&slots.0), &at(&slots.1), &at(&slots.2));
-        PNode { ml, mh, fb: id(8), rl: id(16) }
-    }
-
     /// Lower bound for phase P, or `over` as soon as one table exceeds `max`.
     #[inline(always)]
     fn p_bound(&self, n: &PNode, max: usize) -> usize {
@@ -1262,22 +1252,24 @@ impl Edges5 {
     /// Phase P from many starts: every choice of four classes with no piece
     /// in the slice between F and B is a node of its own.
     pub fn phase_p(&self, starts: &[Start], limits: &Limits) -> Vec<Found> {
-        let nodes: Vec<Node<(PNode, Cube5)>> = starts
+        let nodes: Vec<Node<PNode>> = starts
             .par_iter()
             .enumerate()
             .flat_map_iter(|(i, s)| {
-                let slots = slots_of(&s.cube);
-                let free: Vec<u8> = (0..12u8)
-                    .filter(|&c| {
-                        [slots.0, slots.1, slots.2].iter().all(|k| self.outer_index[k[c as usize] as usize] != 255)
-                    })
-                    .collect();
+                let (mid, low, high) = slots_of(&s.cube);
+                let slots = [mid, low, high].map(|row| row.map(|v| self.outer_index[v as usize]));
+                let free: Vec<usize> = (0..12).filter(|&i| slots.iter().all(|row| row[i] != 255)).collect();
+                let (x,t) = (primary(&s.cube.c4.ct),primary(&s.cube.t));
+                let [fb,rl] = [8,16].map(|shift: u32| self.rank8[(x >> shift & 255) as usize] as usize * 70 + self.rank8[(t >> shift & 255) as usize] as usize);
                 let mut out = Vec::new();
                 for a in 0..free.len() {
                     for b in a + 1..free.len() {
                         for c in b + 1..free.len() {
                             for d in c + 1..free.len() {
-                                let node = self.p_node(&s.cube, &[free[a], free[b], free[c], free[d]], &slots);
+                                let classes = [free[a], free[b], free[c], free[d]];
+                                let [mid,low,high] = slots.map(|row| classes.map(|i| row[i]));
+                                let (ml,mh) = q_parts(&self.rank8, &self.rank1680, &mid,&low,&high);
+                                let node = PNode { ml, mh, fb, rl };
                                 let bound = self.p_bound(&node, usize::MAX);
                                 if bound != FAR as usize {
                                     out.push(Node {
@@ -1285,7 +1277,7 @@ impl Edges5 {
                                         cost: s.cost,
                                         start: i,
                                         last: s.last,
-                                        data: (node, s.cube),
+                                        data: node,
                                     });
                                 }
                             }
@@ -1296,7 +1288,7 @@ impl Edges5 {
             })
             .collect();
         self.by_total(1, nodes, limits, |s, n, rem| {
-            s.dfs_p(&n.data.1, &n.data.0, rem, n.last, 0);
+            s.dfs_p(&starts[n.start].cube, &n.data, rem, n.last, 0);
         })
     }
 
@@ -1315,17 +1307,23 @@ impl Edges5 {
     }
 
     /// Phase-E start of a cube whose middle slice is complete, or `None`.
-    fn e_node(&self, cube: &Cube5) -> Option<ENode> {
+    fn e_start(&self, cube: &Cube5) -> Option<ENode> {
         let (lo, hi) = self.outer_perms(cube)?;
-        let d = self.e_exact(lo, hi)?;
+        if self.e_mod3(lo, hi) == 3 { return None; }
         let (x, t) = (primary(&cube.c4.ct), primary(&cube.t));
         let ud = self.rank8[(x & 255) as usize] as usize * 70 + self.rank8[(t & 255) as usize] as usize;
         let side = *self.side_id.get(&((x >> 8) << 16 | (t >> 8)))? as usize;
         if self.side_last[side] == FAR {
             return None;
         }
-        let n = ENode { lo, hi, d, ud, side: self.side_last[side] as usize };
+        let n = ENode { lo, hi, d: 0, ud, side: self.side_last[side] as usize };
         (self.e_centre(&n) != FAR).then_some(n)
+    }
+
+    fn e_node(&self, cube: &Cube5) -> Option<ENode> {
+        let mut n = self.e_start(cube)?;
+        n.d = self.e_exact(n.lo, n.hi)?;
+        Some(n)
     }
 
     #[inline(always)]
@@ -1500,7 +1498,7 @@ impl Search<'_> {
             self.p_endpoints += 1;
             let mut c = *root;
             c.apply_seq(&self.path[..depth]);
-            return e.e_node(&c).is_some() && self.found(depth);
+            return e.e_start(&c).is_some() && self.found(depth);
         }
         if self.tick() {
             return true;
