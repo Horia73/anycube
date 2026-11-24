@@ -239,6 +239,9 @@ impl SolverN {
     /// Solves a cube of size 6 or more given as its facelets (faces U R F D
     /// L B, row by row; colours 0 to 5 in that order).
     pub fn solve(&self, g: &Geometry, facelets: &[u8]) -> Result<SolutionN, String> {
+        if !crate::rings::Ring::supports(g) {
+            return self.attempt(g, facelets, false);
+        }
         match self.attempt(g, facelets, true) {
             Ok(sol) => Ok(sol),
             Err(e) => {

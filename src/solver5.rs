@@ -213,15 +213,6 @@ impl Solver5 {
         self.run(&[(facelets.to_vec(), 0)], p, false, None, None).map(|x| x.1.moves)
     }
 
-    /// All reductions already found in this search, shortest first. A larger
-    /// cube can choose among them by the cost of its next wing orbit.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn reductions(&self, facelets: &[u8], p: &Params5) -> Result<Vec<Vec<u8>>, String> {
-        let mut paths = Vec::new();
-        self.run(&[(facelets.to_vec(), 0)], p, false, None, Some(&mut paths))?;
-        Ok(paths)
-    }
-
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn solve_with_alternatives(
         &self, facelets: &[u8], p: &Params5, alternatives: &mut Vec<Vec<u8>>,
@@ -235,7 +226,7 @@ impl Solver5 {
         p: &Params5,
         finish: bool,
         given: Option<(&[Vec<u8>], bool)>,
-        mut alternatives: Option<&mut Vec<Vec<u8>>>,
+        alternatives: Option<&mut Vec<Vec<u8>>>,
     ) -> Result<(usize, Solution5), String> {
         let g = &tables5().geometry;
         let t0 = Instant::now();
@@ -374,11 +365,6 @@ impl Solver5 {
         let reduced = extend(&after_p, 1, found);
         lap("phase E", reduced.len(), shortest(&reduced));
         if !finish {
-            if let Some(alts) = alternatives.as_deref_mut() {
-                let mut order: Vec<_> = reduced.iter().collect();
-                order.sort_by_key(|x| cubes[x.root].1 + x.moves.len());
-                alts.extend(order.into_iter().map(|x| x.moves.clone()));
-            }
             return match reduced.iter().min_by_key(|x| cubes[x.root].1 + x.moves.len()) {
                 Some(x) => {
                     let e = &x.ends;

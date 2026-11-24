@@ -163,6 +163,11 @@ fn axis_of(face: usize) -> usize {
 }
 
 impl Ring {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn supports(g: &Geometry) -> bool {
+        g.n.saturating_sub(4) <= MAX / 2 && g.move_count() <= u8::MAX as usize + 1
+    }
+
     pub fn new(g: &Geometry, a: usize) -> Ring {
         Ring::part(g, a, (a + 1..g.n - 1 - a).collect(), usize::MAX)
     }
