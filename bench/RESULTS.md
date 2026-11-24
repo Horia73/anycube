@@ -3573,3 +3573,76 @@ the release files above, not run again; their memory is that of the first
 cube alone (`/usr/bin/time -l anycube row <file> --size N --limit 1`), which
 is less than a whole run holds (2.9 GB against the 4.3 GB of v0.1.1 at
 21x21x21, where a run of five cubes touches more of the tables).
+
+## Checked solver performance (2026-11-24)
+
+Release builds on an Apple M1 Pro with ten CPU cores and 16 GB of memory. The baseline was `68db550` and the final solver code was `88f0b79`. Each comparison used the same inputs and prebuilt tables for both solvers. The large-row experiments below were isolated from the 2x2x2, 4x4x4, 5x5x5 and 6x6x6 code paths.
+
+### Checked 2x2x2 API
+
+The two builds solved the 100 inputs in `bench/scrambles222-100.txt` from moves and from the resulting stickers. Each measurement started after one warm-up pass and timed 240 passes over all 100 cases. The measured call includes validation, solving, formatting and sticker replay inside one process. Four batches per build and input kind gave these means. The full solution words matched on every input.
+
+| Input | Main µs/solve | New µs/solve | Less elapsed time |
+|---|---:|---:|---:|
+| Moves | 20.58 | 11.50 | 44.2% |
+| Stickers | 12.62 | 4.07 | 67.8% |
+
+To repeat against a baseline, use the same [benchmark source](checked-pocket.rs) with both release libraries. From the repository root, build with `cargo build --release --locked --lib`. In the commands below, `build` is the release directory for the chosen version.
+
+```sh
+build=target/release
+rustc --edition=2021 -C opt-level=3 -C lto=fat -C embed-bitcode=yes \
+  -L "dependency=$build/deps" --extern "anycube=$build/libanycube.rlib" \
+  bench/checked-pocket.rs -o /tmp/checked-pocket
+/tmp/checked-pocket moves /tmp/move-solutions.txt
+/tmp/checked-pocket stickers /tmp/sticker-solutions.txt
+```
+
+### Shorter mode on 4x4x4 and 5x5x5
+
+Both searches received the same starting stickers. Shorter started with the ordinary answer, searched one orientation and tried different turn widths. The input was the first 14 moves of lines 101–130 of each size’s benchmark file. The times cover the entire opt-in search after initial table loading.
+
+| Size | Cases | Normal moves | Shorter moves | Fewer moves | Improved cases | Seconds per Shorter solve |
+|---|---:|---:|---:|---:|---:|---:|
+| 4 | 30 | 15.70 | 14.47 | 7.9% | 5 | 4.13 |
+| 5 | 30 | 23.70 | 17.87 | 24.6% | 18 | 23.80 |
+
+The remaining cases kept their ordinary lengths. Each final sequence also passed independent replay using the baseline binary. [Per-position solutions and times](shorter-controls.tsv)
+
+```sh
+awk 'NR >= 101 && NR <= 130 { NF = 14; print }' bench/scrambles-1000.txt > /tmp/short4.txt
+awk 'NR >= 101 && NR <= 130 { NF = 14; print }' bench/scrambles555-200.txt > /tmp/short5.txt
+anycube bench-lift /tmp/short4.txt --size 4 --out /tmp/short4.tsv
+anycube bench-lift /tmp/short5.txt --size 5 --out /tmp/short5.tsv
+```
+
+These results describe 14-turn inputs. In an earlier, separate 50-pair benchmark of long scrambles per size, even the extended six-orientation search with optional endings saved 0.8% on 4x4x4 and 1.0% on 5x5x5. [Long-scramble dataset and settings](https://github.com/Horia73/anycube/blob/eee8872/bench/RESULTS.md#twenty-further-long-scrambles-per-size)
+
+### Default searches
+
+The 6x6x6 corpus contains ten 300-turn scrambles from seed 6181085 and thirty from seed 68119471. Both binaries ran in groups of four and alternated which ran first. Per-cube times start after the initial table load. Both builds replayed their answers on stickers. The baseline verifier independently replayed all 40 candidate answers. The solution fields in the [paired results](solver-speed-paired.tsv) contain SHA-256 digests of the move strings in UTF-8 without a trailing newline.
+
+| 6x6x6 | Main | New |
+|---|---:|---:|
+| Mean moves | 109.15 | 109.15 |
+| Mean seconds | 14.69 | 9.93 |
+| Median seconds | 13.71 | 9.34 |
+
+All 40 words matched. The new solver finished sooner on 38 cases. The mean elapsed time fell by 32.4%, equivalent to 1.48 times the throughput for this corpus. Other workloads were active on the test machine. The absolute timings describe that run.
+
+```sh
+anycube scrambles --size 6 --length 300 --count 10 --seed 6181085 > /tmp/six.txt
+anycube scrambles --size 6 --length 300 --count 30 --seed 68119471 >> /tmp/six.txt
+anycube bench6 /tmp/six.txt --out /tmp/six-results.tsv
+```
+
+### Large cubes
+
+The final solver also ran on the first two entries of each of `bench/scrambles171717-20.txt` and `bench/scrambles212121-20.txt` using `benchn --size N`. Each pair ran in its own processes, with the first binary alternating between positions. The four complete solutions matched the baseline and passed independent replay. These small samples check the final code path.
+
+| Size | Cases | Same words | Main seconds | New seconds |
+|---|---:|---:|---:|---:|
+| 17 | 2 | 2 | 46.00 | 47.57 |
+| 21 | 2 | 2 | 93.31 | 78.08 |
+
+Two proposed changes failed their pilots. Staging adjacent rows together raised the first two 17x17x17 staging lengths from 549 and 533 to 557 and 547. On an isolated first-row search at size 17 with one Rayon thread, the scalar compact-state variant used 63.68 seconds of user CPU time on seed 123 against 44.58 seconds for the baseline, with identical moves. Batching all successor scores used 68.22 seconds. The final solver retains the baseline long-row coordinates, scoring loop and exact ending. It reuses equivalent pruning tables and builds the pair tables on demand.

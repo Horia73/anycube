@@ -1,0 +1,61 @@
+size	source_line	normal_moves	shorter_moves	shorter_ms	solution
+4	101	14	12	1030	L' Fw2 R' L B' L Rw B Uw2 Rw2 Fw2 Uw'
+4	102	10	10	1684	D' F B2 Fw Uw' Rw2 Fw2 Rw R D
+4	103	10	10	3134	D2 F2 Fw2 Rw2 Fw D2 R2 B Rw2 F
+4	104	13	13	866	Fw2 D' B Uw' L Fw2 Uw R Uw2 Rw2 Uw2 U R'
+4	105	14	14	3280	Fw D R Fw' L U' Rw Fw' R2 L Fw R F' B'
+4	106	26	14	482	Uw F' L2 B2 Uw' B2 Fw2 Rw' B2 R B L2 B2 Rw'
+4	107	12	12	447	Uw2 R2 U' F2 Fw Rw B' Rw2 Uw' Rw F2 Uw
+4	108	14	14	623	D2 F2 Fw2 L2 D2 R' B Fw' U' Rw Uw' Fw' Rw2 Fw2
+4	109	13	13	430	Rw B2 Fw2 Rw2 Uw2 Fw R Fw' L B' Fw' Uw F2
+4	110	14	14	811	Rw' D2 Rw Fw Rw2 Fw2 D Rw D' R L2 Rw Fw' Rw2
+4	111	15	12	3445	B2 R2 D Uw' R' Rw D L2 B2 D2 R' Dw2
+4	112	12	12	724	R Uw Fw' Uw2 F Rw D2 L' Fw' U Rw2 F
+4	113	11	11	160	Uw L2 B' Rw F Rw' F' Uw L' F2 D2
+4	114	13	13	625	B' Fw U2 Uw L' Rw Fw' L' U' Uw2 Fw' U' Rw'
+4	115	13	13	767	Rw' F' Rw' U' D2 Uw2 B Fw' R2 D Fw Rw D
+4	116	11	11	1058	Rw Uw2 B' Fw Uw' Fw D2 Uw' Rw' Fw B2
+4	117	39	39	23180	U L F2 D' F' D' Rw U' Uw' B2 Rw' Uw R B' Fw2 Uw2 F U2 Rw2 Uw2 R' Uw2 B L' B' R' L2 D2 F L' D L2 D' F' L' B' R2 D2 B2
+4	118	38	38	22894	Fw' Rw' Uw' Rw2 U' Fw' L2 Uw2 B' U Fw2 R Uw R2 Uw2 L2 D2 Rw2 F L B Uw2 R2 B F2 L' R D L D2 F' D' F L' R' F2 L B'
+4	119	11	11	2485	Fw2 Rw' Uw2 B Fw Uw2 Fw2 Rw' L R2 F
+4	120	11	11	5244	D Fw' Rw F2 R2 L' Rw' Uw2 L2 Fw' U2
+4	121	13	13	11073	L' Rw' Uw R' L Uw Rw U2 Rw B Fw2 Uw D
+4	122	31	21	22627	Rw2 Bw Uw2 Lw2 Rw2 Uw2 Bw F' Fw R' Bw2 F Rw2 Dw2 Uw2 R D' Rw' Uw2 B D
+4	123	14	14	5136	Rw2 D2 F R Uw' F2 B' Fw R2 Uw' Fw D' Fw L2
+4	124	13	13	581	U Uw L Fw' Uw2 B' Fw' Rw B' Uw' Rw Fw B
+4	125	13	13	801	Fw2 U Fw2 U' D2 Uw' R U2 Uw Fw' Uw U' R'
+4	126	13	13	971	Fw2 R' D2 F' Rw D Rw' F B' U' F2 Fw' Rw'
+4	127	24	14	6288	F' Rw2 R F2 D2 L D' L' R' Fw' L Rw' Uw L
+4	128	12	12	1595	Uw2 B R2 Rw F2 B Rw' Fw' D Uw2 L2 Uw'
+4	129	12	12	721	U Rw B' Fw Rw Uw2 F2 D B Uw2 Fw2 Rw2
+4	130	12	12	823	Uw2 R' L2 Uw Rw' Uw F' Fw Rw B D2 Fw
+5	101	54	53	32793	B' Rw' Dw Bw2 L2 Bw2 Rw R Fw' R Dw2 Fw R2 Fw2 L' Fw2 Dw2 F2 L Fw2 Dw2 R2 B R2 Dw2 Lw2 U' Bw2 R2 D Rw2 U' R2 U' Lw2 D' Fw2 D2 B2 D2 B R2 Fw2 L D2 B2 L2 U B2 D2 F' R F'
+5	102	22	13	2907	B Dw2 Rw Fw Lw' Bw' R2 L Lw Fw L2 Lw Uw'
+5	103	16	14	2070	L2 B2 Dw' Rw2 Fw Bw' R2 Bw2 L2 Lw R Rw2 D L2
+5	104	14	14	745	R L Dw L Rw Lw' F L Uw' Dw' Bw2 D' Lw D
+5	105	24	14	993	Dw' L' F R' Bw' Lw Dw2 Rw' U2 Bw' R' Uw' Dw' Bw2
+5	106	13	13	1024	F2 B2 Dw' L2 Rw2 Fw' Dw Lw2 Uw B Dw Rw' L'
+5	107	42	14	2767	F D2 Lw2 B2 Uw' L2 U2 R Rw F' U2 Fw Uw' Rw2
+5	108	19	14	2342	R Uw Dw' R Rw' Dw2 B2 U2 F' Fw' Rw L2 Lw' B2
+5	109	18	13	951	B Uw2 Dw' Rw' F B R' Bw2 Rw' Fw' F Lw2 B
+5	110	49	40	3689	D' L Lw2 U D2 Uw' R' Lw F Bw2 L Uw R' U Uw2 B2 L2 D2 L' U2 B2 B2 U2 L D2 L2 B2 U' Uw2 R Uw' L' F' L' Bw2 R F' U2 R Dw
+5	111	14	14	1609	Rw2 Fw2 Rw' Dw2 Bw Uw L2 D2 Dw2 Bw' Uw' Fw' Bw2 F
+5	112	27	14	1254	R' Uw' Bw L Uw2 Dw Rw' Bw Lw' Bw' R L' D' Lw
+5	113	32	12	1695	D' L D' F2 U' R' B' L Bw D2 F' R2
+5	114	14	14	2915	U' R2 Bw2 L2 F2 L Rw2 Lw2 D' Bw Rw' R' Lw2 Uw
+5	115	20	14	624	Lw U' Dw' R D Uw2 Bw' R L' Rw' Dw' U2 Lw2 B'
+5	116	21	12	21143	Uw' F2 Lw' Fw Uw R2 Lw U2 F2 L2 Bw' R'
+5	117	30	13	2160	U2 Lw Uw' Fw' R' Bw2 R' Lw' Uw' R D' L Uw
+5	118	19	14	8327	Lw2 Uw' Lw Uw2 F2 Rw2 Uw2 F2 Bw2 Rw Uw Rw' U2 Fw2
+5	119	35	24	4034	Lw2 B Fw Bw2 R Rw' Fw L Rw F L Dw' L' L Dw L' F' L' F L2 Dw' L' U Uw
+5	120	10	10	645	Rw2 B2 Bw' D Bw U Uw Dw D Bw
+5	121	14	14	442	F R' Rw Dw' F Fw Bw' Dw' R2 Fw' Rw Uw' U2 B
+5	122	21	12	438	B2 D' Fw Lw2 Uw' L2 B' Uw' B' Fw' D' Rw'
+5	123	14	14	1407	D' Bw' L' U Uw' Bw2 Lw2 Bw2 Rw2 Dw' Lw' D2 Lw2 D
+5	124	14	14	553	Rw F2 R2 D B Fw Uw B2 Bw Lw' F' Rw2 F B'
+5	125	56	56	4440	Rw2 B' Fw Bw2 D2 Uw2 Rw2 Uw2 Dw F2 R B' Uw F D' Dw2 B U B Dw2 L2 F' D2 B' Rw2 F' R' Bw2 U2 Uw2 Fw2 Dw2 R2 Dw2 L F2 L Uw2 R' F' D' F' L2 B2 U F' D' B' L U R2 L' F2 R2 U2 D2
+5	126	20	13	402	F' Rw Fw' L2 B U D2 Dw2 R' Fw' D Lw2 F
+5	127	14	14	1065	D2 Uw2 Lw U2 Uw' Fw D Fw Uw Bw' Rw Fw2 R2 B'
+5	128	32	32	601337	Rw Dw' Fw' Bw Rw2 Fw B' Dw2 B' Lw Dw2 R2 Lw2 Uw2 R F2 U2 Bw2 U2 F2 Rw2 D2 L2 Rw2 Fw2 U2 F2 B2 R2 F2 L' R'
+5	129	23	14	6065	Lw' Uw Rw2 U Rw' B2 Lw2 Uw2 L Dw' Bw2 U R2 Rw2
+5	130	10	10	3015	R2 B2 Bw Dw' R2 Rw' U L Dw2 D'

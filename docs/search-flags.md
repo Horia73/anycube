@@ -126,3 +126,5 @@ width erased. The corresponding sticker-only benchmark is `bench-lift`.
 [Measurements for both experiments](https://github.com/Horia73/anycube/blob/eee8872/bench/RESULTS.md#projected-face-turns-on-4x4x4-and-5x5x5-2026-11-17)
 
 The interface and the native CLI offer **Shorter** on 4x4x4 and 5x5x5. Use `anycube solve --size 5 --mode shorter "Rw U Fw2"`. It starts with a normal solution, tries projected face turns with different widths, and checks the shortest answer on the input stickers. A search with no improvement returns the ordinary answer. The extra search takes time even when it saves no moves.
+
+[Release-candidate measurements on short scrambles](../bench/RESULTS.md#shorter-mode-on-4x4x4-and-5x5x5) give the move savings and total solve time for the default Shorter settings.
