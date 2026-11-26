@@ -2,7 +2,12 @@
 // does, with a server that says it drives robots and a mock robot behind
 // it (robot-mock.mjs). For trying the robot extension in a browser:
 //
-//   node app/tests/robot-mock-server.mjs [port] [--size N] [--moves "R U F' ..."] [--fast]
+//   node app/tests/robot-mock-server.mjs [port] [--size N] [--moves "R U F' ..."] [--fast] [--unplugged] [--names-only]
+//
+// The robot's cable is at /mock/plug and /mock/unplug (--unplugged starts
+// with it out); --names-only is a server that does not say what its ports
+// are, only their names. /mock/log?text=... is a `log` event of the robot,
+// /mock/asked how often /api/robots was asked.
 //
 // The camera the robot would hold up is at /mock/frame/<photo>.png (what
 // the camera sees of each face: the face turned back by the photo's
@@ -82,6 +87,8 @@ const robot = mockServer({
   computeMs: fast ? 40 : 180,
   opMs: (op) => Math.round(op.est_ms * (fast ? 0.25 : 1.04)),
   maxWaitMs: 10_000,
+  identify: !args.includes("--names-only"),
+  ports: args.includes("--unplugged") ? [] : undefined,
 });
 
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".wasm": "application/wasm" };
@@ -100,6 +107,15 @@ createServer(async (req, res) => {
   if (path === "/api/config") return send(res, 200, "application/json", JSON.stringify(CONFIG));
   if (path === "/api/check") return send(res, 200, "application/json", JSON.stringify({ ok: true }));
   if (path === "/api/scramble") return send(res, 200, "application/json", JSON.stringify({ scramble: "R U R' U'" }));
+  if (path === "/mock/plug" || path === "/mock/unplug") {
+    robot[path.slice(6)]();
+    return send(res, 200, "application/json", JSON.stringify({ ok: true }));
+  }
+  if (path === "/mock/log") {
+    robot.push("log", { text: url.searchParams.get("text") ?? "" });
+    return send(res, 200, "application/json", JSON.stringify({ ok: true }));
+  }
+  if (path === "/mock/asked") return send(res, 200, "application/json", JSON.stringify({ robots: robot.calls.filter((c) => c.path === "/api/robots").length }));
   if (path === "/mock/holding") return send(res, 200, "application/json", JSON.stringify({ index: robot.holding }));
   const frame = /^\/mock\/frame\/(\d)\.png$/.exec(path);
   if (frame) return send(res, 200, "image/png", frames[Number(frame[1])]);

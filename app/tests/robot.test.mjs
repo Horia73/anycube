@@ -10,7 +10,8 @@ import { test } from "node:test";
 import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 import {
-  assembleFaces, Eta, frameSize, GRID_SHARE, gridCells, quarterTurn, readFace, repeatedFaces, RobotApi, RobotError, RobotRun, rotateSquare, squareCrop,
+  assembleFaces, choosePort, Eta, frameSize, GRID_SHARE, gridCells, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
+  RobotWatch, rotateSquare, squareCrop,
 } from "../js/robot.js";
 import { picture, quad, rng } from "./pictures.mjs";
 import { readPng, shrink } from "./png.mjs";
@@ -27,11 +28,11 @@ function numbered(W, H) {
 }
 const pixel = (image, x, y) => new Uint32Array(image.data.buffer)[y * image.width + x] & 0xffffff;
 
-// The page's grab without a canvas: the centred square, made `frameSize`
-// small, turned (grabFrame does the middle step with drawImage).
-function grab(frame, rotate, n) {
+// The page's grab without a canvas: the centred square, made `size` pixels
+// a side at most, turned (grabFrame does the middle step with drawImage).
+function grab(frame, rotate, size) {
   const { sx, sy, side } = squareCrop(frame.width, frame.height);
-  const size = Math.min(side, frameSize(n));
+  size = Math.min(side, size);
   const square = shrink(frame, sx, sy, side, size);
   return { width: size, height: size, data: rotateSquare(square.data, size, rotate) };
 }
@@ -96,7 +97,7 @@ test("a frame grabbed: the corner of the square comes round where a clockwise tu
   const corner = pixel(frame, sx, sy); // top left of the square
   const right = pixel(frame, sx + side - 1, sy); // its top right
   const at = (r) => {
-    const g = grab(frame, r, 3);
+    const g = grab(frame, r, 240);
     return [pixel(g, 0, 0), pixel(g, side - 1, 0), pixel(g, side - 1, side - 1), pixel(g, 0, side - 1)];
   };
   assert.equal(at(0)[0], corner);
@@ -189,7 +190,7 @@ test("the robot's own pictures of a 4x4x4: read in a few tens of ms", { skip: !h
   let result;
   let split;
   for (let k = 0; k < 5; k++) {
-    const frames = faces.map((f) => grab(f, 0, 4));
+    const frames = faces.map((f) => grab(f, 0, frameSize(4)));
     const t0 = performance.now();
     const read = frames.map((f) => readFace(f, 4));
     const t1 = performance.now();
@@ -260,7 +261,7 @@ test("RobotApi: answers, refusals and no server, each as said", async () => {
 });
 
 // A run followed to its end: everything the hooks heard, in order.
-function follow(server, n, frames, { until = "done" } = {}) {
+function follow(server, n, frames, { until = "done", ...more } = {}) {
   const heard = [];
   let finish;
   const over = new Promise((resolve) => (finish = resolve));
@@ -268,7 +269,8 @@ function follow(server, n, frames, { until = "done" } = {}) {
     api: new RobotApi(server.fetch),
     n,
     wait: 1,
-    grab: (rotate) => frames(rotate),
+    grab: (rotate, size) => frames(rotate, size),
+    ...more,
     hooks: {
       onphase: (p) => {
         heard.push(["phase", p]);
@@ -301,9 +303,9 @@ test("a whole run against the mock: six photos, the cube read, solved in step wi
   const server = mockServer({ moves: solution });
   // The camera: whatever face the robot is holding, as the camera sees it.
   let holding = 0;
-  const frames = (rotate) => {
+  const frames = (rotate, size) => {
     const [face, turn] = PHOTOS[holding++];
-    return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, n);
+    return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, size);
   };
   const { robot, heard, over } = follow(server, n, frames);
   await robot.follow();
@@ -339,9 +341,9 @@ test("the robot's own pictures through a whole scan: photos turned as robot.py t
   const faces = cubeScanFaces();
   const server = mockServer({ moves: ["R'"] });
   let holding = 0;
-  const frames = (rotate) => {
+  const frames = (rotate, size) => {
     const [face, turn] = PHOTOS[holding++];
-    return grab(cameraFrame(faces["URFDLB".indexOf(face)], turn, 1920), rotate, 4);
+    return grab(cameraFrame(faces["URFDLB".indexOf(face)], turn, 1920), rotate, size);
   };
   const { robot, heard, over } = follow(server, 4, frames);
   await robot.follow();
@@ -361,9 +363,9 @@ test("a scan that makes no cube: said, and the robot is asked nothing more", asy
   // A scrambled cube with its top shown in place of its bottom: no cube has that.
   const pictures = facePictures(3, scrambled(3).facelets);
   let holding = 0;
-  const frames = (rotate) => {
+  const frames = (rotate, size) => {
     const [face, turn] = PHOTOS[holding++];
-    return grab(cameraFrame(pictures["URFDLB".indexOf(face === "D" ? "U" : face)], turn), rotate, 3);
+    return grab(cameraFrame(pictures["URFDLB".indexOf(face === "D" ? "U" : face)], turn), rotate, size);
   };
   const { robot, heard, over } = follow(server, 3, frames, { until: "idle" });
   await robot.follow();
@@ -387,9 +389,9 @@ test("an error from the stream ends the run, and the next scan starts afresh", a
   const pictures = facePictures(n, facelets);
   const server = mockServer({ moves: solution, failAfterPhoto: 2 });
   let holding = 0;
-  const frames = (rotate) => {
+  const frames = (rotate, size) => {
     const [face, turn] = PHOTOS[holding++ % 6];
-    return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, n);
+    return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, size);
   };
   const first = follow(server, n, frames, { until: "error" });
   await first.robot.follow();
@@ -472,4 +474,360 @@ test("events that come before the scan's answer are kept for its run; others' ar
   await scanning;
   robot.take({ seq: 4, type: "scan-start", run: "old", steps: 1 });
   assert.deepEqual(heard, ["new", 0]);
+});
+
+// ------------------------------------------------------- the size read at
+
+test("ReadPace: the largest size that is read before the next photo, a size down only when it would not be", () => {
+  assert.deepEqual(readSizes(3), [240, 320, 360, 400, 480, 560, 640, 720]);
+  assert.equal(readSizes(7)[0], 360);
+  const top = readSizes(3).at(-1);
+  const rate = (size, ms) => ms / readCost(size);
+  // Twice the side is less than four times the time.
+  assert.ok(readCost(480) / readCost(240) > 2 && readCost(480) / readCost(240) < 4);
+
+  // Nothing measured yet: a size in the middle, and the least for a last photo (which nothing waits behind).
+  const fresh = new ReadPace(3);
+  assert.equal(fresh.photo(0), 480);
+  assert.equal(new ReadPace(3).photo(0, true), 240);
+  assert.equal(new ReadPace(3, { first: 100 }).photo(0), 240);
+  // Once a face was read, as large as there is time for.
+  fresh.took(480, 30);
+  assert.equal(fresh.photo(1000), top);
+
+  // 72 ms for the largest, 800 ms to the next photo (as long as none was seen), half of it to spend: the largest.
+  const pace = new ReadPace(3);
+  pace.took(720, 72);
+  assert.equal(pace.photo(0), 720);
+  // The last photo has 25 ms: the largest size read in that.
+  assert.equal(pace.fit(25), 320);
+  assert.ok(rate(720, 72) * readCost(320) <= 25 && rate(720, 72) * readCost(360) > 25);
+  // A reading that was slower counts at once; one that was quicker by halves.
+  pace.took(720, 600);
+  assert.equal(pace.rate, rate(720, 600));
+  assert.equal(pace.fit(400), 480); // 560 would take 411 ms
+  pace.took(560, 36);
+  assert.equal(pace.rate, (rate(720, 600) + rate(560, 36)) / 2);
+  // However slow, never under the least size.
+  pace.took(240, 5000);
+  assert.equal(pace.fit(400), 240);
+
+  // The photos of a scan say how long there is: here 100 ms from one to the next.
+  const quick = new ReadPace(3);
+  quick.took(720, 72);
+  quick.begin();
+  assert.equal(quick.photo(1000), 720); // nothing seen yet: 800 ms taken on trust
+  assert.equal(quick.photo(1100), 560); // 100 ms seen: 50 to spend, and 640 would take 60
+  assert.equal(quick.photo(1300), 560); // the shortest seen counts
+  assert.equal(quick.photo(1400, true), 320); // the last: 25 ms
+  // The next scan expects what this one showed, from its first photo on.
+  quick.begin();
+  assert.equal(quick.gap, 100);
+  assert.equal(quick.photo(5000), 560);
+
+  // The server's own word for the time to the next photo is taken before any of that.
+  assert.equal(quick.photo(5100, false, 2000), 720);
+  assert.equal(quick.photo(5200, true, 300), 720); // also after the last, when the robot is still busy
+  assert.equal(quick.photo(5300, true, 0), 240);
+
+  // A larger cube has a larger least size.
+  quick.begin(7);
+  assert.equal(quick.fit(0), 360);
+});
+
+test("a scan reads its photos as large as the robot's pace allows, and the last one small", async (t) => {
+  const n = 3;
+  const { facelets, text } = scrambled(n);
+  const pictures = facePictures(n, facelets, 720);
+  const scan = async (script, pace) => {
+    const server = mockServer({ moves: [], ...script });
+    let holding = 0;
+    const asked = [];
+    const frames = (rotate, size) => {
+      const [face, turn] = PHOTOS[holding++];
+      asked.push(size);
+      return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn, 1280), rotate, size);
+    };
+    const { robot, heard, over } = follow(server, n, frames, { until: "idle", pace });
+    await robot.follow();
+    await robot.scan();
+    await Promise.race([over, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+    robot.unfollow();
+    const [, scanned] = heard.find((h) => h[0] === "scanned");
+    assert.equal(scanned.state, text, scanned.note);
+    // Each photo was read at the size it was grabbed at, and its time kept.
+    assert.deepEqual(scanned.sizes, asked);
+    assert.ok(scanned.read_ms.every((ms) => ms >= 0));
+    t.diagnostic(`sizes ${scanned.sizes.join(" ")}; ms a face ${scanned.read_ms.map(Math.round).join(" ")}; ${scanned.analysis_ms} ms from scan-done to the cube`);
+    return scanned;
+  };
+  // A robot that says it takes a minute from photo to photo: the first photo
+  // of all in the middle (nothing is known of this machine), then the largest size.
+  const pace = new ReadPace(n);
+  assert.deepEqual((await scan({ nextMs: 60_000 }, pace)).sizes, [480, 720, 720, 720, 720, 720]);
+  // What was learnt is kept: the next scan is at the largest from its first photo.
+  assert.deepEqual((await scan({ nextMs: 60_000 }, pace)).sizes, [720, 720, 720, 720, 720, 720]);
+  // A robot that says it leaves no time at all: the least size throughout.
+  assert.deepEqual((await scan({ nextMs: 0 }, pace)).sizes, [240, 240, 240, 240, 240, 240]);
+  // The mock as it is, a robot far quicker than any: no photo larger than the first, the last no larger than 25 ms allow.
+  const hurried = await scan({}, new ReadPace(n));
+  assert.equal(hurried.sizes[0], 480);
+  assert.ok(hurried.sizes[5] <= 480, `the last photo at ${hurried.sizes[5]}`);
+});
+
+// ---------------------------------------------------------- plug and play
+
+const PORT = "/dev/cu.usbmodem21301";
+const ROBOT = { id: "multicuber", name: "MultiCuber", sizes: [3], ports: [PORT] };
+
+test("choosePort: the robot that is connected without asking", () => {
+  assert.equal(portName(PORT), "cu.usbmodem21301");
+  assert.equal(choosePort({ drivers: [{ ...ROBOT, ports: [] }], connected: null }), null);
+  assert.equal(choosePort({}), null);
+  // A server that only names its ports: the port its one driver claims.
+  assert.deepEqual(choosePort({ drivers: [ROBOT] }), { driver: "multicuber", port: PORT, sure: false });
+  // Two drivers claim it: not without knowing which it was last time.
+  const other = { id: "other", name: "Other", ports: [PORT, "/dev/cu.other"] };
+  assert.deepEqual(choosePort({ drivers: [ROBOT, other] }), { driver: "other", port: "/dev/cu.other", sure: false });
+  assert.equal(choosePort({ drivers: [ROBOT, { ...other, ports: [PORT] }] }), null);
+  assert.deepEqual(choosePort({ drivers: [ROBOT, other] }, { driver: "multicuber", port: PORT }), { driver: "multicuber", port: PORT, sure: false });
+  // The robot of last time before another; what is skipped is not chosen.
+  const two = { drivers: [{ ...ROBOT, ports: ["/dev/a", "/dev/b"] }] };
+  assert.equal(choosePort(two, { driver: "multicuber" }).port, "/dev/a"); // last time's port was never said
+  assert.equal(choosePort(two).port, "/dev/a");
+  assert.equal(choosePort(two, { driver: "multicuber", port: "/dev/b" }).port, "/dev/b");
+  assert.equal(choosePort(two, null, (driver, port) => port === "/dev/a").port, "/dev/b");
+
+  // A server that says what its ports are: only the board that answered as a robot.
+  const said = (ports) => ({ drivers: [{ ...ROBOT, ports: ports.map((p) => p.path) }], ports });
+  assert.deepEqual(choosePort(said([{ path: "/dev/a", driver: null }, { path: "/dev/b", driver: "multicuber" }])), { driver: "multicuber", port: "/dev/b", sure: true });
+  assert.equal(choosePort(said([{ path: "/dev/a", driver: null }])), null); // answered as no robot
+  assert.equal(choosePort(said([{ path: "/dev/a", driver: "multicuber", busy: true }])), null); // somebody else's
+  assert.equal(choosePort(said([{ path: "/dev/a", driver: "unheard-of" }])), null);
+  // Not looked at yet (no `driver` said): by its name, as with a server that says nothing.
+  assert.deepEqual(choosePort(said([{ path: "/dev/a", busy: false }])), { driver: "multicuber", port: "/dev/a", sure: false });
+  assert.equal(choosePort(said([{ path: "/dev/a", busy: true }])), null);
+  // Recognised beats named, even against last time's port; recognised without any driver claiming the name too.
+  assert.equal(choosePort(said([{ path: "/dev/a" }, { path: "/dev/b", driver: "multicuber" }]), { driver: "multicuber", port: "/dev/a" }).port, "/dev/b");
+  assert.deepEqual(choosePort({ drivers: [{ ...ROBOT, ports: [] }], ports: [{ path: "/dev/z", driver: "multicuber" }] }), { driver: "multicuber", port: "/dev/z", sure: true });
+});
+
+// A watcher on a mock server: its looks are made by hand (the loop's own
+// waiting never ends), its clock is `clock.t`.
+function watcher(server, { auto = true, last = null } = {}) {
+  const heard = [];
+  const clock = { t: 0 };
+  const memory = { auto, last };
+  const watch = new RobotWatch({
+    api: new RobotApi(server.fetch),
+    memory,
+    now: () => clock.t,
+    sleep: () => new Promise(() => {}),
+    hooks: {
+      onconnecting: (r) => heard.push(["connecting", r.port]),
+      onconnected: (r, how) => heard.push(["connected", r.port, how, r.size]),
+      onfailed: (r, e) => heard.push(["failed", e.code, e.final]),
+    },
+  });
+  const count = (path) => server.calls.filter((c) => c.path === path).length;
+  return { watch, heard, clock, memory, count };
+}
+
+test("RobotWatch: a robot plugged in is connected, and the watching stops", async () => {
+  for (const identify of [false, true]) {
+    const server = mockServer({ ports: [], identify, size: 4 });
+    const { watch, heard, memory, count } = watcher(server);
+    watch.start();
+    assert.equal(await watch.look(), "nothing");
+    assert.equal(await watch.look(), "nothing");
+    assert.equal(count("/api/robot/connect"), 0);
+    server.plug();
+    assert.equal(await watch.look(), "connected");
+    assert.deepEqual(heard, [["connecting", PORT], ["connected", PORT, "plugged", 4]]);
+    assert.deepEqual(server.calls.at(-1), { method: "POST", path: "/api/robot/connect", body: { driver: "multicuber", port: PORT } });
+    assert.deepEqual(memory.last, { driver: "multicuber", port: PORT });
+    assert.equal(watch.running, false);
+  }
+  // Connected for the cube the page says is in it.
+  const server = mockServer({});
+  const heard = [];
+  const watch = new RobotWatch({ api: new RobotApi(server.fetch), memory: { auto: true, last: null }, size: (driver) => (driver === "multicuber" ? 5 : undefined), sleep: () => new Promise(() => {}), hooks: { onconnected: (r) => heard.push(r.size) } });
+  watch.start();
+  await watch.looking;
+  assert.deepEqual(server.calls.at(-1).body, { driver: "multicuber", port: PORT, size: 5 });
+  assert.deepEqual(heard, [5]);
+});
+
+test("RobotWatch: it asks every so often while it watches, and no more once a robot is connected", async () => {
+  const server = mockServer({ ports: [] });
+  const heard = [];
+  const watch = new RobotWatch({ api: new RobotApi(server.fetch), memory: { auto: true, last: null }, every: 5, hooks: { onconnected: (r, how) => heard.push(how) } });
+  const asked = () => server.calls.filter((c) => c.path === "/api/robots").length;
+  watch.start();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.ok(asked() >= 3, `asked ${asked()} times`);
+  assert.deepEqual(heard, []);
+  server.plug();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.deepEqual(heard, ["plugged"]);
+  const then = asked();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(asked(), then);
+  // Stopped by hand: no more either.
+  const idle = mockServer({ ports: [] });
+  const second = new RobotWatch({ api: new RobotApi(idle.fetch), memory: { auto: true, last: null }, every: 5 });
+  second.start();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  second.stop();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const calls = idle.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(idle.calls.length, calls);
+});
+
+test("RobotWatch: a board that is not a robot, or in use, is left alone; a robot the server holds is taken up", async () => {
+  const server = mockServer({ ports: [], identify: true });
+  const { watch, heard, count } = watcher(server);
+  watch.start();
+  server.plug("/dev/cu.arduino", { driver: null });
+  server.plug("/dev/cu.printer", { busy: true, driver: "multicuber" });
+  assert.equal(await watch.look(), "nothing");
+  assert.equal(count("/api/robot/connect"), 0);
+  server.plug("/dev/cu.robot", { driver: "multicuber" });
+  assert.equal(await watch.look(), "connected");
+  assert.deepEqual(heard.at(-1), ["connected", "/dev/cu.robot", "plugged", 3]);
+
+  // Connect by itself switched off: one look, nothing connected; but a robot connected already is the page's.
+  const off = mockServer({});
+  const quiet = watcher(off, { auto: false });
+  quiet.watch.start();
+  await quiet.watch.looking;
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(quiet.watch.running, false);
+  assert.equal(quiet.count("/api/robots"), 1);
+  assert.equal(quiet.count("/api/robot/connect"), 0);
+  const holds = mockServer({ connected: { driver: "multicuber", port: PORT, size: 5, info: {} } });
+  const taken = watcher(holds, { auto: false });
+  taken.watch.start();
+  await taken.watch.looking;
+  assert.deepEqual(taken.heard, [["connected", PORT, "held", 5]]);
+  assert.equal(taken.count("/api/robot/connect"), 0);
+});
+
+test("RobotWatch: a robot that does not connect is tried again later, and given up until plugged in anew", async () => {
+  const server = mockServer({ connectFails: 2 });
+  const { watch, heard, clock, count } = watcher(server);
+  watch.start();
+  assert.equal(await watch.looking, "failed");
+  assert.deepEqual(heard.at(-1), ["failed", "no_answer", false]);
+  // Not again at once, but after four seconds; then after eight more.
+  assert.equal(await watch.look(), "nothing");
+  clock.t = 3999;
+  assert.equal(await watch.look(), "nothing");
+  clock.t = 4000;
+  assert.equal(await watch.look(), "failed");
+  clock.t = 11_999;
+  assert.equal(await watch.look(), "nothing");
+  clock.t = 12_000;
+  assert.equal(await watch.look(), "connected");
+  assert.equal(count("/api/robot/connect"), 3);
+
+  // One that never answers: five tries, then no more until it has been out and in again.
+  const dead = mockServer({ connectFails: 1000 });
+  const given = watcher(dead);
+  given.watch.start();
+  await given.watch.looking;
+  for (let k = 0; k < 40; k++) {
+    given.clock.t += 60_000;
+    await given.watch.look();
+  }
+  assert.equal(given.count("/api/robot/connect"), 5);
+  assert.deepEqual(given.heard.at(-1), ["failed", "no_answer", true]);
+  dead.unplug();
+  await given.watch.look();
+  dead.plug();
+  await given.watch.look();
+  assert.equal(given.count("/api/robot/connect"), 6);
+});
+
+test("RobotWatch: disconnected by hand it stays so, until the cable has been out and in", async () => {
+  const server = mockServer({});
+  const { watch, heard, count } = watcher(server);
+  watch.start();
+  assert.equal(await watch.looking, "connected");
+  // The page's Disconnect.
+  await new RobotApi(server.fetch).disconnect();
+  watch.hold("multicuber", PORT);
+  watch.start();
+  assert.equal(await watch.looking, "nothing");
+  assert.equal(await watch.look(), "nothing");
+  assert.equal(count("/api/robot/connect"), 1);
+  server.unplug();
+  assert.equal(await watch.look(), "nothing");
+  server.plug();
+  assert.equal(await watch.look(), "connected");
+  assert.equal(heard.filter((h) => h[0] === "connected").length, 2);
+  // A robot whose port was never said is held as a whole.
+  await new RobotApi(server.fetch).disconnect();
+  watch.hold("multicuber", "");
+  watch.start();
+  assert.equal(await watch.looking, "nothing");
+  watch.release();
+  assert.equal(await watch.look(), "connected");
+});
+
+test("the robot unplugged: the run ends, the page hears it is gone, and it is connected again when it is back", async () => {
+  const n = 3;
+  const { facelets, solution } = scrambled(n);
+  const pictures = facePictures(n, facelets);
+  const server = mockServer({ moves: solution, stepMs: 5 });
+  const { watch, heard: plugs } = watcher(server);
+  watch.start();
+  assert.equal(await watch.looking, "connected");
+
+  let holding = 0;
+  const frames = (rotate, size) => {
+    const [face, turn] = PHOTOS[holding++];
+    if (holding === 3) setTimeout(() => server.unplug(), 0); // the cable goes during the scan
+    return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, size);
+  };
+  let gone;
+  const lost = new Promise((resolve) => (gone = resolve));
+  const { robot, heard } = follow(server, n, frames, { until: "error" });
+  robot.hooks.onlost = (event) => gone(event);
+  await robot.follow();
+  await robot.scan();
+  const event = await lost;
+  robot.unfollow();
+  assert.equal(event.type, "disconnected");
+  assert.deepEqual(heard.find((h) => h[0] === "error").slice(0, 2), ["error", "disconnected"]);
+  assert.equal(robot.busy, false);
+  assert.equal(server.connected, null);
+  // Idle, it is heard just the same (no run to fail).
+  const idle = new RobotRun({ api: new RobotApi(server.fetch), n, grab: () => null, hooks: { onlost: () => plugs.push(["lost"]), onerror: () => plugs.push(["error"]) } });
+  idle.take({ seq: 99, type: "disconnected" });
+  idle.take({ seq: 100, type: "error", code: "port_lost", message: "gone" });
+  assert.deepEqual(plugs.slice(-3), [["lost"], ["error"], ["lost"]]);
+
+  // The page goes back to watching: nothing while the cable is out, connected when it is in again.
+  watch.start();
+  assert.equal(await watch.looking, "nothing");
+  server.plug();
+  assert.equal(await watch.look(), "connected");
+  assert.deepEqual(plugs.at(-1), ["connected", PORT, "plugged", 3]);
+});
+
+test("a server that does not say the robot was unplugged: the next scan says so", async () => {
+  const server = mockServer({ moves: [], quietUnplug: true });
+  const api = new RobotApi(server.fetch);
+  await api.connect("multicuber", PORT);
+  const { robot, heard, over } = follow(server, 3, () => null, { until: "error" });
+  await robot.follow();
+  server.unplug();
+  await robot.scan();
+  await over;
+  robot.unfollow();
+  assert.equal(heard.find((h) => h[0] === "error")[1], "not_connected");
+  // What the page asks after any error: whether the server still holds the robot.
+  assert.equal((await api.robots()).connected, null);
 });

@@ -551,6 +551,7 @@ export async function mount(root, options = {}) {
   }
 
   function setSize(n) {
+    setTimeout(() => robotSized?.(n), 0);
     scanner.stop();
     if (state.tab === "moves") setTab(state.input);
     state.size = n;
@@ -1532,6 +1533,7 @@ export async function mount(root, options = {}) {
   // What the robot extension (robot.js) may do with the page. While a robot
   // is connected the scramble, paint and camera give way to its Scan button;
   // the cube, its playback and the solution stay as they are.
+  let robotSized = null;
   function robotHost() {
     return {
       root,
@@ -1556,6 +1558,10 @@ export async function mount(root, options = {}) {
       },
       setSize(n) {
         if (state.size !== n) setSize(n);
+      },
+      // Told whenever the cube on the page becomes another size.
+      onsize(told) {
+        robotSized = told;
       },
       // A scan begins: the cube on screen empties and fills in as faces are read.
       scanStart() {

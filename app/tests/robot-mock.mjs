@@ -14,6 +14,14 @@
 //   maxWaitMs      the longest an events request is held
 //   failAfterPhoto an error instead of the photo after this one
 //   down(path)     true: that request fails as with no server
+//   ports          the serial ports plugged in to begin with (the robot's one unless given)
+//   identify       true: the server says of each port what it is (`ports` of /api/robots)
+//   connectFails   how many times connecting fails before it works
+//   quietUnplug    true: an unplugged robot is not announced (a server without hot-plug)
+//   nextMs         given with each photo as the time to the next (`next_ms`)
+//
+// `plug(path, about)` and `unplug(path)` are the cable: `about` is what an
+// identifying server says of the port (`{driver}`, `{driver: null}`, `{busy: true}`).
 
 export const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
 
@@ -33,6 +41,25 @@ export function mockServer(script = {}) {
   let waiting = [];
   let connected = script.connected ?? null;
   const server = { events, calls, holding: -1 };
+  // The ports plugged in: path -> what an identifying server knows of it.
+  const plugged = new Map((script.ports ?? DRIVERS[0].ports).map((path) => [path, { driver: DRIVERS[0].id }]));
+  let refusals = script.connectFails ?? 0;
+  let pulled = false; // the robot connected was unplugged
+  const listing = () => ({
+    drivers: DRIVERS.map((d) => ({ ...d, ports: [...plugged.keys()] })),
+    ...(script.identify ? { ports: [...plugged].map(([path, about]) => ({ path, busy: false, ...about })) } : {}),
+    connected,
+  });
+  server.plug = (path = DRIVERS[0].ports[0], about = { driver: DRIVERS[0].id }) => plugged.set(path, about);
+  server.unplug = (path = DRIVERS[0].ports[0]) => {
+    plugged.delete(path);
+    if (connected?.port !== path) return;
+    connected = null;
+    pulled = true;
+    stopped = true;
+    if (!script.quietUnplug) push("disconnected", { message: "The robot's cable was pulled." });
+  };
+  Object.defineProperty(server, "connected", { get: () => connected });
   const push = (type, body = {}) => {
     events.push({ seq: ++seq, type, ...(run && type !== "log" ? { run, t_ms: Math.round(Date.now() - began) } : {}), ...body });
     for (const wake of waiting.splice(0)) wake();
@@ -42,7 +69,7 @@ export function mockServer(script = {}) {
   // The robot turns a face to the camera, waits for it to settle, asks for the photo.
   const photo = (index) => {
     server.holding = index;
-    after(script.settleMs ?? 0, () => push("photo", { index, face: PHOTOS[index][0], rotate: PHOTOS[index][1] }));
+    after(script.settleMs ?? 0, () => push("photo", { index, face: PHOTOS[index][0], rotate: PHOTOS[index][1], ...(script.nextMs === undefined ? {} : { next_ms: script.nextMs }) }));
   };
   server.push = push;
   server.fetch = async (url, init = {}) => {
@@ -53,10 +80,15 @@ export function mockServer(script = {}) {
     if (script.down?.(u.pathname)) throw new TypeError("Failed to fetch");
     switch (u.pathname) {
       case "/api/robots":
-        return json(200, { drivers: DRIVERS, connected });
-      case "/api/robot/connect":
-        connected = { driver: body.driver, port: body.port ?? DRIVERS[0].ports[0], size: script.size ?? 3, info: { firmware: "2.2" } };
+        return json(200, listing());
+      case "/api/robot/connect": {
+        const path = body.port ?? plugged.keys().next().value;
+        if (!plugged.has(path)) return json(404, { ok: false, error: { code: "no_port", message: "No such serial port." } });
+        if (refusals-- > 0) return json(502, { ok: false, error: { code: "no_answer", message: "The board did not answer." } });
+        connected = { driver: body.driver, port: path, size: body.size ?? script.size ?? 3, info: { firmware: "2.2" } };
+        pulled = false;
         return json(200, { ok: true, size: connected.size, info: connected.info, port: connected.port });
+      }
       case "/api/robot/disconnect":
         connected = null;
         return json(200, { ok: true });
@@ -73,6 +105,7 @@ export function mockServer(script = {}) {
         return json(200, { seq, events: events.filter((e) => e.seq > since) });
       }
       case "/api/robot/scan": {
+        if (pulled) return json(409, { ok: false, error: { code: "not_connected", message: "No robot is connected." } });
         run = `run-${++runs}`;
         began = Date.now();
         stopped = false;
