@@ -81,6 +81,8 @@ struct State {
     generation: u64,
     /// The robot was found to be gone (why); the connection is about to be dropped.
     lost: Option<String>,
+    /// What a simulated robot's camera sees, when asked.
+    camera: Option<Arc<dyn Fn() -> String + Send + Sync>>,
 }
 
 struct Inner {
@@ -262,9 +264,11 @@ impl Session {
         detector.identified(&port, driver.id(), info.clone());
         let connected = json!({"driver": driver.id(), "port": port, "size": size, "info": info});
         let present = robot.presence();
+        let camera = robot.camera();
         *self.inner.robot.lock().unwrap() = Some(robot);
         let generation = {
             let mut s = self.inner.state.lock().unwrap();
+            s.camera = camera;
             s.connected = Some(connected);
             s.generation += 1;
             s.lost = None;
@@ -314,6 +318,7 @@ impl Session {
         self.inner.detector.reserve(None);
         let mut s = self.inner.state.lock().unwrap();
         s.connected = None;
+        s.camera = None;
         s.run = None;
         s.lost = None;
         s.generation += 1;
@@ -353,6 +358,7 @@ impl Session {
         self.inner.detector.reserve(None);
         let mut s = self.inner.state.lock().unwrap();
         s.connected = None;
+        s.camera = None;
         s.lost = None;
         s.generation += 1;
         if let Some(id) = run {
@@ -474,7 +480,13 @@ impl Session {
                 let next = rest.iter().position(|o| o.photo.is_some());
                 let moving: f64 = rest[..next.map_or(rest.len(), |k| k + 1)].iter().map(|o| o.est_ms).sum();
                 let next_ms = (moving + if next.is_some() { settle.as_secs_f64() * 1000.0 } else { 0.0 }).round();
-                self.emit("photo", Some(run), json!({"index": photo.index, "face": photo.face.to_string(), "rotate": photo.rotate, "next_ms": next_ms}));
+                let mut body = json!({"index": photo.index, "face": photo.face.to_string(), "rotate": photo.rotate, "next_ms": next_ms});
+                // A simulated robot shows what its camera would: a page is tried against it with no cube.
+                let camera = self.inner.state.lock().unwrap().camera.clone();
+                if let Some(seen) = camera {
+                    body["sim"] = json!(seen());
+                }
+                self.emit("photo", Some(run), body);
                 let deadline = Instant::now() + PHOTO_ACK;
                 let mut s = self.inner.state.lock().unwrap();
                 loop {

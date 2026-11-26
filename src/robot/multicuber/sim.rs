@@ -266,6 +266,14 @@ impl SimRobot {
         self.state.0.lock().unwrap().cube.facelet_string()
     }
 
+    /// The face in front of the camera now, as the camera sees it: its stickers row by row.
+    pub fn seen(&self) -> String {
+        let s = self.state.0.lock().unwrap();
+        let nn = s.size * s.size;
+        let camera = super::planner::CAMERA as usize;
+        s.cube.facelet_string()[camera * nn..(camera + 1) * nn].to_string()
+    }
+
     pub fn log(&self) -> Vec<String> {
         self.state.0.lock().unwrap().log.clone()
     }

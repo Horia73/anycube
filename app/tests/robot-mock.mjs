@@ -2,9 +2,12 @@
 // fetch function: for the tests, and behind tests/robot-mock-server.mjs
 // for the page in a browser.
 //
-// The robot as the server shows it: a scan takes six photos in robot.py's
-// order and turns, waiting for photo-taken after each; a solve plans, then
-// runs its ops one after another. `script` changes what it does:
+// The robot as the server shows it: a scan takes six photos, waiting for
+// photo-taken after each (which face and which turn each is, only its event
+// says: the server plans the scan, and the order differs with where the
+// robot stands); a solve plans, then runs its ops one after another. A
+// command must come as JSON from this page, as the server wants it.
+// `script` changes what it does:
 //
 //   moves          the solution the planner finds (names, as anycube writes them)
 //   stepMs         time between steps (2: the tests are quick)
@@ -19,13 +22,18 @@
 //   connectFails   how many times connecting fails before it works
 //   quietUnplug    true: an unplugged robot is not announced (a server without hot-plug)
 //   nextMs         given with each photo as the time to the next (`next_ms`)
+//   photos         the scan's pictures, [face, rotate] in order (PHOTOS unless given)
+//   origin         the Origin the page's requests carry (none unless given; not HOST's is refused)
 //
 // `plug(path, about)` and `unplug(path)` are the cable: `about` is what an
 // identifying server says of the port (`{driver}`, `{driver: null}`, `{busy: true}`).
 
 export const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
 
-export const PHOTOS = [["U", 270], ["R", 180], ["D", 90], ["L", 0], ["B", 0], ["F", 0]];
+// The server's scan of a 3x3x3 from the parked robot.
+export const PHOTOS = [["L", 0], ["U", 90], ["R", 180], ["B", 180], ["D", 0], ["F", 0]];
+
+export const HOST = "http://127.0.0.1";
 
 export const DRIVERS = [{ id: "multicuber", name: "MultiCuber", sizes: [2, 3, 4, 5], ports: ["/dev/cu.usbmodem21301"] }];
 
@@ -45,9 +53,10 @@ export function mockServer(script = {}) {
   const plugged = new Map((script.ports ?? DRIVERS[0].ports).map((path) => [path, { driver: DRIVERS[0].id }]));
   let refusals = script.connectFails ?? 0;
   let pulled = false; // the robot connected was unplugged
+  let moving = false; // a scan or a solve is under way
   const listing = () => ({
     drivers: DRIVERS.map((d) => ({ ...d, ports: [...plugged.keys()] })),
-    ...(script.identify ? { ports: [...plugged].map(([path, about]) => ({ path, busy: false, ...about })) } : {}),
+    ...(script.identify ? { ports: [...plugged].map(([path, { stranger, ...about }]) => ({ path, busy: false, ...about })) } : {}),
     connected,
   });
   server.plug = (path = DRIVERS[0].ports[0], about = { driver: DRIVERS[0].id }) => plugged.set(path, about);
@@ -57,7 +66,12 @@ export function mockServer(script = {}) {
     connected = null;
     pulled = true;
     stopped = true;
-    if (!script.quietUnplug) push("disconnected", { message: "The robot's cable was pulled." });
+    if (script.quietUnplug) return;
+    // As the server does: the run that was going on ends, then the robot is said to be gone.
+    if (moving) push("error", { code: "disconnected", message: "The robot was pulled out." });
+    moving = false;
+    run = null;
+    push("disconnected", { message: "The robot's cable was pulled." });
   };
   Object.defineProperty(server, "connected", { get: () => connected });
   const push = (type, body = {}) => {
@@ -67,9 +81,10 @@ export function mockServer(script = {}) {
   const after = (ms, fn) => setTimeout(() => !stopped && fn(), ms);
   const step = (fn) => after(script.stepMs ?? 2, fn);
   // The robot turns a face to the camera, waits for it to settle, asks for the photo.
+  const photos = script.photos ?? PHOTOS;
   const photo = (index) => {
     server.holding = index;
-    after(script.settleMs ?? 0, () => push("photo", { index, face: PHOTOS[index][0], rotate: PHOTOS[index][1], ...(script.nextMs === undefined ? {} : { next_ms: script.nextMs }) }));
+    after(script.settleMs ?? 0, () => push("photo", { index, face: photos[index][0], rotate: photos[index][1], ...(script.nextMs === undefined ? {} : { next_ms: script.nextMs }) }));
   };
   server.push = push;
   server.fetch = async (url, init = {}) => {
@@ -78,13 +93,26 @@ export function mockServer(script = {}) {
     const u = new URL(url, "http://127.0.0.1");
     calls.push({ method, path: u.pathname, body });
     if (script.down?.(u.pathname)) throw new TypeError("Failed to fetch");
+    if (method === "POST" && u.pathname.startsWith("/api/robot/")) {
+      const header = (name) => Object.entries(init.headers ?? {}).find(([k]) => k.toLowerCase() === name)?.[1];
+      const origin = header("origin") ?? script.origin;
+      if (origin !== undefined && origin !== HOST) return json(403, { ok: false, error: { code: "forbidden", message: "robot commands must come from this app" } });
+      if (String(header("content-type") ?? "").split(";")[0].trim().toLowerCase() !== "application/json") {
+        return json(415, { ok: false, error: { code: "bad_request", message: "robot commands must be sent as JSON (Content-Type: application/json)" } });
+      }
+    }
     switch (u.pathname) {
       case "/api/robots":
         return json(200, listing());
       case "/api/robot/connect": {
         const path = body.port ?? plugged.keys().next().value;
-        if (!plugged.has(path)) return json(404, { ok: false, error: { code: "no_port", message: "No such serial port." } });
-        if (refusals-- > 0) return json(502, { ok: false, error: { code: "no_answer", message: "The board did not answer." } });
+        if (!plugged.has(path)) return json(200, { ok: false, error: { code: "no_port", message: "No such serial port." } });
+        // A board that went by its name is asked now, and is no robot: the server knows it from here on.
+        if (script.identify && plugged.get(path).stranger) {
+          plugged.set(path, { driver: null });
+          return json(200, { ok: false, error: { code: "no_answer", message: "the board does not answer as MultiCuber" } });
+        }
+        if (refusals-- > 0) return json(200, { ok: false, error: { code: "no_answer", message: "The board did not answer." } });
         connected = { driver: body.driver, port: path, size: body.size ?? script.size ?? 3, info: { firmware: "2.2" } };
         pulled = false;
         return json(200, { ok: true, size: connected.size, info: connected.info, port: connected.port });
@@ -105,7 +133,8 @@ export function mockServer(script = {}) {
         return json(200, { seq, events: events.filter((e) => e.seq > since) });
       }
       case "/api/robot/scan": {
-        if (pulled) return json(409, { ok: false, error: { code: "not_connected", message: "No robot is connected." } });
+        if (pulled) return json(200, { ok: false, error: { code: "not_connected", message: "No robot is connected." } });
+        moving = true;
         run = `run-${++runs}`;
         began = Date.now();
         stopped = false;
@@ -128,6 +157,7 @@ export function mockServer(script = {}) {
           step(() => {
             times.scan_ms = Date.now() - began;
             push("scan-done", { scan_ms: times.scan_ms });
+            moving = false; // waiting for the page's cube
           });
         }
         return json(200, { ok: true });
@@ -135,6 +165,7 @@ export function mockServer(script = {}) {
       case "/api/robot/solve": {
         if (body.run !== run) return json(409, { ok: false, error: { code: "stale_run", message: "Not the current run." } });
         const moves = script.moves;
+        moving = true;
         const ops = moves.flatMap((m, k) => [
           { cmd: "LIFT", arg: "1", est_ms: 425, move: null },
           { cmd: "ROT", arg: m.endsWith("2") ? "2" : "1", est_ms: m.endsWith("2") ? 672 : 569, move: k },
@@ -147,6 +178,7 @@ export function mockServer(script = {}) {
           let i = 0;
           const next = () => {
             if (i === ops.length) {
+              moving = false;
               push("done", { times: { scan_ms: times.scan_ms, analysis_ms: body.analysis_ms, compute_ms: times.compute_ms, exec_ms: Date.now() - executing, total_ms: Date.now() - began } });
               return;
             }
@@ -165,6 +197,7 @@ export function mockServer(script = {}) {
       }
       case "/api/robot/stop":
         stopped = true;
+        moving = false;
         setTimeout(() => push("error", { code: "stopped", message: "Stopped: the motors are off." }), 0);
         return json(200, { ok: true });
       default:

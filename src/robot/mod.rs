@@ -260,6 +260,13 @@ pub trait Robot: Send {
     fn emergency_stop(&mut self);
     /// Brings the robot to where it can be switched off, if it is not there.
     fn park(&mut self) -> Result<(), RobotError>;
+    /// What the camera would see now, for a robot that is simulated: the
+    /// stickers of the face in front of it, row by row, the right way up
+    /// (the `sim` of a `photo` event, so that a page can be tried with no
+    /// robot and no cube). A real robot has none.
+    fn camera(&self) -> Option<Arc<dyn Fn() -> String + Send + Sync>> {
+        None
+    }
     /// A line for the log after a run, if the robot has something to say (the simulator does).
     fn after_run_note(&mut self) -> Option<String> {
         None

@@ -104,7 +104,8 @@ export const readSizes = (n) => READ_SIZES.filter((s) => s >= frameSize(n));
  * shortest time between two photos seen in this scan or the one before
  * (`gap` until any was seen). The largest size that fits is read; a size
  * down only when it would not. After the last photo the robot waits for
- * the cube alone, so that one gets `last` ms and no more.
+ * the cube alone, so that one gets `last` ms (more only if the server says
+ * the robot is busy for longer).
  */
 export class ReadPace {
   constructor(n, { share = 0.5, gap = 800, last = 25, first = 480 } = {}) {
@@ -130,7 +131,8 @@ export class ReadPace {
   budget(at, final = false, nextMs = undefined) {
     if (this.at !== null && at > this.at) this.seen.push(at - this.at);
     this.at = at;
-    if (Number.isFinite(nextMs) && nextMs >= 0) return this.share * nextMs;
+    // After the last photo there is `last` at least: the robot's own time to the end of the scan is about nothing.
+    if (Number.isFinite(nextMs) && nextMs >= 0) return final ? Math.max(this.last, this.share * nextMs) : this.share * nextMs;
     return final ? this.last : this.share * Math.min(this.gap, ...this.seen);
   }
 
@@ -567,7 +569,7 @@ const LOST = new Set(["disconnected", "not_connected", "connection_lost", "port_
  * photo is read is the `pace`'s to say (ReadPace). The hooks say what happens:
  *   onphase(phase)        "idle" | "starting" | "scanning" | "solving" | "done" | "failed"
  *   onscanstart(event)    the scan has begun ({steps, eta_ms})
- *   onphoto(index, face, image)  a frame was taken for that face
+ *   onphoto(index, face, image, event)  a frame was taken for that face
  *   onface(face, cells, source)  a face was read (face: 0..5 in URFDLB)
  *   onscanned(result)     the cube was put together (result of assembleFaces,
  *                         with analysis_ms, work_ms and, photo by photo,
@@ -780,7 +782,7 @@ export class RobotRun {
       if (this.run === run && this.busy) this.#fail(error);
     });
     this.taken++;
-    this.#hook("onphoto", index, face, image);
+    this.#hook("onphoto", index, face, image, event);
     // Read while the robot goes on to the next face.
     this.later(() => {
       if (this.run !== run) return;
@@ -965,11 +967,18 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   const thumb = document.createElement("canvas");
   const note = $("robot-note");
   // The line under the camera: short enough to be read whole (`more` is for whoever asks, on hover).
+  const short = (text) => (text.length > 140 ? `${text.slice(0, 139)}…` : text);
   const say = (text, warn = false, more = "") => {
     const whole = String(text ?? "");
-    note.textContent = whole.length > 140 ? `${whole.slice(0, 139)}…` : whole;
+    note.textContent = short(whole);
     note.title = whole.length > 140 ? whole : more;
     note.classList.toggle("warn", warn);
+  };
+  // What the server logs goes after what the page said, not in its place.
+  const log = (text) => {
+    note.querySelector("span")?.remove();
+    const said = note.textContent;
+    note.append(el("span", { class: "robot-log", text: short(said ? ` · ${text}` : text), title: text }));
   };
 
   let drivers = [];
@@ -985,8 +994,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   let following = false; // the page can animate the plan's moves
   let eta = null;
   let ticker = 0;
+  let scanEnd = null; // when the scan is expected to be over (the page's clock)
   let reading = ""; // how the last scan's photos were read, for the times at the end
   let sizing = false; // the robot is being set to another size of cube
+  let gone = false; // the cube's line says the robot is no longer connected
   // What reading costs on this machine, kept from one robot and scan to the next.
   const pace = new ReadPace(3);
 
@@ -1089,7 +1100,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       },
       onfailed(found, error) {
         connecting = null;
-        trouble = `${driverName(found.driver)} on ${portName(found.port)} did not connect: ${error.message} ${error.final ? "Plug it in again, or connect it here." : "Trying again shortly."}`;
+        // A board that went by its name and answered as no robot is nothing to tell about:
+        // the server says so port by port from now on, and it is left alone.
+        const stranger = error.code === "no_answer" && !found.sure && ports.has(found.port);
+        trouble = stranger ? "" : `${driverName(found.driver)} on ${portName(found.port)} did not connect: ${error.message} ${error.final ? "Plug it in again, or connect it here." : "Trying again shortly."}`;
         showDialog();
       },
     },
@@ -1227,11 +1241,22 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       if (phase === "starting") host.say("busy", "Starting the scan…");
     },
     onscanstart(event) {
+      // The scan's time left: the plan's, counted down, and at the last photo what the robot says is left of it.
+      scanEnd = Number.isFinite(event.eta_ms) ? performance.now() + event.eta_ms : null;
       host.wait("Scanning", event.eta_ms ? `About ${duration(event.eta_ms)} for the six photos.` : "");
     },
-    onphoto(index, face, image) {
+    onphoto(index, face, image, event) {
       lastFace = face;
-      host.say("busy", ["Scanning · photo ", el("b", { text: String(index + 1) }), " of 6"]);
+      if (index >= 5 && Number.isFinite(event?.next_ms)) scanEnd = performance.now() + event.next_ms;
+      const left = el("span");
+      const tick = () => {
+        const ms = scanEnd === null ? 0 : scanEnd - performance.now();
+        left.textContent = ms > 50 ? ` · ${duration(ms)} left` : "";
+      };
+      tick();
+      host.say("busy", ["Scanning · photo ", el("b", { text: String(index + 1) }), " of 6", left]);
+      stopTicker();
+      ticker = setInterval(tick, 100);
       requestAnimationFrame(() => drawShot(face, image));
     },
     onface(face, cells) {
@@ -1241,6 +1266,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       view.setRaw(raw);
     },
     onscanned(result) {
+      stopTicker();
       host.wait(null);
       const { ok, note: said } = host.scanned(result, result.sources, lastFace);
       const found = result.sources.filter((s) => s?.found).length;
@@ -1317,7 +1343,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       lost(event.message);
     },
     onlog(text) {
-      if (text) say(text);
+      if (text) log(text);
     },
     onlink(ok) {
       say(ok ? "" : "No answer from the anycube server. Trying again…", !ok);
@@ -1393,6 +1419,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   async function enter(info) {
     watch.stop();
     connected = info;
+    // It is back: what was said of its going is over.
+    if (gone) host.say(null);
+    gone = false;
     showDialog();
     showWhere();
     if (Number.isInteger(info.size)) host.setSize(info.size);
@@ -1466,6 +1495,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const name = driverName(connected.driver);
     leave();
     host.say("bad", [el("b", { text: `${name} is no longer connected. ` }), memory.auto ? "It connects again by itself when it is plugged in." : "Connect it again with Robot."], why);
+    gone = true;
     watch.start();
   }
 

@@ -1908,6 +1908,13 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 .robot-note.warn {
   color: var(--danger);
 }
+.robot-log {
+  color: var(--ink-3);
+}
+/* "Scanning…" on the line that says whether the cube can be solved: a line like the others. */
+.robot-mode .valid.wait {
+  display: block;
+}
 .button.danger {
   background: var(--danger);
   border-color: var(--danger);

@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 import {
@@ -15,7 +15,7 @@ import {
 } from "../js/robot.js";
 import { picture, quad, rng } from "./pictures.mjs";
 import { readPng, shrink } from "./png.mjs";
-import { json, mockServer, PHOTOS } from "./robot-mock.mjs";
+import { HOST, json, mockServer, PHOTOS } from "./robot-mock.mjs";
 
 // ------------------------------------------------------------- pictures
 
@@ -260,12 +260,20 @@ test("RobotApi: answers, refusals and no server, each as said", async () => {
   assert.deepEqual(seen[5], ["POST", "/api/robot/connect", { driver: "multicuber" }]);
 });
 
+// What goes on asking the server by itself: stopped when the tests are over,
+// so that a test that fails is a test that failed, not a file that never ends.
+const going = [];
+const running = (thing) => (going.push(thing), thing);
+after(() => {
+  for (const thing of going) (thing.unfollow ?? thing.stop).call(thing);
+});
+
 // A run followed to its end: everything the hooks heard, in order.
 function follow(server, n, frames, { until = "done", ...more } = {}) {
   const heard = [];
   let finish;
   const over = new Promise((resolve) => (finish = resolve));
-  const robot = new RobotRun({
+  const robot = running(new RobotRun({
     api: new RobotApi(server.fetch),
     n,
     wait: 1,
@@ -292,7 +300,7 @@ function follow(server, n, frames, { until = "done", ...more } = {}) {
         if (until === "error") finish();
       },
     },
-  });
+  }));
   return { robot, heard, over };
 }
 
@@ -314,7 +322,7 @@ test("a whole run against the mock: six photos, the cube read, solved in step wi
   robot.unfollow();
 
   const of = (kind) => heard.filter((h) => h[0] === kind);
-  assert.deepEqual(of("photo").map((h) => h[2]), [0, 1, 3, 4, 5, 2]); // U R D L B F as facelet faces
+  assert.deepEqual(of("photo").map((h) => h[2]), [4, 0, 1, 5, 3, 2]); // L U R B D F as facelet faces
   assert.equal(of("face").length, 6);
   assert.ok(of("face").every((h) => h[2]), "every face found");
   // Each photo was answered before the robot went on, with its run and index.
@@ -429,14 +437,14 @@ test("the server unreachable: a failed scan is said, the events wait and come ba
   const server = mockServer({ moves: [], down: (path) => down && path !== "/api/robot/events" });
   const links = [];
   const errors = [];
-  const robot = new RobotRun({
+  const robot = running(new RobotRun({
     api: new RobotApi(server.fetch),
     n: 3,
     wait: 1,
     grab: () => null,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms / 100)),
     hooks: { onerror: (e) => errors.push(e), onlink: (ok) => links.push(ok) },
-  });
+  }));
   await robot.follow();
   await robot.scan();
   assert.equal(errors[0].code, "network");
@@ -528,7 +536,7 @@ test("ReadPace: the largest size that is read before the next photo, a size down
   // The server's own word for the time to the next photo is taken before any of that.
   assert.equal(quick.photo(5100, false, 2000), 720);
   assert.equal(quick.photo(5200, true, 300), 720); // also after the last, when the robot is still busy
-  assert.equal(quick.photo(5300, true, 0), 240);
+  assert.equal(quick.photo(5300, true, 0), 320); // nothing left of the robot's time: the 25 ms all the same
 
   // A larger cube has a larger least size.
   quick.begin(7);
@@ -567,8 +575,10 @@ test("a scan reads its photos as large as the robot's pace allows, and the last 
   assert.deepEqual((await scan({ nextMs: 60_000 }, pace)).sizes, [480, 720, 720, 720, 720, 720]);
   // What was learnt is kept: the next scan is at the largest from its first photo.
   assert.deepEqual((await scan({ nextMs: 60_000 }, pace)).sizes, [720, 720, 720, 720, 720, 720]);
-  // A robot that says it leaves no time at all: the least size throughout.
-  assert.deepEqual((await scan({ nextMs: 0 }, pace)).sizes, [240, 240, 240, 240, 240, 240]);
+  // A robot that says it leaves no time at all: the least size, and for the last photo what 25 ms allow.
+  const none = (await scan({ nextMs: 0 }, pace)).sizes;
+  assert.deepEqual(none.slice(0, 5), [240, 240, 240, 240, 240]);
+  assert.ok(none[5] >= 240 && none[5] < 720, `the last photo at ${none[5]}`);
   // The mock as it is, a robot far quicker than any: no photo larger than the first, the last no larger than 25 ms allow.
   const hurried = await scan({}, new ReadPace(n));
   assert.equal(hurried.sizes[0], 480);
@@ -659,29 +669,35 @@ test("RobotWatch: a robot plugged in is connected, and the watching stops", asyn
 });
 
 test("RobotWatch: it asks every so often while it watches, and no more once a robot is connected", async () => {
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  // Waits for something to be so, however busy the machine is.
+  const until = async (so, what) => {
+    for (let k = 0; k < 2000 && !so(); k++) await pause(5);
+    assert.ok(so(), what);
+  };
   const server = mockServer({ ports: [] });
   const heard = [];
-  const watch = new RobotWatch({ api: new RobotApi(server.fetch), memory: { auto: true, last: null }, every: 5, hooks: { onconnected: (r, how) => heard.push(how) } });
+  const watch = running(new RobotWatch({ api: new RobotApi(server.fetch), memory: { auto: true, last: null }, every: 5, hooks: { onconnected: (r, how) => heard.push(how) } }));
   const asked = () => server.calls.filter((c) => c.path === "/api/robots").length;
   watch.start();
-  await new Promise((resolve) => setTimeout(resolve, 60));
-  assert.ok(asked() >= 3, `asked ${asked()} times`);
+  await until(() => asked() >= 3, "asked again and again");
   assert.deepEqual(heard, []);
   server.plug();
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  await until(() => heard.length > 0, "connected once plugged in");
   assert.deepEqual(heard, ["plugged"]);
+  await watch.looking;
   const then = asked();
-  await new Promise((resolve) => setTimeout(resolve, 40));
+  await pause(60);
   assert.equal(asked(), then);
   // Stopped by hand: no more either.
   const idle = mockServer({ ports: [] });
-  const second = new RobotWatch({ api: new RobotApi(idle.fetch), memory: { auto: true, last: null }, every: 5 });
+  const second = running(new RobotWatch({ api: new RobotApi(idle.fetch), memory: { auto: true, last: null }, every: 5 }));
   second.start();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await until(() => idle.calls.length >= 2, "asked");
   second.stop();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await second.looking;
   const calls = idle.calls.length;
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  await pause(60);
   assert.equal(idle.calls.length, calls);
 });
 
@@ -799,7 +815,10 @@ test("the robot unplugged: the run ends, the page hears it is gone, and it is co
   await robot.scan();
   const event = await lost;
   robot.unfollow();
-  assert.equal(event.type, "disconnected");
+  // As the server says it: the run's own error first (code `disconnected`), then `disconnected` for the robot.
+  assert.equal(event.type, "error");
+  assert.equal(event.code, "disconnected");
+  assert.deepEqual(server.events.slice(-2).map((e) => [e.type, e.run !== undefined]), [["error", true], ["disconnected", false]]);
   assert.deepEqual(heard.find((h) => h[0] === "error").slice(0, 2), ["error", "disconnected"]);
   assert.equal(robot.busy, false);
   assert.equal(server.connected, null);
@@ -830,4 +849,93 @@ test("a server that does not say the robot was unplugged: the next scan says so"
   assert.equal(heard.find((h) => h[0] === "error")[1], "not_connected");
   // What the page asks after any error: whether the server still holds the robot.
   assert.equal((await api.robots()).connected, null);
+});
+
+// ------------------------------------------------- as the server wants it
+
+test("every command the page sends is JSON from this page, as the server demands", async () => {
+  const n = 3;
+  const { facelets, solution } = scrambled(n);
+  const pictures = facePictures(n, facelets);
+  // A browser adds the page's own Origin to a POST: the mock refuses any other, and anything that is not JSON.
+  const server = mockServer({ moves: solution, origin: HOST });
+  const sent = [];
+  const api = new RobotApi((url, init) => {
+    sent.push([init.method, url, init.headers?.["content-type"], init.body]);
+    return server.fetch(url, init);
+  });
+  await api.connect("multicuber", PORT, 3);
+  let holding = 0;
+  const frames = (rotate, size) => {
+    const [face, turn] = PHOTOS[holding++];
+    return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, size);
+  };
+  const { robot, heard, over } = follow({ fetch: (url, init) => api.fetch(url, init) }, n, frames);
+  await robot.follow();
+  await robot.scan();
+  await over;
+  robot.unfollow();
+  await api.stop();
+  await api.disconnect();
+  assert.ok(heard.some((h) => h[0] === "done"));
+  const posts = sent.filter(([method]) => method === "POST");
+  assert.deepEqual([...new Set(posts.map(([, url]) => url))].sort(), ["/api/robot/connect", "/api/robot/disconnect", "/api/robot/photo-taken", "/api/robot/scan", "/api/robot/solve", "/api/robot/stop"]);
+  for (const [, url, type, body] of posts) {
+    assert.equal(type, "application/json", url);
+    assert.doesNotThrow(() => JSON.parse(body), url);
+  }
+  // What the server does with anything else.
+  assert.equal((await server.fetch("/api/robot/scan", { method: "POST", body: "{}" })).status, 415);
+  assert.equal((await server.fetch("/api/robot/scan", { method: "POST", body: "{}", headers: { "content-type": "application/json", origin: "http://elsewhere.example" } })).status, 403);
+  await assert.rejects(new RobotApi((url, init) => server.fetch(url, { ...init, headers: {} })).stop(), (e) => e.code === "bad_request");
+});
+
+test("the photos are read by what each event says: any order, any turns", async () => {
+  const n = 3;
+  const { facelets, text } = scrambled(n);
+  const pictures = facePictures(n, facelets);
+  // The 2018 order with the server's turns, the server's order from the parked robot, and one nobody uses.
+  for (const photos of [
+    [["U", 90], ["R", 180], ["D", 270], ["L", 0], ["B", 0], ["F", 0]],
+    [["L", 0], ["U", 90], ["R", 180], ["B", 180], ["D", 0], ["F", 0]],
+    [["F", 270], ["D", 180], ["B", 90], ["U", 0], ["L", 270], ["R", 90]],
+  ]) {
+    const server = mockServer({ moves: [], photos });
+    let holding = 0;
+    const frames = (rotate, size) => {
+      const [face, turn] = photos[holding++];
+      return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, size);
+    };
+    const { robot, heard, over } = follow(server, n, frames, { until: "idle" });
+    await robot.follow();
+    await robot.scan();
+    await Promise.race([over, new Promise((resolve) => setTimeout(resolve, 5000))]);
+    robot.unfollow();
+    assert.deepEqual(heard.filter((h) => h[0] === "photo").map((h) => "URFDLB"[h[2]]), photos.map(([face]) => face));
+    const [, scanned] = heard.find((h) => h[0] === "scanned");
+    // Every picture upright in its own place: the cube as it is, with nothing put right.
+    assert.equal(scanned.kind, "taken", photos.join(" "));
+    assert.equal(scanned.state, text);
+  }
+});
+
+test("a board that goes by its name and is no robot is asked once, then left alone and not complained of", async () => {
+  const server = mockServer({ ports: [], identify: true });
+  const { watch, heard, clock, count } = watcher(server);
+  watch.start();
+  await watch.looking;
+  // Plugged in and not asked yet: the server says nothing of what it is.
+  server.plug("/dev/cu.usbmodem7", { stranger: true });
+  assert.equal(choosePort(await new RobotApi(server.fetch).robots()).sure, false);
+  assert.equal(await watch.look(), "failed");
+  assert.deepEqual(heard.at(-1), ["failed", "no_answer", false]);
+  // From now on the server says it is none: never again, however long it stays.
+  for (let k = 0; k < 10; k++) {
+    clock.t += 60_000;
+    assert.equal(await watch.look(), "nothing");
+  }
+  assert.equal(count("/api/robot/connect"), 1);
+  // The robot beside it is connected all the same.
+  server.plug(PORT);
+  assert.equal(await watch.look(), "connected");
 });

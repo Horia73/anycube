@@ -388,6 +388,11 @@ impl Robot for MultiCuber {
         }
     }
 
+    fn camera(&self) -> Option<Arc<dyn Fn() -> String + Send + Sync>> {
+        let sim = self.sim.clone()?;
+        Some(Arc::new(move || sim.seen()))
+    }
+
     fn execute(&mut self, plan: &Plan, stop: &StopFlag, progress: &mut dyn FnMut(Progress) -> Result<(), RobotError>) -> Result<(), RobotError> {
         if !self.state_known {
             self.sync()?;

@@ -143,7 +143,10 @@ it is on the page.
 Scan starts the robot and follows its events (`/api/robot/events`, long
 polls). At each `photo` the page grabs the frame of the moment, cuts out
 its centred square, turns it as the event says, and answers `photo-taken`
-at once. The face is read afterwards, while the robot moves on:
+at once. Which face a photo is and how it is turned, only its event says
+(`face`, `rotate`): the server plans the scan, and the order of the faces
+differs with where the robot stands. The time left of the scan is its
+plan's, counted down. The face is read afterwards, while the robot moves on:
 `detect.js`, or a centred grid of 0.8 of the side when no face is found,
 then `colour.js` and `scan-fit.js`, as MultiCuber's `anycube_scan.mjs`
 does. The six faces fill in on the cube as they are read. A scan that
@@ -183,6 +186,14 @@ for a 4x4x4. With the robot a second from photo to photo, every face but
 the last is read at 720 in about 70 ms, the last at 320 in about 20 ms.
 The first reading in a page is several times slower, so the page reads
 once when a robot is connected.
+
+What the server logs (the tables of a size being ready, what a simulated
+robot's cube looks like after a run) is shown after the robot's line, not
+in its place.
+
+`anycube app --robot-sim` offers a simulated robot that takes as long as
+the real one; each of its `photo` events says what its camera would see
+(`sim`), for a stand-in camera to draw.
 
 `node app/tests/robot-mock-server.mjs` serves the page with a mock robot
 behind a mock server (`tests/robot-mock.mjs`, the same one the tests run

@@ -28,7 +28,7 @@ import { CubeModel } from "../js/cube-model.js";
 import { rotateSquare } from "../js/robot.js";
 import { picture, quad } from "./pictures.mjs";
 import { readPng, writePng } from "./png.mjs";
-import { mockServer, PHOTOS } from "./robot-mock.mjs";
+import { HOST, mockServer, PHOTOS } from "./robot-mock.mjs";
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
@@ -120,7 +120,9 @@ createServer(async (req, res) => {
   const frame = /^\/mock\/frame\/(\d)\.png$/.exec(path);
   if (frame) return send(res, 200, "image/png", frames[Number(frame[1])]);
   if (path.startsWith("/api/robot")) {
-    const answer = await robot.fetch(req.url, { method: req.method, body: body || undefined });
+    // The headers the server looks at go with the request: a command that is not JSON from this page is refused here too.
+    const headers = { ...(req.headers["content-type"] ? { "content-type": req.headers["content-type"] } : {}), ...(req.headers.origin ? { origin: req.headers.origin === `http://${req.headers.host}` ? HOST : req.headers.origin } : {}) };
+    const answer = await robot.fetch(req.url, { method: req.method, body: body || undefined, headers });
     return send(res, answer.status, "application/json", JSON.stringify(await answer.json()));
   }
   const file = normalize(join(APP, path === "/" ? "index.html" : path));

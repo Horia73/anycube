@@ -121,6 +121,17 @@ fn scan_and_solve_on_the_simulated_robot() {
     // The page analyses the pictures; here the simulator says what the cube
     // is, its colours named after the middle they belong with, as the page does.
     let (raw, solved, _, _) = sim_facelets(&s);
+    // What the simulated camera saw at each picture (`sim`), turned as the
+    // picture's `rotate` says, is that face of the cube the scan left.
+    for e in &photos {
+        let mut seen: Vec<u8> = e["sim"].as_str().expect("a simulated robot says what its camera sees").bytes().collect();
+        assert_eq!(seen.len(), 9);
+        for _ in 0..e["rotate"].as_u64().unwrap() / 90 {
+            seen = (0..9).map(|i| seen[(2 - i % 3) * 3 + i / 3]).collect();
+        }
+        let face = "URFDLB".find(e["face"].as_str().unwrap()).unwrap();
+        assert_eq!(std::str::from_utf8(&seen).unwrap(), &raw[face * 9..face * 9 + 9], "picture {}", e["face"]);
+    }
     let g = anycube::cuben::Geometry::new(3);
     let facelets = g.to_string(&g.reframe(&g.from_string(&raw).unwrap(), &[]));
     assert!(!solved);
