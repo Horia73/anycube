@@ -1720,14 +1720,16 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   }
 }
 
+/* A robot connected (js/robot.js): its panel stands where the scramble,
+   paint and camera were, and Scan & solve where Solve was. Without a robot
+   none of this is on the page. */
 .robot-panel,
+.robot-note,
 #robot-scan {
   display: none;
 }
 .robot-mode .tabs,
-.robot-mode .panels {
-  display: none;
-}
+.robot-mode .panels,
 .robot-mode #mode-field,
 .robot-mode #solve {
   display: none;
@@ -1740,30 +1742,85 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 }
 .robot-panel {
   position: relative;
+  flex: none;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
   min-width: 0;
 }
-.robot-panel label {
-  font-size: .8rem;
+/* A label, and beside it the robot's state or the "i". */
+.robot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+.robot-row:not(:first-child) {
+  margin-top: 4px;
+}
+.robot-row label {
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--ink-2);
 }
+.robot-state {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.robot-state::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-2);
+}
+.robot-state[data-kind="ok"]::before {
+  background: var(--ok);
+}
+.robot-state[data-kind="busy"]::before {
+  background: var(--accent);
+  animation: pulse 1.2s infinite ease-in-out;
+}
+.robot-state[data-kind="warn"] {
+  color: var(--danger);
+}
+.robot-state[data-kind="warn"]::before {
+  background: var(--danger);
+}
+@media (prefers-reduced-motion: reduce) {
+  .robot-state::before {
+    animation: none !important;
+  }
+}
+/* A picker: the name chosen, on as many lines as it needs, and the
+   browser's own select over it, unseen, for the mouse and the keyboard. */
 .robot-choice {
   position: relative;
+  min-height: 36px;
+  display: flex;
+  align-items: center;
   border: 1px solid var(--line-2);
-  border-radius: 9px;
-  padding: 7px 32px 7px 10px;
+  border-radius: 10px;
+  padding: 6px 34px 6px 10px;
   background: var(--bg);
   color: var(--ink);
-  font-size: .88rem;
+  font-size: 0.88rem;
+  line-height: 1.35;
   overflow-wrap: anywhere;
+}
+.robot-choice:hover:not(:has(select:disabled)) {
+  border-color: var(--ink-3);
 }
 .robot-choice::after {
   content: "";
   position: absolute;
-  right: 13px;
-  top: calc(50% - 4px);
+  right: 14px;
+  top: calc(50% - 5px);
   width: 6px;
   height: 6px;
   border: solid var(--ink-2);
@@ -1777,19 +1834,26 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   width: 100%;
   height: 100%;
   opacity: 0;
+  font: inherit;
   cursor: pointer;
 }
-.robot-choice:focus-within, #robot-info:focus-visible {
-  outline: 2px solid var(--accent);
+.robot-choice:has(select:focus-visible) {
+  outline: 2px solid var(--b);
   outline-offset: 2px;
 }
-.robot-choice:has(select:disabled) { color: var(--ink-3); }
-.robot-choice select:disabled { cursor: default; }
-.robot-camera-label {
+.robot-choice:has(select:disabled) {
+  color: var(--ink-3);
+  background: var(--bg-2);
+}
+.robot-choice:has(select:disabled)::after {
+  opacity: 0.4;
+}
+.robot-choice select:disabled {
+  cursor: not-allowed;
+}
+/* The "i" beside Camera, and the details it opens over what is under it. */
+.robot-info {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 3px;
 }
 #robot-info {
   width: 24px;
@@ -1797,41 +1861,88 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   padding: 0;
   border: 1px solid var(--line-2);
   border-radius: 50%;
-  background: var(--panel);
+  background: none;
   color: var(--ink-2);
-  font: bold 14px Georgia, serif;
+  font: italic 600 0.86rem/1 Georgia, "Times New Roman", serif;
   cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
+#robot-info:hover {
+  background: var(--bg-2);
+}
+#robot-info[aria-expanded="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--panel);
+}
+/* It begins right under the "i", so that a mouse gets from one to the other. */
 #robot-details {
   position: absolute;
   left: 0;
   right: 0;
-  z-index: 5;
-  padding: 12px;
+  margin-top: 24px;
+  z-index: 6;
+  max-height: min(70vh, 460px);
+  overflow-y: auto;
+  padding: 10px 12px 12px;
   border: 1px solid var(--line-2);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--panel);
   color: var(--ink);
-  box-shadow: 0 6px 18px #0003;
-  font-size: .85rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+  font-size: 0.82rem;
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
-#robot-details p { margin: 5px 0 0; }
-#robot-measures {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 4px 12px;
-  margin: 8px 0 0;
+#robot-details[hidden] {
+  display: none;
 }
-#robot-measures dt { color: var(--ink-2); }
-#robot-measures dd { margin: 0; font-variant-numeric: tabular-nums; }
-#robot-measures:empty, #robot-details p:empty, .robot-note:empty { display: none; }
+#robot-details::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
+}
+#robot-details h3 {
+  margin: 10px 0 3px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+#robot-details h3:first-child {
+  margin-top: 0;
+}
+#robot-details dl {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 14px;
+  margin: 0;
+}
+#robot-details dt {
+  color: var(--ink-2);
+}
+#robot-details dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+#robot-details p {
+  margin: 8px 0 0;
+  color: var(--ink-3);
+}
+#robot-details h3 + p {
+  margin-top: 0;
+  color: var(--ink-2);
+}
 .robot-body {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   height: clamp(76px, 13vh, 120px);
-  margin-top: 5px;
+  margin-top: 4px;
   gap: 10px;
 }
 /* The camera as the robot's photos take it: the middle square of the picture, not mirrored. */
@@ -1870,18 +1981,10 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   color: #fff;
   border-color: rgba(255, 255, 255, 0.6);
 }
-.robot-side {
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 /* The six photos, three by two, as large as the room beside the camera
-   lets them be in both directions: the line under the camera takes what it
-   needs to be read whole, and these and the camera make way for it. */
+   lets them be in both directions. */
 .robot-shots {
-  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   max-height: 124px;
   margin: 0;
@@ -1935,15 +2038,31 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   font: inherit;
   font-size: 0.82rem;
 }
+/* The robot's line, over Scan & solve: whole, on as many lines as it needs. */
+.robot-mode .robot-note:not(:empty) {
+  display: block;
+}
 .robot-note {
   margin: 0;
-  font-size: .82rem;
-  line-height: 1.4;
-  color: var(--danger);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  color: var(--ink-3);
   overflow-wrap: anywhere;
 }
-/* "Scanning…" on the line that says whether the cube can be solved: a line like the others. */
-.robot-mode .valid.wait {
+.robot-note.warn {
+  color: var(--danger);
+}
+/* The line that says whether the cube on screen can be solved is not about
+   the robot's cube: it is there only when a scan is not a cube, and then
+   whole (that a scan is going on is said beside Robot and over the cube). */
+.robot-mode .valid {
+  display: none;
+  height: auto;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+.robot-mode .valid.bad {
   display: block;
 }
 .button.danger {

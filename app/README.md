@@ -131,12 +131,42 @@ The robot is connected for the size of cube on the page, if it takes that
 size; another size chosen while it is connected and at rest connects it
 anew for that size.
 
-While a robot is connected, its panel shows the selected robot port and
-camera above the camera preview and six face photos. Choose another port
-to switch robots, or choose None / disconnect. The camera choice is
-remembered on this device. Hover over the info button beside Camera or
-activate it to see scan details. Escape or a second activation closes it.
-Errors appear in the panel or beside the main action.
+While a robot is connected, the scramble, paint and camera give way to
+the robot's panel, and Solve to Scan & solve (Stop while the robot moves).
+The panel, from the top:
+
+- **Robot**, with one word beside it for how the robot stands (Ready,
+  Scanning, Solving, No camera, No connection…), and under it a picker the
+  whole width of the panel: the robot held, as "MultiCuber ·
+  cu.usbmodem21301" or "Simulated MultiCuber", then every other port
+  `/api/robots` names with what the server knows of it ("checking" while it
+  is being asked, "not a robot", "busy": the last two cannot be picked),
+  and "None / disconnect". Picking a port disconnects the robot held and
+  connects that one; None leaves the page as it is without a robot, and the
+  robot let go is not connected again by itself until its cable has been
+  out (the Robot button connects it by hand). The ports are asked for when
+  the picker is come to, not all the time.
+- **Camera**, an "i" beside it, and the camera's picker (remembered on this
+  device). A picker shows the chosen name whole, on as many lines as it
+  needs: the browser's own select lies unseen over it, so the keyboard and
+  the list are the browser's.
+- The "i" opens the details: the robot (driver, port, cube, firmware), the
+  camera's picture size, how the last scan was read (faces found, the sizes
+  and times of the reading, the slowest photo grab, how long after the scan
+  the cube was ready), the last plan (moves, time to find it, solutions
+  compared) and the last thing the server or the robot said. A mouse over
+  it shows them, a click, a tap or Enter pins them or lets them go, Escape
+  or a click elsewhere closes them. None of these numbers is anywhere else
+  on the page.
+- The camera as the robot's photos take it (the middle square, not
+  mirrored, with the grid of 0.8 of its side) and the six photos of the
+  last scan.
+
+Over Scan & solve is the robot's line: what to do next, or what is wrong
+and needs doing (the camera not allowed, the server not answering), always
+whole. While the robot moves the pickers are locked, and say why on hover.
+Without a robot, or without a server that drives robots, nothing of this
+is on the page.
 
 Scan starts the robot and follows its events (`/api/robot/events`, long
 polls). At each `photo` the page grabs the frame of the moment, cuts out
@@ -153,9 +183,8 @@ of the robot. Otherwise the cube goes to `/api/robot/solve` with
 `analysis_ms`, the time from `scan-done` to the facelets. The cube on
 screen turns each move as the robot starts it, over its estimated time;
 the time left is the plan's, corrected by the ops as they finish; at the
-end the times of the run are shown (how the photos were read is in the
-Scan details and the title of Analysis). Scan is Stop while the robot
-moves.
+end the times of the run are shown (how the photos were read is behind
+the "i").
 
 How large a photo is read (`ReadPace`): the robot takes about a second
 from photo to photo, and that time goes to a larger picture. The sizes

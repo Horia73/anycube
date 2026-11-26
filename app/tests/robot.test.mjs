@@ -11,8 +11,8 @@ import { CameraFeed } from "../js/camera.js";
 import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 import {
-  assembleFaces, bindScanInfo, choosePort, robotChoices, Eta, frameSize, GRID_SHARE, gridCells, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
-  RobotWatch, rotateSquare, squareCrop,
+  assembleFaces, bindInfo, choosePort, Eta, frameSize, GRID_SHARE, gridCells, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
+  RobotWatch, robotChoices, rotateSquare, scanMeasures, squareCrop,
 } from "../js/robot.js";
 import { picture, quad, rng } from "./pictures.mjs";
 import { readPng, shrink } from "./png.mjs";
@@ -941,41 +941,111 @@ test("a board that goes by its name and is no robot is asked once, then left alo
   assert.equal(await watch.look(), "connected");
 });
 
-test("robot picker names the held port and describes available, busy and unrecognised boards", () => {
-  const drivers = [{ id: "multicuber", name: "MultiCuber", ports: ["/dev/ttyUSB1"] }];
-  const ports = [{ path: "sim", driver: "multicuber" }, { path: "/dev/no", driver: null }, { path: "/dev/held", busy: true }];
-  const choices = robotChoices({ drivers, ports }, { driver: "multicuber", port: "/dev/usbmodem21301" });
-  assert.deepEqual(choices.map(c => [c.text, c.driver]), [
-    ["MultiCuber · ttyUSB1 · checking", "multicuber"],
-    ["Simulated MultiCuber", "multicuber"], ["no · not a robot", undefined],
-    ["held · busy", undefined], ["MultiCuber · usbmodem21301", "multicuber"],
+test("the robot picker: the robot held, and every other port with what the server knows of it", () => {
+  const drivers = [{ id: "multicuber", name: "MultiCuber", ports: ["/dev/ttyUSB1", "/dev/ttyACM0", "/dev/ttyACM1"] }];
+  const ports = [
+    { path: "sim", driver: "multicuber", busy: false },
+    { path: "/dev/ttyACM0", driver: null, busy: false },
+    { path: "/dev/ttyACM1", busy: true },
+    { path: "/dev/ttyUSB1", busy: false },
+    { path: "/dev/cu.usbmodem21301", driver: "multicuber", busy: false },
+  ];
+  const choices = robotChoices({ drivers, ports }, { driver: "multicuber", port: "/dev/cu.usbmodem21301" });
+  assert.deepEqual(choices.map((c) => [c.text, c.driver, c.current]), [
+    ["MultiCuber · ttyUSB1 · checking", "multicuber", false],
+    ["ttyACM0 · not a robot", null, false],
+    ["ttyACM1 · busy", null, false],
+    ["Simulated MultiCuber", "multicuber", false],
+    ["MultiCuber · cu.usbmodem21301", "multicuber", true],
   ]);
+  // The simulated robot held: named as that, with no state of its own.
+  assert.equal(robotChoices({ drivers, ports }, { driver: "multicuber", port: "sim" }).find((c) => c.current).text, "Simulated MultiCuber");
 });
 
-test("scan details support hover, pinned clicks, outside dismissal and Escape", () => {
+test("the robot picker: a server that does not tell of its ports, and a robot held that it no longer lists", () => {
+  const drivers = [{ id: "multicuber", name: "MultiCuber", ports: ["/dev/ttyUSB1"] }];
+  // Nothing is being checked by a server that does not check: the port goes by its name.
+  assert.deepEqual(robotChoices({ drivers }, null).map((c) => [c.text, c.driver, c.state]), [["MultiCuber · ttyUSB1", "multicuber", ""]]);
+  // The robot held stays in the list, also when its port is not known.
+  assert.deepEqual(robotChoices({ drivers }, { driver: "multicuber", port: "/dev/gone" }).map((c) => [c.text, c.current]), [["MultiCuber · ttyUSB1", false], ["MultiCuber · gone", true]]);
+  assert.deepEqual(robotChoices({ drivers: [] }, { driver: "multicuber", port: "" }).map((c) => [c.path, c.text, c.current]), [["", "multicuber", true]]);
+  // Claimed by two robots and neither the one of last time: not to be picked blindly.
+  const two = [{ id: "a", name: "A", ports: ["/dev/x"] }, { id: "b", name: "B", ports: ["/dev/x"] }];
+  assert.equal(robotChoices({ drivers: two }, null)[0].driver, null);
+  assert.equal(robotChoices({ drivers: two }, null, { driver: "b", port: "/dev/x" })[0].text, "B · x");
+});
+
+test("the details of a scan: faces found, the sizes and times of the reading", () => {
+  const rows = scanMeasures({
+    sources: [{ found: true }, { found: true }, { found: false }, { found: true }, { found: true }, { found: true }],
+    sizes: [480, 720, 720, 720, 720, 320],
+    read_ms: [30.2, 61.7, 58.1, 60, 64.4, 14.6],
+    work_ms: 138,
+    grab_ms: 16.6,
+    analysis_ms: 0,
+  });
+  assert.deepEqual(rows, [
+    ["Faces found", "5 of 6"],
+    ["Photos read at", "320 to 720 px a side"],
+    ["Reading a face", "15 to 64 ms"],
+    ["Reading in all", "138 ms"],
+    ["Slowest photo grab", "17 ms"],
+    ["Ready after the scan", "0 ms"],
+  ]);
+  // A scan of which nothing was measured says what it can.
+  assert.deepEqual(scanMeasures({ sources: [] }), [["Faces found", "0 of 6"]]);
+});
+
+test("the info button: a mouse over it shows the details, a click or a tap pins them, Escape and anything else closes them", () => {
   const button = new EventTarget(), area = new EventTarget(), doc = new EventTarget();
   const details = { hidden: true };
+  let expanded = "false";
   button.parentElement = area;
-  button.setAttribute = (name, value) => assert.equal(value, String(!details.hidden));
-  area.contains = target => target === button;
-  bindScanInfo(button, details, doc);
+  button.setAttribute = (name, value) => {
+    assert.equal(name, "aria-expanded");
+    expanded = value;
+  };
+  area.contains = (target) => target === button || target === details;
+  const close = bindInfo(button, details, doc);
   const send = (target, type, props) => target.dispatchEvent(Object.assign(new Event(type), props));
+  const open = () => {
+    assert.equal(expanded, String(!details.hidden));
+    return !details.hidden;
+  };
+  // A finger coming down is no hover: only its tap opens, and the next one closes.
   send(area, "pointerenter", { pointerType: "touch" });
-  assert.ok(details.hidden);
+  assert.ok(!open());
+  send(button, "click");
+  assert.ok(open());
+  send(area, "pointerleave", { pointerType: "touch" });
+  assert.ok(open());
+  send(button, "click");
+  assert.ok(!open());
+  // A mouse: there while it is over the button or the details, gone when it leaves.
   send(area, "pointerenter", { pointerType: "mouse" });
-  assert.ok(!details.hidden);
-  send(area, "pointerleave");
-  assert.ok(details.hidden);
+  assert.ok(open());
+  send(area, "pointerleave", { pointerType: "mouse" });
+  assert.ok(!open());
+  // Clicked while hovering it stays when the mouse leaves; a second click lets it go.
+  send(area, "pointerenter", { pointerType: "mouse" });
   send(button, "click");
-  send(area, "pointerleave");
-  assert.ok(!details.hidden);
+  send(area, "pointerleave", { pointerType: "mouse" });
+  assert.ok(open());
   send(button, "click");
-  assert.ok(details.hidden);
+  assert.ok(!open());
+  // The keyboard's Enter is a click. Escape, a click elsewhere and the focus going elsewhere close it.
   for (const [type, props] of [["keydown", { key: "Escape" }], ["pointerdown"], ["focusin"]]) {
     send(button, "click");
+    assert.ok(open());
     send(doc, type, props);
-    assert.ok(details.hidden);
+    assert.ok(!open(), type);
   }
+  // Not what happens inside it, nor another key.
+  send(button, "click");
+  send(doc, "keydown", { key: "a" });
+  assert.ok(open());
+  close();
+  assert.ok(!open());
 });
 
 test("disconnecting during camera permission stops a late stream", async (t) => {
