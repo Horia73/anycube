@@ -1719,3 +1719,280 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
     gap: 5px;
   }
 }
+
+/* A robot connected (js/robot.js): its panel lies where the scramble, paint
+   and camera were, in exactly their place (those keep it, out of sight, so
+   that nothing under them moves), and Scan stands where Solve was. Without
+   a robot none of this is on the page. */
+.robot-panel,
+#robot-scan {
+  display: none;
+}
+.robot-mode .tabs,
+.robot-mode .panels {
+  visibility: hidden;
+}
+.robot-mode #mode-field,
+.robot-mode #solve {
+  display: none;
+}
+.robot-mode .robot-panel {
+  display: flex;
+}
+.robot-mode #robot-scan {
+  display: inline-flex;
+}
+.robot-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.robot-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* The robot's name, then its size and port: on a line of their own where they do not fit beside it. */
+.robot-name {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+}
+.robot-name i {
+  flex: none;
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.robot-name b {
+  font-weight: 650;
+}
+.robot-name span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font: 500 0.78rem/1.3 var(--mono);
+  color: var(--ink-3);
+}
+.robot-body {
+  flex: 1 1 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+}
+/* The camera as the robot's photos take it: the middle square of the picture, not mirrored. */
+.robot-cam {
+  position: relative;
+  height: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  display: grid;
+  place-items: center;
+}
+.robot-cam video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.robot-grid {
+  position: absolute;
+  inset: 10%;
+  display: grid;
+  grid-template-columns: repeat(var(--n, 3), 1fr);
+  border: 1.5px solid rgba(255, 255, 255, 0.8);
+  border-radius: 5px;
+  pointer-events: none;
+}
+.robot-grid i {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+}
+.robot-cam .button {
+  position: relative;
+  z-index: 1;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+.robot-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* The six photos, three by two, as large as the room beside the camera
+   lets them be in both directions: the line under the camera takes what it
+   needs to be read whole, and these and the camera make way for it. */
+.robot-shots {
+  flex: 1 1 0;
+  min-height: 0;
+  max-height: 124px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  container-type: size;
+  display: grid;
+  grid-template-columns: repeat(3, max-content);
+  align-content: start;
+  gap: 5px;
+}
+.robot-shots li {
+  position: relative;
+  width: min((100cqw - 10px) / 3, (100cqh - 5px) / 2, 62px);
+  aspect-ratio: 1;
+  border: 1px dashed var(--line-2);
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--bg-2);
+}
+.robot-shots li.taken {
+  border-style: solid;
+}
+.robot-shots canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  visibility: hidden;
+}
+.robot-shots li.taken canvas {
+  visibility: visible;
+}
+.robot-shots span {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  font: 600 0.68rem/1.4 var(--mono);
+  color: var(--ink-2);
+}
+.robot-camera select,
+.robot-fields select {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+}
+.robot-camera select[hidden] {
+  display: none;
+}
+/* The robot's line: always whole, on as many lines as it needs. */
+.robot-note {
+  flex: none;
+  margin: 0;
+  min-height: 1.35em;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.robot-note.warn {
+  color: var(--danger);
+}
+.button.danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--danger-bg);
+}
+.button.danger:hover:not(:disabled) {
+  background: var(--danger);
+  filter: brightness(1.08);
+}
+.robot-fields {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0 6px;
+}
+.robot-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.86rem;
+  color: var(--ink-2);
+}
+.robot-fields .robot-auto {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.robot-auto input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.robot-dialog #robot-dialog-status {
+  overflow-wrap: anywhere;
+}
+/* The button by the cube while a robot is being connected, and when one did not connect. */
+#robot-open.busy svg {
+  animation: pulse 1.2s infinite ease-in-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  #robot-open.busy svg {
+    animation: none;
+  }
+}
+#robot-open.trouble {
+  color: var(--danger);
+}
+.robot-dialog #robot-dialog-status:empty {
+  display: none;
+}
+.robot-dialog form .quiet {
+  margin-right: auto;
+}
+/* The times of a run, under the line that says it is done. */
+.robot-times {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(5, auto);
+  gap: 2px 14px;
+  margin: 6px 0 0;
+}
+.robot-times div {
+  display: grid;
+  gap: 1px;
+}
+.robot-times dt {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.robot-times dd {
+  margin: 0;
+  font: 600 0.86rem/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.robot-times div:last-child dd {
+  color: var(--ok);
+}
+@media (max-width: 759px) {
+  .robot-panel {
+    left: 8px;
+    right: 8px;
+  }
+  .robot-times {
+    grid-template-columns: repeat(3, auto);
+  }
+}

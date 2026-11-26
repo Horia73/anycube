@@ -104,6 +104,90 @@ host is written in these files.
   the cube fits together only one way, and two stickers the sorting was
   unsure of are exchanged when that is what makes a cube.
 - `paint.js`: the colours to paint with and the cube unfolded.
+- `robot.js`: a cube robot driven from the page, mounted only when the
+  server's `/api/config` says `robots: true` (the contract is
+  `robots-spec/API.md`). See below.
+
+## A robot
+
+When the server drives robots, a Robot button sits by the cube, and the
+page watches for a robot: while none is connected it asks `/api/robots`
+every 2 seconds and connects the one that is plugged in, without the
+dialog. Which that is, the server says port by port when it identifies its
+boards (`ports`: a port with a `driver` is that robot; one that answered
+as no robot, or is in use, is left alone); a server that only names its
+ports has the port connected that one driver claims, or the driver of last
+time. The robot connected last is remembered on this device. A robot that
+does not connect is tried again after 4, 8, 16 and 32 seconds, then left
+until it is plugged in anew. When the server says the robot is gone (a
+`disconnected` event, or `connected: null` when the page asks after an
+error), the page is as it is without one and watches again. A robot
+disconnected by hand stays so until its cable has been out and in, or
+Connect is pressed. The dialog chooses driver and port by hand and
+switches the connecting by itself off; a robot the server already holds
+is taken up in any case (the page was reloaded).
+
+The robot is connected for the size of cube on the page, if it takes that
+size; another size chosen while it is connected and at rest connects it
+anew for that size.
+
+While a robot is connected, the scramble, paint and camera give way to
+the robot's panel: the camera as the robot's photos take it (the middle
+square, not mirrored, with the grid of 0.8 of its side), the six photos of
+the last scan, the camera to use (remembered on this device), and one line
+of what the robot or the page has to say, always whole: the camera and the
+photos make way for it. Solve gives way to Scan. Everything else is as it
+was. Without a robot, or without a server that drives robots, nothing of
+it is on the page.
+
+Scan starts the robot and follows its events (`/api/robot/events`, long
+polls). At each `photo` the page grabs the frame of the moment, cuts out
+its centred square, turns it as the event says, and answers `photo-taken`
+at once. The face is read afterwards, while the robot moves on:
+`detect.js`, or a centred grid of 0.8 of the side when no face is found,
+then `colour.js` and `scan-fit.js`, as MultiCuber's `anycube_scan.mjs`
+does. The six faces fill in on the cube as they are read. A scan that
+makes no cube is shown as the camera's would be, and nothing more is asked
+of the robot. Otherwise the cube goes to `/api/robot/solve` with
+`analysis_ms`, the time from `scan-done` to the facelets. The cube on
+screen turns each move as the robot starts it, over its estimated time;
+the time left is the plan's, corrected by the ops as they finish; at the
+end the times of the run are shown (how the photos were read is in the
+title of Analysis and of the robot's line). Scan is Stop while the robot
+moves.
+
+How large a photo is read (`ReadPace`): the robot takes about a second
+from photo to photo, and that time goes to a larger picture. The sizes
+are 240, 320, 360, 400, 480, 560, 640 and 720 pixels a side (from 360 for
+a 6x6x6 and up; 720 is the square of the 1280 by 720 the camera is asked
+for). Each photo is read at the largest size that takes no more than half
+the time to the next photo: what a size costs is measured on every
+reading (the machine's rate, a slower reading counting at once; the cost
+of a size goes as its side to the power 1.5), and the time to the next
+photo is the server's `next_ms` if it gives one, else the
+shortest seen between two photos, 800 ms before any was seen. The very
+first photo after the page is opened is read at 480, since nothing is
+measured yet. The last photo of a scan has only `scan-done` behind it, so
+it is read at the largest size that takes 25 ms: that and the assembly
+are all of `analysis_ms`.
+
+Measured in headless Chromium (software rendering, a machine busy with
+other work) on a 1280 by 720 video of the robot's own pictures of a 4x4x4
+(MultiCuber's `CubeScan`) and of drawn pictures of a 3x3x3, median of 18
+readings: a face in 13, 21, 42, 60 and 73 ms at 240, 320, 480, 640 and 720
+pixels (9 and 65 ms at best at 240 and 720), every face found at every
+size. Grabbing the frame, which is what the robot waits for, takes the
+same at every size (the video frame is what costs, not the square cut
+from it): 7 to 15 ms there, without a graphics card. Putting the six faces together: 2 to 5 ms for a 3x3x3, 6 to 14 ms
+for a 4x4x4. With the robot a second from photo to photo, every face but
+the last is read at 720 in about 70 ms, the last at 320 in about 20 ms.
+The first reading in a page is several times slower, so the page reads
+once when a robot is connected.
+
+`node app/tests/robot-mock-server.mjs` serves the page with a mock robot
+behind a mock server (`tests/robot-mock.mjs`, the same one the tests run
+against); `--unplugged` starts with the cable out, `/mock/plug` and
+`/mock/unplug` are the cable.
 
 ## Limits
 
@@ -126,6 +210,10 @@ cargo build --release -p anycube-wasm --target wasm32-unknown-unknown
 ```bash
 node --test app/tests/*.test.mjs
 ```
+
+`robot.test.mjs` reads MultiCuber's `CubeScan` pictures when that
+repository is beside this one (or at `$MULTICUBER_CUBESCAN`) and skips
+those cases otherwise.
 
 The Node tests that compare the page's model with the solver's need the
 WebAssembly build and skip without it; `cargo test --test wasm_native` runs
