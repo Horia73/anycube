@@ -310,7 +310,7 @@ export class RobotApi {
     return answer;
   }
 
-  robots() { return this.#request("GET", "/api/robots"); }
+  robots(probe = true) { return this.#request("GET", probe ? "/api/robots" : "/api/robots?probe=0"); }
   connect(driver, port, size) {
     return this.#request("POST", "/api/robot/connect", { driver, ...(port ? { port } : {}), ...(Number.isInteger(size) ? { size } : {}) });
   }
@@ -448,9 +448,11 @@ export class RobotWatch {
   }
 
   /** Forgets what was held back or given up (the choice was made by hand). */
-  release() {
-    this.held.clear();
-    this.failed.clear();
+  release(driver, port) {
+    for (const key of [pair(driver, port), pair(driver, ANY)]) {
+      this.held.delete(key);
+      this.failed.delete(key);
+    }
   }
 
   /** One look at the server, one at a time. Says what came of it. */
@@ -850,23 +852,121 @@ export const portName = (port) => String(port ?? "").replace(/^\/dev\//, "");
 
 const ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5M9.5 13.5v.5M14.5 13.5v.5M2 12.5v3M22 12.5v3"/></svg>';
 
+/**
+ * The robot picker's choices from the server's /api/robots: every port it
+ * names, in its order, and the port held now (`active`, `{driver, port}`)
+ * even if the server no longer lists it. Each is `{path, driver, state,
+ * text, current}`: `driver` is the robot the port would be connected as
+ * (none: it cannot be picked), `state` what stands in the way or is still
+ * open ("busy", "not a robot", "checking"), `text` what the picker shows,
+ * as "MultiCuber · cu.usbmodem21301" or "Simulated MultiCuber".
+ */
+export function robotChoices(answer, active = null, last = null) {
+  const drivers = Array.isArray(answer?.drivers) ? answer.drivers.filter((d) => d && typeof d.id === "string") : [];
+  const said = new Map((Array.isArray(answer?.ports) ? answer.ports : []).filter((p) => typeof p?.path === "string").map((p) => [p.path, p]));
+  const paths = [...portsListed(answer)];
+  if (active && !paths.includes(active.port ?? "")) paths.push(active.port ?? "");
+  return paths.map((path) => {
+    const p = said.get(path);
+    const current = !!active && path === (active.port ?? "");
+    const driver = current ? active.driver : (choosePort(answer, last, (_, port) => port !== path)?.driver ?? null);
+    // Only a server that tells of its ports one by one can be still asking one.
+    const state = current ? "" : p?.busy ? "busy" : p && p.driver === null ? "not a robot" : p && !("driver" in p) ? "checking" : "";
+    const label = drivers.find((d) => d.id === driver)?.name ?? driver;
+    const name = path === "sim" && label ? `Simulated ${label}` : [label, portName(path)].filter(Boolean).join(" · ") || "Robot";
+    return { path, driver, state, current, text: [name, state].filter(Boolean).join(" · ") };
+  });
+}
+
+/**
+ * How the photos of a scan were read, as the details list it: rows of
+ * `[label, value]` from what RobotRun's `onscanned` gives.
+ */
+export function scanMeasures(result) {
+  const found = (result.sources ?? []).filter((s) => s?.found).length;
+  const rows = [["Faces found", `${found} of ${SIDES}`]];
+  const sizes = (result.sizes ?? []).filter(Boolean);
+  const times = (result.read_ms ?? []).filter((ms) => ms !== null).map(Math.round);
+  const span = (list, unit) => (Math.min(...list) === Math.max(...list) ? `${list[0]} ${unit}` : `${Math.min(...list)} to ${Math.max(...list)} ${unit}`);
+  if (sizes.length) rows.push(["Photos read at", `${span(sizes, "px")} a side`]);
+  if (times.length) rows.push(["Reading a face", span(times, "ms")]);
+  if (Number.isFinite(result.work_ms)) rows.push(["Reading in all", duration(result.work_ms)]);
+  if (Number.isFinite(result.grab_ms)) rows.push(["Slowest photo grab", duration(result.grab_ms)]);
+  if (Number.isFinite(result.analysis_ms)) rows.push(["Ready after the scan", duration(result.analysis_ms)]);
+  return rows;
+}
+
+/**
+ * The "i" and what it opens: shown while a mouse is over either, and
+ * pinned or let go by a click, a tap or the keyboard; Escape, and a click
+ * or the focus going anywhere else, close it. Returns what closes it.
+ */
+export function bindInfo(button, details, doc) {
+  let pinned = false;
+  const area = button.parentElement;
+  function show(open) {
+    details.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    if (!open) pinned = false;
+  }
+  area.addEventListener("pointerenter", (e) => {
+    if (e.pointerType === "mouse") show(true);
+  });
+  area.addEventListener("pointerleave", (e) => {
+    if (e.pointerType === "mouse" && !pinned) show(false);
+  });
+  button.addEventListener("click", () => {
+    // A mouse that opened it by coming near pins it with its first click.
+    const open = !pinned;
+    pinned = open;
+    show(open);
+  });
+  doc.addEventListener("pointerdown", (e) => {
+    if (!area.contains(e.target)) show(false);
+  });
+  doc.addEventListener("focusin", (e) => {
+    if (!area.contains(e.target)) show(false);
+  });
+  doc.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || details.hidden) return;
+    show(false);
+    // The dialog or whatever else listens for Escape is not closed with it.
+    e.stopPropagation?.();
+  });
+  return () => show(false);
+}
+
+// Each picker is the browser's own select, with its keyboard and its list,
+// laid unseen over the chosen name: a select shows its name on one line and
+// cuts it, the name under it wraps and is whole.
 const PANEL = `
-  <div class="robot-head">
-    <p class="robot-name"><i aria-hidden="true"></i><b id="robot-name"></b><span id="robot-where"></span></p>
-    <button type="button" class="button quiet small" id="robot-disconnect">Disconnect</button>
+  <div class="robot-row">
+    <label for="robot-device">Robot</label>
+    <span class="robot-state" id="robot-state" role="status"></span>
+  </div>
+  <div class="robot-choice">
+    <span aria-hidden="true" id="robot-device-name"></span>
+    <select id="robot-device"></select>
+  </div>
+  <div class="robot-row">
+    <label for="robot-camera">Camera</label>
+    <div class="robot-info">
+      <button type="button" id="robot-info" aria-label="Robot and scan details" aria-controls="robot-details" aria-expanded="false">i</button>
+      <section id="robot-details" aria-label="Robot and scan details" hidden></section>
+    </div>
+  </div>
+  <div class="robot-choice">
+    <span aria-hidden="true" id="robot-camera-name">Default camera</span>
+    <select id="robot-camera"><option>Default camera</option></select>
   </div>
   <div class="robot-body">
     <div class="robot-cam" id="robot-cam">
-      <video playsinline muted autoplay></video>
+      <video playsinline muted autoplay aria-label="What the camera sees"></video>
       <div class="robot-grid" aria-hidden="true"></div>
       <button type="button" class="button small" id="robot-camera-start" hidden>Start the camera</button>
     </div>
-    <div class="robot-side">
-      <ol class="robot-shots" id="robot-shots" aria-label="Photos of this scan"></ol>
-      <label class="robot-camera"><span class="sr">Camera</span><select id="robot-camera" title="The camera that sees the cube"></select></label>
-    </div>
-  </div>
-  <p class="robot-note" id="robot-note" role="status"></p>`;
+    <ol class="robot-shots" id="robot-shots" aria-label="Photos of this scan"></ol>
+  </div>`;
 
 const DIALOG = `
   <h2 id="robot-title">Robot</h2>
@@ -881,6 +981,9 @@ const DIALOG = `
     <button class="button">Close</button>
     <button type="button" class="button primary" id="robot-connect">Connect</button>
   </form>`;
+
+const SCAN = "Scan & solve";
+const HINT = "Put a cube in the robot, then press Scan & solve.";
 
 /** Milliseconds as people read them: 840 ms, 12.4 s, 1:05. */
 export function duration(ms) {
@@ -947,38 +1050,24 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   panel.innerHTML = PANEL;
   root.querySelector(".panels").after(panel);
 
-  // The panel lies over the tabs and what they open, which keep their place.
-  const tabs = root.querySelector(".tabs");
-  const panels = root.querySelector(".panels");
-  const place = () => {
-    if (!tabs.offsetParent) return;
-    panel.style.top = `${tabs.offsetTop}px`;
-    panel.style.height = `${panels.offsetTop + panels.offsetHeight - tabs.offsetTop}px`;
-  };
-  new ResizeObserver(place).observe(root.querySelector(".panel"));
-
-  const scanButton = el("button", { type: "button", class: "button primary large", id: "robot-scan", text: "Scan" });
+  const scanButton = el("button", { type: "button", class: "button primary large", id: "robot-scan", text: SCAN });
   $("solve").after(scanButton);
+  // The robot's line, over the button it is about: what to do next, or what is wrong.
+  const note = el("p", { class: "robot-note", id: "robot-note", role: "status", "aria-live": "polite" });
+  $("valid").before(note);
 
   const video = panel.querySelector("video");
   video.muted = true;
   const feed = new CameraFeed(video);
+  let openingCamera = false;
   const scratch = document.createElement("canvas");
   const thumb = document.createElement("canvas");
-  const note = $("robot-note");
-  // The line under the camera: short enough to be read whole (`more` is for whoever asks, on hover).
-  const short = (text) => (text.length > 140 ? `${text.slice(0, 139)}…` : text);
-  const say = (text, warn = false, more = "") => {
-    const whole = String(text ?? "");
-    note.textContent = short(whole);
-    note.title = whole.length > 140 ? whole : more;
+  const closeInfo = bindInfo($("robot-info"), $("robot-details"), document);
+  // The robot's line: a hint in a few words, or (`warn`) something that needs doing. Always whole.
+  const say = (text, warn = false) => {
+    delete note.dataset.source;
+    note.textContent = text;
     note.classList.toggle("warn", warn);
-  };
-  // What the server logs goes after what the page said, not in its place.
-  const log = (text) => {
-    note.querySelector("span")?.remove();
-    const said = note.textContent;
-    note.append(el("span", { class: "robot-log", text: short(said ? ` · ${text}` : text), title: text }));
   };
 
   let drivers = [];
@@ -995,7 +1084,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   let eta = null;
   let ticker = 0;
   let scanEnd = null; // when the scan is expected to be over (the page's clock)
-  let reading = ""; // how the last scan's photos were read, for the times at the end
+  let measures = []; // how the last scan's photos were read, for the details
+  let planned = []; // the last plan, likewise
+  let logged = ""; // the last thing the server or the robot had to say
+  let linked = true; // the server's events are reaching the page
+  let switching = false;
   let sizing = false; // the robot is being set to another size of cube
   let gone = false; // the cube's line says the robot is no longer connected
   // What reading costs on this machine, kept from one robot and scan to the next.
@@ -1031,7 +1124,12 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     drivers = Array.isArray(answer.drivers) ? answer.drivers.filter((d) => d && typeof d.id === "string") : [];
     ports = new Map((Array.isArray(answer.ports) ? answer.ports : []).filter((p) => typeof p?.path === "string").map((p) => [p.path, p]));
     const now = JSON.stringify([answer.drivers ?? null, answer.ports ?? null]);
-    if (now === listed || connected) return;
+    if (connected) {
+      if (now !== listed) showWhere();
+      listed = now;
+      return;
+    }
+    if (now === listed) return;
     if (listed) trouble = ""; // something was plugged in or out since
     listed = now;
     const was = [$("robot-driver").value, $("robot-port").value];
@@ -1051,11 +1149,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const connect = $("robot-connect");
     connect.textContent = on ? "Disconnect" : busy ? "Connecting…" : "Connect";
     connect.classList.toggle("primary", !on);
-    connect.disabled = on ? !!robot?.busy : busy || !drivers.length;
+    connect.disabled = switching || sizing || (on ? !!robot?.busy : busy || !drivers.length);
+    connect.title = connect.disabled ? locked() || (busy ? "Connecting to the robot…" : "This server has no robot drivers.") : "";
     if (on) {
       $("robot-driver").replaceChildren(el("option", { text: driverName(connected.driver) }));
       $("robot-port").replaceChildren(el("option", { text: portName(connected.port) || "–" }));
-      listed = "";
     }
     const watching = memory.auto && !on;
     $("robot-dialog-status").textContent =
@@ -1135,6 +1233,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     if (connecting) return;
     const driver = $("robot-driver").value;
     const port = $("robot-port").value || undefined;
+    await connectManually(driver, port);
+  });
+
+  async function connectManually(driver, port) {
     // The choice is made by hand: the watching stands back until it is settled.
     watch.stop();
     await watch.looking;
@@ -1146,48 +1248,72 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       const answer = await api.connect(driver, port, sizeFor(driver));
       connecting = null;
       memory.last = { driver, port: answer.port ?? port };
-      watch.release();
-      dialog.close();
+      watch.release(driver, answer.port ?? port);
+      if (dialog.open) dialog.close();
       await enter({ driver, port: answer.port ?? port ?? "", size: answer.size, info: answer.info ?? {} });
     } catch (error) {
       connecting = null;
-      trouble = `Not connected: ${error.message}`;
+      trouble = `${driverName(driver)}${port ? ` on ${portName(port)}` : ""} did not connect: ${error.message}`;
+      // The panel stayed for the robot that was to come: it goes now.
+      if (root.classList.contains("robot-mode")) host.setMode(false);
+      if (!dialog.open) host.say("bad", [el("b", { text: "Not connected. " }), trouble], "Choose a robot with the Robot button.");
       showDialog();
       // Not tried again at once behind the dialog's back.
       watch.missed(driver, port);
       if (memory.auto) watch.start();
     }
-  });
+  }
 
   // ------------------------------------------------------------ camera
 
   async function openCamera(deviceId = recall(CAMERA_CHOICE)) {
+    if (openingCamera) return false;
+    const session = robot;
+    openingCamera = true;
+    setButtons();
+    try {
+      return await startCamera(deviceId, session);
+    } finally {
+      if (robot === session) {
+        openingCamera = false;
+        setButtons();
+      }
+    }
+  }
+
+  async function startCamera(deviceId, session) {
     const start = $("robot-camera-start");
     try {
       try {
         await feed.open(deviceId ? { deviceId: { exact: deviceId } } : undefined);
       } catch (error) {
         // The camera remembered is not there today (the phone is away): any other.
-        if (!deviceId || !["OverconstrainedError", "NotFoundError", "NotReadableError"].includes(error.name)) throw error;
+        if (session !== robot || !deviceId || !["OverconstrainedError", "NotFoundError", "NotReadableError"].includes(error.name)) throw error;
         await feed.open();
       }
     } catch (error) {
+      if (session !== robot) return false;
       start.hidden = false;
       say(error.name === "NotAllowedError" ? "The camera is not allowed for this page. Allow it, then start it." : "The camera could not be started.", true);
+      note.dataset.source = "camera";
       return false;
     }
+    if (session !== robot) return false;
     start.hidden = true;
     const select = $("robot-camera");
     select.replaceChildren(...feed.cameras.map((c, k) => el("option", { value: c.deviceId, text: c.label || `Camera ${k + 1}` })));
-    select.value = feed.deviceId ?? "";
+    select.value = feed.deviceId ?? deviceId ?? "";
     if (select.selectedIndex < 0) select.selectedIndex = 0;
-    select.hidden = feed.cameras.length < 2;
-    if (note.classList.contains("warn")) say("");
+    if (!select.options.length) select.add(new Option("Default camera", ""));
+    showChosen(select);
+    if (note.dataset.source === "camera") say(HINT);
+    showDetails();
     return true;
   }
 
   $("robot-camera").addEventListener("change", async (e) => {
     const id = e.target.value;
+    showChosen(e.target);
     if (await openCamera(id)) remember(CAMERA_CHOICE, feed.deviceId ?? id);
   });
   $("robot-camera-start").addEventListener("click", () => openCamera());
@@ -1201,6 +1327,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   // ------------------------------------------------------------ shots
 
   function clearShots() {
+    measures = [];
+    planned = [];
+    showDetails();
     $("robot-shots").replaceChildren(
       ...[..."URFDLB"].map((f) => el("li", { "data-face": f, title: `${f}: not taken yet` }, [el("canvas", { width: "56", height: "56" }), el("span", { text: f })])),
     );
@@ -1220,14 +1349,47 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   // ------------------------------------------------------------ status
 
+  // Why the robot's choices cannot be changed just now ("" when they can).
+  const locked = () =>
+    robot?.busy ? "Not while the robot is moving: stop it first." : sizing ? "The robot is being set to the cube's size…" : switching ? "Changing robots…" : openingCamera ? "The camera is being started…" : "";
+
+  // The word beside "Robot": how the robot chosen stands, at a glance.
+  function showState() {
+    const phase = robot?.phase;
+    const [word, kind] = !linked
+      ? ["No connection", "warn"]
+      : switching
+        ? ["Connecting…", "busy"]
+        : sizing
+          ? ["Setting size…", "busy"]
+          : phase === "starting" || phase === "scanning"
+            ? ["Scanning", "busy"]
+            : phase === "solving"
+              ? ["Solving", "busy"]
+              : openingCamera
+                ? ["Starting camera…", "busy"]
+                : !feed.running
+                  ? ["No camera", "warn"]
+                  : ["Ready", "ok"];
+    $("robot-state").textContent = word;
+    $("robot-state").dataset.kind = kind;
+  }
+
   function setButtons() {
     const busy = !!robot?.busy;
-    scanButton.textContent = busy ? "Stop" : "Scan";
+    const reason = locked();
+    scanButton.textContent = busy ? "Stop" : SCAN;
     scanButton.classList.toggle("primary", !busy);
     scanButton.classList.toggle("danger", busy);
-    scanButton.title = busy ? "Stop the robot at once" : "Scan the cube in the robot, then solve it";
-    scanButton.disabled = !robot || sizing;
-    $("robot-disconnect").disabled = busy;
+    scanButton.disabled = !robot || sizing || switching || openingCamera;
+    scanButton.title = busy ? "Stop the robot at once: its motors are switched off" : scanButton.disabled ? reason : "The robot shows the camera the six faces, then solves the cube";
+    $("robot-device").disabled = busy || sizing || switching;
+    $("robot-camera").disabled = !!reason;
+    $("robot-camera-start").disabled = openingCamera;
+    // Why a picker does not open is said where the pointer is, and to a screen reader.
+    for (const id of ["robot-device", "robot-camera"]) $(id).title = $(id).disabled ? reason : "";
+    showState();
+    if (dialog.open) showDialog();
   }
 
   function stopTicker() {
@@ -1269,20 +1431,12 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       stopTicker();
       host.wait(null);
       const { ok, note: said } = host.scanned(result, result.sources, lastFace);
-      const found = result.sources.filter((s) => s?.found).length;
-      const read = `${found} of 6 faces found`;
-      // How the photos were read: said in full to whoever asks, and with the times at the end.
-      const sizes = result.sizes.filter(Boolean);
-      const times = result.read_ms.filter((ms) => ms !== null);
-      const span = (list, unit) => (Math.min(...list) === Math.max(...list) ? `${list[0]} ${unit}` : `${Math.min(...list)} to ${Math.max(...list)} ${unit}`);
-      reading = sizes.length
-        ? `The six photos were read at ${span(sizes, "pixels")} a side (the last at ${sizes.at(-1)}), a face in ${span(times.map(Math.round), "ms")}, ${duration(result.work_ms)} in all while the robot moved. The cube was ready ${duration(result.analysis_ms)} after the scan; each photo was grabbed within ${duration(result.grab_ms)}.`
-        : "";
+      // How the photos were read is for whoever asks: behind the "i".
+      measures = [...scanMeasures(result), ["Cube", result.ok ? "read whole" : "not made"]];
+      showDetails();
       if (ok && result.ok) {
-        say(read, false, reading);
         host.say("busy", "Finding the robot's fastest solution…");
       } else {
-        say(read, true, reading);
         const twice = result.repeated?.[0];
         if (twice) {
           // The likeliest cause of all, said first.
@@ -1290,14 +1444,21 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
           host.say("bad", [el("b", { text: `The photos of ${a} and ${b} are the same picture. ` }), "The camera was still showing one face when the robot asked for the next: the robot has to wait longer before each photo."], "Nothing more was asked of the robot.");
           return;
         }
-        host.say("bad", [el("b", { text: "The scan did not make a cube. " }), said], "Nothing more was asked of the robot: press Scan to try again.");
+        host.say("bad", [el("b", { text: "The scan did not make a cube. " }), said], `Nothing more was asked of the robot: press ${SCAN} to try again.`);
       }
     },
     onplan(plan) {
       following = host.plan(plan.moves ?? []);
       eta = new Eta(plan, performance.now());
       const left = el("b");
-      const more = `${host.count(plan.moves?.length ?? 0, "move")} · found in ${duration(plan.compute_ms)}${plan.candidates ? ` among ${plan.candidates}` : ""}${following ? "" : " · the page could not follow these moves on its cube"}`;
+      const more = following ? "" : "The page could not follow these moves on its cube.";
+      planned = [
+        ["Moves", String(plan.moves?.length ?? 0)],
+        ["Planned in", duration(plan.compute_ms)],
+        ...(plan.candidates ? [["Solutions compared", String(plan.candidates)]] : []),
+        ["Expected", duration(plan.eta_ms)],
+      ];
+      showDetails();
       const tick = () => {
         left.textContent = duration(eta.left(performance.now()));
       };
@@ -1317,7 +1478,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       const t = event.times ?? {};
       const times = el("dl", { class: "robot-times" }, [
         ["Scan", t.scan_ms, "The robot showing the camera the six faces."],
-        ["Analysis", t.analysis_ms, `From the end of the scan to the cube being read. ${reading}`.trim()],
+        ["Analysis", t.analysis_ms, "From the end of the scan to the cube being read."],
         ["Compute", t.compute_ms, "Finding the robot's fastest solution."],
         ["Execution", t.exec_ms, "The robot turning the cube."],
         ["Total", t.total_ms, "From Scan to solved."],
@@ -1331,10 +1492,16 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       host.player.onchange();
       const stopped = error.code === "stopped";
       const message = error.message || error.code;
+      // The server's own "Stopped: …" is not said twice.
+      const after = message.trim().replace(/^stopped\b[\s:.]*/i, "");
       const text = stopped
-        ? [el("b", { text: "Stopped. " }), /^stopped\.?$/i.test(message.trim()) ? "The motors are off." : message]
+        ? [el("b", { text: "Stopped. " }), after ? after[0].toUpperCase() + after.slice(1) : "The motors are off."]
         : [el("b", { text: "The robot stopped. " }), message];
-      host.say("bad", text, stopped ? "Put the robot back in its rest position before the next scan." : `(${error.code})`, null, true);
+      host.say("bad", text, stopped ? "Put the robot back in its rest position before the next scan." : "", null, true);
+      if (!stopped) {
+        logged = `${message} (${error.code})`;
+        showDetails();
+      }
       setButtons();
       // Whatever went wrong, the robot may be gone with it.
       if (!stopped) void checkStill(message);
@@ -1343,10 +1510,14 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       lost(event.message);
     },
     onlog(text) {
-      if (text) log(text);
+      if (!text) return;
+      logged = text;
+      showDetails();
     },
     onlink(ok) {
+      linked = ok;
       say(ok ? "" : "No answer from the anycube server. Trying again…", !ok);
+      showState();
       // A server that was away may have come back without the robot.
       if (ok) void checkStill();
     },
@@ -1360,7 +1531,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       setButtons();
       return;
     }
+    const session = robot;
     if (!feed.running && !(await openCamera())) return;
+    if (robot !== session) return;
+    closeInfo();
     const n = connected.size;
     host.setSize(n);
     robot.n = n;
@@ -1375,11 +1549,86 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   // ------------------------------------------------------------ connected
 
-  function showWhere() {
-    $("robot-name").textContent = driverName(connected.driver);
-    $("robot-where").textContent = [Number.isInteger(connected.size) ? host.name(connected.size) : "", portName(connected.port)].filter(Boolean).join(" · ");
-    $("robot-where").title = connected.port ?? "";
+  // The name of what a picker has chosen, whole, under the select itself.
+  function showChosen(select) {
+    $(`${select.id}-name`).textContent = select.selectedOptions[0]?.textContent ?? "";
   }
+
+  // The robot's picker: the robot held, the other ports with what is known of them, and none.
+  function showWhere() {
+    const select = $("robot-device");
+    const choices = robotChoices({ drivers, ports: [...ports.values()] }, connected, memory.last);
+    select.replaceChildren(
+      ...choices.map((choice) => {
+        const option = new Option(choice.text, choice.path, choice.current, choice.current);
+        option.disabled = !choice.current && (!choice.driver || choice.state === "busy");
+        option.dataset.driver = choice.driver ?? "";
+        return option;
+      }),
+      Object.assign(new Option("None / disconnect", ""), { id: "robot-none" }),
+    );
+    showChosen(select);
+    showDetails();
+  }
+
+  // What the "i" opens: the robot and the camera as they are, and how the last scan and solve went.
+  function showDetails() {
+    if (!connected) return;
+    const firmware = connected.info?.fw ?? connected.info?.firmware ?? connected.info?.version;
+    const groups = [
+      ["Robot", [
+        ["Driver", driverName(connected.driver)],
+        ["Port", connected.port || "–"],
+        ["Cube", Number.isInteger(connected.size) ? host.name(connected.size) : "–"],
+        ...(firmware ? [["Firmware", String(firmware)]] : []),
+      ]],
+      ["Camera", [["Picture", video.videoWidth ? `${video.videoWidth} × ${video.videoHeight}` : "not started"]]],
+      ["Last scan", measures],
+      ["Last solve", planned],
+    ];
+    $("robot-details").replaceChildren(
+      ...groups.flatMap(([title, rows]) =>
+        rows.length ? [el("h3", { text: title }), el("dl", {}, rows.flatMap(([label, value]) => [el("dt", { text: label }), el("dd", { text: value })]))] : [],
+      ),
+      ...(measures.length ? [] : [el("p", { text: "How the photos were read and the solution was found is listed here after a scan." })]),
+      ...(logged ? [el("h3", { text: "Last message" }), el("p", { text: logged })] : []),
+    );
+  }
+
+  // The ports are asked for when the picker is come to (the server is not
+  // asked by itself while a robot is connected). With the watching switched
+  // off the server only says what it knows, and wakes no board.
+  async function refreshDevices() {
+    const was = connected;
+    if (!was || switching || robot?.busy) return;
+    try {
+      const answer = await api.robots(memory.auto);
+      if (connected === was && !switching && !robot?.busy) showList(answer);
+    } catch {
+      // The picker keeps what it had; a server that is away says so on its own line.
+    }
+  }
+  const devices = $("robot-device");
+  devices.addEventListener("focus", refreshDevices);
+  devices.addEventListener("pointerenter", refreshDevices);
+  devices.addEventListener("change", async () => {
+    if (switching || robot?.busy || sizing) return showWhere();
+    const chosen = devices.selectedOptions[0];
+    const none = chosen?.id === "robot-none";
+    const [driver, port] = [chosen?.dataset.driver, devices.value];
+    if (!none && (!driver || (port || "") === (connected?.port ?? ""))) return showWhere();
+    showChosen(devices);
+    switching = true;
+    setButtons();
+    try {
+      // To another robot the panel stays; to none the page is as it is without one.
+      if (!(await disconnect(none))) return showWhere();
+      if (!none) await connectManually(driver, port || undefined);
+    } finally {
+      switching = false;
+      setButtons();
+    }
+  });
 
   // Another size chosen on the page while the robot is at rest: the robot is
   // connected anew for that cube (its firmware starts as a 3x3x3 and is told).
@@ -1402,7 +1651,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       drawGrid(answer.size);
       clearShots();
       if (answer.size !== host.state.size) host.setSize(answer.size);
-      say("Put a cube in the robot, then press Scan.");
+      say(HINT);
     } catch (error) {
       say(`The robot could not be set to ${host.name(n)}: ${error.message}`, true);
       // The server let go of the robot to connect it anew: it may be gone.
@@ -1413,7 +1662,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
   }
   host.onsize((n) => {
-    if (connected && robot && !robot.busy && !sizing && Number.isInteger(connected.size) && n !== connected.size) void resize(n);
+    if (connected && robot && !robot.busy && !switching && !sizing && Number.isInteger(connected.size) && n !== connected.size) void resize(n);
   });
 
   async function enter(info) {
@@ -1426,7 +1675,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     showWhere();
     if (Number.isInteger(info.size)) host.setSize(info.size);
     host.setMode(true);
-    place();
     clearShots();
     drawGrid(info.size ?? 3);
     const mine = (robot = new RobotRun({
@@ -1436,8 +1684,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       hooks,
       pace,
     }));
+    linked = true;
     setButtons();
-    say("Put a cube in the robot, then press Scan.");
+    say(HINT);
     void robot.follow();
     await openCamera();
     setTimeout(() => robot === mine && warmUp(mine), 300);
@@ -1461,18 +1710,27 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
   }
 
-  function leave() {
+  // `stay`: another robot is about to be connected, and the panel waits for it.
+  function leave(stay = false) {
     stopTicker();
+    closeInfo();
     robot?.unfollow();
     robot = null;
     connected = null;
     feed.close();
-    host.setMode(false);
+    openingCamera = false;
+    listed = "";
+    measures = [];
+    planned = [];
+    logged = "";
+    say("");
+    if (!stay) host.setMode(false);
     setButtons();
     showDialog();
   }
 
-  async function disconnect() {
+  // Disconnects by hand. `rest`: no other robot follows, the page goes back to being without one.
+  async function disconnect(rest = true) {
     const was = connected;
     try {
       await api.disconnect();
@@ -1482,11 +1740,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
     // Disconnected by hand: it stays so until it is plugged in again or connected by hand.
     if (was) watch.hold(was.driver, was.port);
-    leave();
-    watch.start();
+    leave(!rest);
+    if (rest) watch.start();
     return true;
   }
-  $("robot-disconnect").addEventListener("click", disconnect);
 
   // The robot is gone (unplugged, or the server lost it): the page as it is
   // without one, watching for it to come back.
