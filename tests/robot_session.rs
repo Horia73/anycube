@@ -3,10 +3,15 @@
 //! from the facelets of the cube the scan left, and the events as
 //! robots-spec/API.md lists them. The simulated cube ends solved, no byte
 //! is lost to the robot's receive buffer, and nothing unsafe is done.
+//! Boards are listed as they are plugged in, each asked once what it is;
+//! a robot pulled out, running or not, ends its run and its connection.
 #![cfg(feature = "robots")]
 
+use anycube::robot::detect::Detector;
+use anycube::robot::multicuber::sim::SimRobot;
 use anycube::robot::multicuber::MultiCuber;
 use anycube::robot::session::{Config, Session};
+use anycube::robot::{PortId, Probe};
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
 
@@ -69,7 +74,7 @@ fn of_type<'a>(events: &'a [Value], kind: &str) -> Vec<&'a Value> {
 #[test]
 fn scan_and_solve_on_the_simulated_robot() {
     let s = session(0.0, 0);
-    let list = s.list();
+    let list = s.list(true);
     assert_eq!(list["drivers"][0]["id"], "multicuber");
     assert_eq!(list["drivers"][0]["ports"][0], "sim");
     assert_eq!(list["connected"], Value::Null);
@@ -78,8 +83,8 @@ fn scan_and_solve_on_the_simulated_robot() {
     assert_eq!(c["ok"], true, "{}", c);
     assert_eq!(c["size"], 3);
     assert_eq!(c["info"]["proto"], "1");
-    assert_eq!(s.list()["connected"]["driver"], "multicuber");
-    assert_eq!(s.list()["connected"]["size"], 3);
+    assert_eq!(s.list(true)["connected"]["driver"], "multicuber");
+    assert_eq!(s.list(true)["connected"]["size"], 3);
 
     let mut since = 0;
     let started = s.scan();
@@ -91,14 +96,18 @@ fn scan_and_solve_on_the_simulated_robot() {
     assert_eq!(start.len(), 1);
     let steps = start[0]["steps"].as_u64().unwrap() as usize;
     assert!(start[0]["eta_ms"].as_f64().unwrap() > 3000.0);
-    let photos: Vec<(String, u64, u64)> = of_type(&scan, "photo")
-        .iter()
-        .map(|e| (e["face"].as_str().unwrap().to_string(), e["rotate"].as_u64().unwrap(), e["index"].as_u64().unwrap()))
-        .collect();
-    assert_eq!(
-        photos,
-        vec![("U".into(), 270, 0), ("R".into(), 180, 1), ("D".into(), 90, 2), ("L".into(), 0, 3), ("B".into(), 0, 4), ("F".into(), 0, 5)]
-    );
+    // Six pictures, numbered in order, each of another face, each with a quarter turn and the time to the next.
+    let photos = of_type(&scan, "photo");
+    assert_eq!(photos.iter().map(|e| e["index"].as_u64().unwrap()).collect::<Vec<_>>(), vec![0, 1, 2, 3, 4, 5]);
+    let faces: std::collections::BTreeSet<&str> = photos.iter().map(|e| e["face"].as_str().unwrap()).collect();
+    assert_eq!(faces.into_iter().collect::<String>(), "BDFLRU");
+    for (k, e) in photos.iter().enumerate() {
+        assert!(e["rotate"].as_u64().unwrap() % 90 == 0 && e["rotate"].as_u64().unwrap() < 360);
+        let next_ms = e["next_ms"].as_f64().unwrap();
+        assert!(if k < 5 { next_ms > 200.0 && next_ms < 3000.0 } else { next_ms < 50.0 }, "photo {}: next_ms {}", k, next_ms);
+    }
+    // The planner's scan is quicker than the 2018 one (6.2 s of motion on a 3x3x3).
+    assert!(start[0]["eta_ms"].as_f64().unwrap() < 6000.0);
     assert_eq!(of_type(&scan, "op").len(), steps, "one op event per command");
     for e in &scan {
         assert!(e["seq"].as_u64().is_some() && e["t_ms"].as_f64().is_some());
@@ -123,6 +132,7 @@ fn scan_and_solve_on_the_simulated_robot() {
     assert_eq!(plan.len(), 1);
     let plan = plan[0];
     assert_eq!(plan["metric"], "robot-ms");
+    assert_eq!(plan["planner"], "optimized");
     assert!(plan["candidates"].as_u64().unwrap() >= 1);
     assert!(plan["compute_ms"].as_f64().unwrap() >= 0.0);
     let moves = plan["moves"].as_array().unwrap();
@@ -159,13 +169,15 @@ fn scan_and_solve_on_the_simulated_robot() {
     assert!(solved, "the simulated cube is solved");
     assert_eq!(overflows, 0, "no byte lost to the receive buffer");
     assert!(violations.is_empty(), "{:?}", violations);
-    // The firmware's order: drivers on before any motion, off at the end, parked.
+    // The firmware's order: drivers on before any motion, off at the end; the lift came down
+    // last (no tipping back and forth after the last move).
     let log = sim_log(&s);
     assert_eq!(log.last().unwrap(), "DISABLE");
+    assert_eq!(log[log.len() - 2], "LIFT 0");
     let note = read_until(&s, &mut since, &["log"], false, Duration::from_secs(5));
     assert!(note.last().unwrap()["text"].as_str().unwrap().contains("cube solved"), "{:?}", note);
     assert_eq!(s.disconnect()["ok"], true);
-    assert_eq!(s.list()["connected"], Value::Null);
+    assert_eq!(s.list(true)["connected"], Value::Null);
 }
 
 #[test]
@@ -244,4 +256,88 @@ fn commands_sent_ahead_leave_no_gaps() {
     assert!(elapsed < planned + 150.0, "8 commands took {:.0} ms, the plan says {:.0} ms", elapsed, planned);
     assert_eq!(sim_facelets(&s).2, 0);
     eprintln!("8 commands: {:.0} ms against {:.0} ms planned; mean gap {:.1} ms", elapsed, planned, gaps / 7.0);
+}
+
+fn sim_of(s: &Session) -> SimRobot {
+    s.with_robot(|r| r.as_any().downcast_ref::<MultiCuber>().unwrap().sim().unwrap().clone()).unwrap()
+}
+
+/// The cable pulled while the robot runs: the run ends with `disconnected`, the connection
+/// is dropped, a `disconnected` event says so, and the page can go back to watching.
+#[test]
+fn a_robot_pulled_out_while_it_runs_ends_the_run_and_the_connection() {
+    let s = session(0.3, 0);
+    assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
+    let sim = sim_of(&s);
+    let mut since = 0;
+    let run = s.scan()["run"].as_str().unwrap().to_string();
+    let _ = read_until(&s, &mut since, &["op"], true, Duration::from_secs(10));
+    let t = Instant::now();
+    sim.unplug();
+    let events = read_until(&s, &mut since, &["disconnected"], true, Duration::from_secs(10));
+    assert!(t.elapsed() < Duration::from_secs(3), "noticed after {:?}", t.elapsed());
+    let errors = of_type(&events, "error");
+    assert_eq!(errors.len(), 1, "{:?}", events);
+    assert_eq!((errors[0]["code"].as_str(), errors[0]["run"].as_str()), (Some("disconnected"), Some(run.as_str())));
+    let last = events.last().unwrap();
+    assert!(last["run"].is_null() && last["message"].is_string(), "{}", last);
+    // By then no robot is connected, and nothing can be started.
+    assert_eq!(s.list(false)["connected"], Value::Null);
+    assert!(s.wait_idle(Duration::from_secs(5)));
+    assert_eq!(s.scan()["error"]["code"], "not_connected");
+    // Plugged in again (the simulated port is always there): it connects anew.
+    assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
+    assert_eq!(s.disconnect()["ok"], true);
+}
+
+#[test]
+fn a_robot_pulled_out_while_it_rests_is_noticed_too() {
+    let s = session(0.0, 0);
+    assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
+    let mut since = s.events(0, Duration::ZERO)["seq"].as_u64().unwrap();
+    let t = Instant::now();
+    sim_of(&s).unplug();
+    let events = read_until(&s, &mut since, &["disconnected"], false, Duration::from_secs(10));
+    assert!(t.elapsed() < Duration::from_secs(2), "noticed after {:?}", t.elapsed());
+    assert!(of_type(&events, "error").is_empty(), "no run, no error: {:?}", events);
+    assert_eq!(s.list(false)["connected"], Value::Null);
+    assert_eq!(s.scan()["error"]["code"], "not_connected");
+}
+
+/// `GET /api/robots` with boards plugged in: what each port carries, as API.md has it.
+#[test]
+fn the_list_says_what_each_port_carries() {
+    tables();
+    let port = |path: &str| PortId { path: path.into(), usb: Some((0x2341, 0x0042)), serial: Some(path.into()) };
+    let detector = Detector::new(
+        Box::new(move || vec![port("/dev/cu.usbmodem1"), port("/dev/cu.usbmodem2"), port("/dev/cu.usbmodem3")]),
+        Box::new(|_| vec!["multicuber"]),
+        Box::new(|_, path| match path {
+            "/dev/cu.usbmodem1" => Probe::Robot(json!({"fw": "2.2.0", "proto": "1"})),
+            "/dev/cu.usbmodem2" => Probe::NotThis,
+            _ => Probe::Busy,
+        }),
+    );
+    let config = Config { settings_dir: None, sim_scale: None, max_size: 50, photo_settle: Duration::ZERO, search: Default::default() };
+    let s = Session::with_detector(config, detector.clone());
+    // At once, before any port was asked: every port is there, none with a `driver` yet.
+    let first = s.list(true);
+    assert_eq!(first["drivers"][0]["ports"], json!(["/dev/cu.usbmodem1", "/dev/cu.usbmodem2", "/dev/cu.usbmodem3"]));
+    assert_eq!(first["ports"].as_array().unwrap().len(), 3);
+    assert!(detector.settle(Duration::from_secs(5)));
+    let list = s.list(true);
+    assert_eq!(
+        list["ports"],
+        json!([
+            {"path": "/dev/cu.usbmodem1", "driver": "multicuber", "busy": false, "info": {"fw": "2.2.0", "proto": "1"}},
+            {"path": "/dev/cu.usbmodem2", "driver": null, "busy": false},
+            {"path": "/dev/cu.usbmodem3", "busy": true},
+        ])
+    );
+    assert_eq!(list["connected"], Value::Null);
+    // Without a port the connect goes to the board that answered as this robot (which is not
+    // really there: the port cannot be opened).
+    let c = s.connect(&json!({"driver": "multicuber"}));
+    assert_eq!(c["error"]["code"], "port", "{}", c);
+    assert!(c["error"]["message"].as_str().unwrap().contains("/dev/cu.usbmodem1"), "{}", c);
 }

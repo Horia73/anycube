@@ -9,14 +9,15 @@
 //! MultiCuber's tests/test_robot.py.
 
 use crate::cuben::Geometry;
-use crate::robot::multicuber::planner::Lift;
+use crate::robot::multicuber::planner::{allowed, Cmd, Lift};
 
 pub struct PhysicalCube {
     pub g: Geometry,
     pub facelets: Vec<u8>,
     pub lift: Lift,
     pub flip_up: bool,
-    /// Steps that the planner never makes and that the robot must not do.
+    /// Commands sent in a state in which the robot has never been sent them
+    /// (`planner::allowed`): the planner makes none.
     pub violations: Vec<String>,
 }
 
@@ -29,6 +30,12 @@ impl PhysicalCube {
 
     pub fn n(&self) -> usize {
         self.g.n
+    }
+
+    fn check(&mut self, cmd: Cmd, line: &str) {
+        if !allowed(self.n() as u8, self.lift, self.flip_up, cmd) {
+            self.violations.push(format!("{} with the lift at {} and the flipper {}", line.trim(), self.lift.arg(), if self.flip_up { "UP" } else { "DOWN" }));
+        }
     }
 
     fn whole(&mut self, axis: usize, turns: i8) {
@@ -64,15 +71,12 @@ impl PhysicalCube {
                     },
                     None => return,
                 };
-                // The planner only reaches the scanning height from 0 and leaves it to 0.
-                let between = |a: Lift, b: Lift| a == Lift::Scan && !matches!(b, Lift::Level(0) | Lift::Scan);
-                if between(self.lift, to) || between(to, self.lift) {
-                    self.violations.push(format!("LIFT between SCAN and a level: {:?} -> {:?}", self.lift, to));
-                }
+                self.check(Cmd::Lift(to), line);
                 self.lift = to;
             }
             Some("FLIP") => {
                 let up = w.get(1).map(String::as_str) == Some("UP");
+                self.check(Cmd::Flip { up, normal: false }, line);
                 if up != self.flip_up && self.lift == Lift::Level(0) {
                     self.whole(0, if up { 1 } else { -1 });
                 }
@@ -80,8 +84,9 @@ impl PhysicalCube {
             }
             Some("ROT") => {
                 let t: i8 = w.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                self.check(Cmd::Rot(t), line);
                 match self.lift {
-                    Lift::Scan | Lift::Level(0) => self.violations.push(format!("ROT with the lift at {:?}", self.lift)),
+                    Lift::Scan | Lift::Level(0) => {}
                     Lift::Level(k) if k >= n => self.whole(1, t),
                     Lift::Level(k) => {
                         let (k, nn) = (k as usize, n as usize);

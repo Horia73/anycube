@@ -270,6 +270,15 @@ impl SimRobot {
         self.state.0.lock().unwrap().log.clone()
     }
 
+    pub fn is_closed(&self) -> bool {
+        self.state.0.lock().unwrap().closed
+    }
+
+    /// Pulls the plug: from now on nothing is written or answered, as when the cable goes.
+    pub fn unplug(&self) {
+        self.close();
+    }
+
     pub fn close(&self) {
         let (m, cv) = &*self.state;
         m.lock().unwrap().closed = true;

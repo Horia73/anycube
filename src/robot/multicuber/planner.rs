@@ -1,5 +1,8 @@
-//! MultiCuber's planner: solution moves -> robot commands, a faithful port
-//! of `Planner` in MultiCuber's `robot.py` (the 2018 programs' behaviour).
+//! MultiCuber's commands and what they do to the robot's state: the lines
+//! of the firmware's protocol, a builder that keeps the lift, the flipper
+//! and where the cube's faces are as commands are added (the primitives of
+//! `Planner` in MultiCuber's `robot.py`, ported faithfully), and the rule
+//! that says which command may follow in which state (`allowed`).
 //!
 //! The robot has a lift that raises the cube into a rotator (at level k the
 //! rotator turns the k top layers, at level n the whole cube; at 0 the cube
@@ -7,17 +10,14 @@
 //! axis when the lift is at 0 and moves alone otherwise, and the rotator.
 //! A turn of U (k layers) is LIFT k + ROT; a turn of D (k layers) is
 //! LIFT n-k + ROT, after which the part of the cube with the solver's frame
-//! has turned, so the side faces have new names. F, R, L and B are first
-//! brought to the top (or B to the bottom) with the flipper and whole-cube
-//! turns. `tests/robot_planner.rs` holds this against robot.py on hundreds
-//! of random sequences (fixtures written by `scripts/robot_fixtures.py`).
+//! has turned, so the side faces have new names.
 //!
-//! Besides the commands, the planner can add up the time they take under a
-//! `TimeModel`, without keeping them: that is how thousands of candidate
-//! solutions are compared in a few milliseconds.
+//! Which commands, in which order, is decided in `optimize` (the planner
+//! that drives the robot). The 2018 rules live on in `legacy`, only as the
+//! reference the tests hold this against.
 
 use super::timing::TimeModel;
-use crate::robot::{Turn, FACES};
+use crate::robot::FACES;
 
 /// Where the lift is: a level 0..=n, or the scanning height.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -164,15 +164,6 @@ pub(crate) fn turn_perm(perm: &[u8; 6], turns: i8) -> [u8; 6] {
     })
 }
 
-/// How B is brought to the rotator: `Legacy` copies the 2018 programs (B
-/// goes to the bottom for the first two moves of a run, to the top after
-/// that); `Flipper` chooses by where the flipper is.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum BRule {
-    Legacy,
-    Flipper,
-}
-
 /// The robot's state as the planner tracks it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct RobotState {
@@ -189,7 +180,6 @@ impl Default for RobotState {
 
 pub struct Planner<'a> {
     pub n: u8,
-    pub b_rule: BRule,
     pub lift: Lift,
     pub flip_up: bool,
     /// The solver's face name -> robot position.
@@ -204,10 +194,9 @@ pub struct Planner<'a> {
 }
 
 impl<'a> Planner<'a> {
-    pub fn new(n: usize, b_rule: BRule) -> Planner<'a> {
+    pub fn new(n: usize) -> Planner<'a> {
         Planner {
             n: n as u8,
-            b_rule,
             lift: Lift::Level(0),
             flip_up: true,
             frame: [0, 1, 2, 3, 4, 5],
@@ -220,8 +209,8 @@ impl<'a> Planner<'a> {
     }
 
     /// A planner that only adds up the time (no commands kept).
-    pub fn costing(n: usize, b_rule: BRule, timing: &'a TimeModel) -> Planner<'a> {
-        Planner { keep: false, timing: Some(timing), ..Planner::new(n, b_rule) }
+    pub fn costing(n: usize, timing: &'a TimeModel) -> Planner<'a> {
+        Planner { keep: false, timing: Some(timing), ..Planner::new(n) }
     }
 
     pub fn with_timing(mut self, timing: &'a TimeModel) -> Planner<'a> {
@@ -294,98 +283,24 @@ impl<'a> Planner<'a> {
         self.emit(Cmd::Rot(turns), remap, mv, self.lift);
     }
 
-    fn cube_turned(&mut self, perm: &[u8; 6], turns: i8) {
+    pub(crate) fn cube_turned(&mut self, perm: &[u8; 6], turns: i8) {
         let p = turn_perm(perm, turns);
         self.frame = std::array::from_fn(|f| p[self.frame[f] as usize]);
     }
 
-    // -- sequences
     /// A new solution: its face names are where the faces are now.
     pub fn start_run(&mut self) {
         self.frame = [0, 1, 2, 3, 4, 5];
     }
 
-    pub fn turn(&mut self, mv: Turn, index: usize) {
-        let n = self.n;
-        if let Turn::Whole { axis, turns } = mv {
-            // The solver turned the cube in its head: rename, nothing moves.
-            let perm = [&PERM_X, &PERM_Y, &PERM_Z][axis as usize];
-            let back = turn_perm(perm, if turns != 2 { -turns } else { 2 });
-            let old = self.frame;
-            self.frame = std::array::from_fn(|f| old[back[f] as usize]);
-            return;
-        }
-        let Turn::Layers { face, depth, turns } = mv else { unreachable!() };
-        let pos = self.frame[face as usize];
-        let mut side = U;
-        if pos == D {
-            side = D;
-        } else if pos == F {
-            self.front_to_top();
-        } else if pos == R || pos == L {
-            self.lift_to(Lift::Level(n));
-            self.rot(if pos == R { 1 } else { -1 }, true, None);
-            self.front_to_top();
-        } else if pos == B {
-            let bottom = match self.b_rule {
-                BRule::Legacy => index < 2,
-                BRule::Flipper => !self.flip_up,
-            };
-            if bottom {
-                self.front_to_top(); // B goes to the bottom
-                side = D;
-            } else {
-                self.flip_empty(true);
-                self.lift_to(Lift::Level(0));
-                self.flip(false, false); // B goes to the top
-            }
-        }
-        let level = if side == U { depth } else { n - depth };
-        self.lift_to(Lift::Level(level));
-        self.rot(turns, side == D || level == n, Some(index as u16));
+    /// The solver turned the cube in its head (x, y, z in a solution): the
+    /// faces are renamed, nothing moves.
+    pub fn rename(&mut self, axis: u8, turns: i8) {
+        self.frame = renamed(self.frame, axis, turns);
     }
 
-    fn front_to_top(&mut self) {
-        self.flip_empty(false);
-        self.lift_to(Lift::Level(0));
-        self.flip(true, false);
-    }
-
-    /// The commands of a whole solution, with the 2018 finish: lift down,
-    /// tip the cube back and forth.
-    pub fn solution(&mut self, moves: &[Turn]) {
-        self.start_run();
-        for (i, &mv) in moves.iter().enumerate() {
-            self.turn(mv, i);
-        }
-        self.lift_to(Lift::Level(0));
-        self.flip(false, false);
-        self.flip(true, false);
-    }
-
-    /// The six pictures, as in 2018. Each command with a photo is followed by a picture.
-    pub fn scan(&mut self, scan_flip_normal: bool) {
-        let shots = SCAN_PHOTOS;
-        self.flip(false, false);
-        self.photo(0, shots[0]);
-        for (i, &shot) in shots.iter().enumerate().take(4).skip(1) {
-            self.lift_to(Lift::Scan);
-            self.flip(true, scan_flip_normal);
-            self.lift_to(Lift::Level(0));
-            self.flip(false, false);
-            self.photo(i, shot);
-        }
-        for (i, turns) in [(4, -1), (5, 2)] {
-            self.lift_to(Lift::Level(self.n));
-            self.rot(turns, true, None);
-            self.lift_to(Lift::Level(0));
-            self.flip(true, false);
-            self.flip(false, false);
-            self.photo(i, shots[i]);
-        }
-    }
-
-    fn photo(&mut self, index: usize, (face, rotate): (char, u16)) {
+    /// Marks the last command as followed by a picture (a `STATE` stands in when there is none).
+    pub fn photo(&mut self, index: usize, face: char, rotate: u16) {
         let photo = Photo { index: index as u8, face, rotate };
         if !self.keep {
             return;
@@ -398,14 +313,46 @@ impl<'a> Planner<'a> {
             }
         }
     }
-
-    pub fn park(&mut self) {
-        self.flip(true, false);
-    }
 }
 
-/// The 2018 scan: which face each picture shows and the clockwise turn that makes it upright.
-pub const SCAN_PHOTOS: [(char, u16); 6] = [('U', 270), ('R', 180), ('D', 90), ('L', 0), ('B', 0), ('F', 0)];
+/// A frame after the solver's whole-cube turn (a rename).
+pub fn renamed(frame: [u8; 6], axis: u8, turns: i8) -> [u8; 6] {
+    let perm = [&PERM_X, &PERM_Y, &PERM_Z][axis as usize];
+    let back = turn_perm(perm, if turns != 2 { -turns } else { 2 });
+    std::array::from_fn(|f| frame[back[f] as usize])
+}
+
+/// The robot position the camera looks at when the lift is down and the flipper DOWN.
+pub const CAMERA: u8 = F;
+
+/// Whether a command may be sent with the lift and the flipper where they
+/// are: exactly the cases in which robot.py's planner (the 2018 programs'
+/// behaviour) sends it, for scans and solves from any state, and no other.
+/// The planner makes only these, the simulated robot and the tests count
+/// anything else as a violation, and `tests/robot_plans.rs` holds this rule
+/// against what the 2018 planner really produces.
+///
+/// - LIFT: between 0 and any level, between the turning levels, and from
+///   the top level n back to 0 with the flipper DOWN; the scanning height
+///   only from 0 and back to 0.
+/// - FLIP: with the lift at 0 (it tips the cube), at the scanning height or
+///   at a turning level (the cube is off it, it moves alone); at level n
+///   only DOWN.
+/// - ROT: never with the lift at 0 or at the scanning height; a half turn
+///   of the whole cube (level n) only with the flipper DOWN.
+pub fn allowed(n: u8, lift: Lift, flip_up: bool, cmd: Cmd) -> bool {
+    match (cmd, lift) {
+        (Cmd::Lift(to), _) if to == lift => false,
+        (Cmd::Lift(Lift::Scan), from) => from == Lift::Level(0),
+        (Cmd::Lift(Lift::Level(to)), Lift::Scan) => to == 0,
+        (Cmd::Lift(Lift::Level(to)), Lift::Level(from)) => to <= n && from <= n && (from < n || (to == 0 && !flip_up)),
+        (Cmd::Flip { up, .. }, Lift::Level(k)) => up != flip_up && k <= n && (k < n || !up),
+        (Cmd::Flip { up, .. }, Lift::Scan) => up != flip_up,
+        (Cmd::Rot(t), Lift::Level(k)) => matches!(t, 1 | -1 | 2) && k >= 1 && k <= n && (k < n || t != 2 || !flip_up),
+        (Cmd::Rot(_), Lift::Scan) => false,
+        (Cmd::State | Cmd::Enable | Cmd::Disable, _) => true,
+    }
+}
 
 /// The faces in their order, for frames.
 pub fn face_char(f: u8) -> char {

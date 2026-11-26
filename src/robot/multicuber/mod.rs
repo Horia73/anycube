@@ -17,7 +17,14 @@
 //! sent ahead past a picture. A stop, or an error, sends DISABLE at once;
 //! the firmware runs it after the command that is moving (and the one
 //! queued behind it, if it was already sent).
+//!
+//! Scans and solutions are planned in `optimize`: the quickest commands
+//! under the time model, each one a command that the 2018 programs send in
+//! the same state (`planner::allowed`). A board is identified by the same
+//! handshake without anything else being sent (`probe`); the port it leaves
+//! open is taken over by the connect that follows.
 
+pub mod legacy;
 pub mod link;
 pub mod optimize;
 pub mod planner;
@@ -25,13 +32,15 @@ pub mod sim;
 pub mod timing;
 
 use self::link::{Link, Reply, SerialTransport};
-use self::planner::{BRule, Cmd, Lift, Op, Planner, Remap, RobotState};
+use self::optimize::Space;
+use self::planner::{Cmd, Lift, Op, Planner, Remap, RobotState};
 use self::sim::SimRobot;
 use self::timing::{Cal, TimeModel};
-use super::{ConnectOptions, Driver, PhotoSpec, Plan, PlanMode, PlannedOp, Progress, Robot, RobotError, StopFlag, Turn};
+use super::{ConnectOptions, Driver, PhotoSpec, Plan, PlannedOp, PortId, Probe, Progress, Robot, RobotError, StopFlag, Turn};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 pub const PROTOCOL: u32 = 1;
@@ -44,6 +53,23 @@ pub const MAX_IN_FLIGHT: usize = 2;
 pub const MAX_BYTES: usize = 60;
 /// The next command goes out this long before the running one should end.
 pub const LEAD_MS: f64 = 30.0;
+/// The port of the simulated robot.
+pub const SIM_PORT: &str = "sim";
+/// A Mega restarts when its port is opened; its bootloader listens this long at most before the firmware speaks.
+const BOOT_WAIT: Duration = Duration::from_millis(3000);
+/// How long the port of a board just identified is kept open for the connect that follows.
+const HOLD_PROBED: Duration = Duration::from_secs(8);
+
+/// The link of the board a probe has just identified. Opening the port
+/// again would restart the Mega and cost its three seconds of start-up a
+/// second time, so the connect that follows takes this one over.
+struct Probed {
+    port: String,
+    link: Link,
+    at: Instant,
+}
+
+static PROBED: Mutex<Option<Probed>> = Mutex::new(None);
 
 pub struct MultiCuberDriver;
 
@@ -60,56 +86,75 @@ impl Driver for MultiCuberDriver {
         SIZES.to_vec()
     }
 
-    fn ports(&self) -> Vec<String> {
-        serial_ports()
+    /// The Mega's own USB port, or a CH340 / FTDI clone's.
+    fn claims(&self, port: &PortId) -> bool {
+        port.path == SIM_PORT
+            || ["/dev/cu.usbmodem", "/dev/cu.usbserial", "/dev/cu.wchusbserial", "/dev/ttyACM", "/dev/ttyUSB", "COM"].iter().any(|prefix| port.path.starts_with(prefix))
     }
 
-    fn connect(&self, port: Option<&str>, size: Option<usize>, opts: &ConnectOptions) -> Result<Box<dyn Robot>, RobotError> {
+    /// Opens the port (the Mega restarts), waits for the firmware's banner
+    /// and says HELLO: nothing else is sent, nothing moves.
+    fn probe(&self, port: &str) -> Probe {
+        if port == SIM_PORT {
+            return Probe::Robot(json!({"fw": "2.2.0-sim", "proto": PROTOCOL.to_string()}));
+        }
+        let Ok(transport) = SerialTransport::open(port, BAUD) else { return Probe::Busy };
+        let mut link = Link::new(Box::new(transport));
+        link.wait_banner(BOOT_WAIT);
+        match link.handshake(2, PROTOCOL) {
+            Ok(hello) => {
+                let at = Instant::now();
+                *PROBED.lock().unwrap() = Some(Probed { port: port.to_string(), link, at });
+                // Nobody connected: let the port go.
+                std::thread::spawn(move || {
+                    std::thread::sleep(HOLD_PROBED);
+                    let mut held = PROBED.lock().unwrap();
+                    if held.as_ref().is_some_and(|p| p.at == at) {
+                        *held = None;
+                    }
+                });
+                Probe::Robot(json!(hello))
+            }
+            Err(_) => Probe::NotThis,
+        }
+    }
+
+    fn connect(&self, port: &str, size: Option<usize>, opts: &ConnectOptions) -> Result<Box<dyn Robot>, RobotError> {
         if let Some(n) = size.filter(|n| !SIZES.contains(n)) {
             return Err(RobotError::new("bad_size", format!("MultiCuber takes the sizes {:?}, not {}", SIZES, n)));
         }
-        let sim = port == Some("sim") || (port.is_none() && opts.sim_scale.is_some());
-        let (link, port, sim_robot) = if sim {
+        let timing_path = opts.settings_dir.as_ref().map(|d| d.join("robot-multicuber-timing.json"));
+        let boxed = |r: MultiCuber| Box::new(r) as Box<dyn Robot>;
+        if port == SIM_PORT {
             let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_nanos() as u64) | 1;
             let robot = SimRobot::new(size.unwrap_or(3), seed, opts.sim_scale.unwrap_or(1.0));
-            (Link::new(robot.transport()), "sim".to_string(), Some(robot))
-        } else {
-            let port = match port {
-                Some(p) => p.to_string(),
-                None => serial_ports().into_iter().next().ok_or_else(|| RobotError::new("no_port", "no robot port found; is the robot plugged in?"))?,
-            };
-            (Link::new(Box::new(SerialTransport::open(&port, BAUD)?)), port, None)
+            let link = Link::new(robot.transport());
+            return MultiCuber::start(link, port.to_string(), size, timing_path, Some(robot), Duration::from_millis(300)).map(boxed);
+        }
+        // The board a probe has just identified is still open and awake.
+        let probed = {
+            let mut held = PROBED.lock().unwrap();
+            if held.as_ref().is_some_and(|p| p.port == port) { held.take() } else { None }
         };
-        let timing_path = opts.settings_dir.as_ref().map(|d| d.join("robot-multicuber-timing.json"));
-        MultiCuber::start(link, port, size, timing_path, sim_robot).map(|r| Box::new(r) as Box<dyn Robot>)
+        if let Some(p) = probed.filter(|p| p.at.elapsed() < HOLD_PROBED) {
+            match MultiCuber::start(p.link, port.to_string(), size, timing_path.clone(), None, Duration::ZERO) {
+                Ok(r) => return Ok(boxed(r)),
+                Err(e) if !matches!(e.code, "no_answer" | "timeout" | "link" | "protocol") => return Err(e),
+                Err(_) => {} // the port is closed again by now: once more from the start
+            }
+        }
+        let link = Link::new(Box::new(SerialTransport::open(port, BAUD)?));
+        MultiCuber::start(link, port.to_string(), size, timing_path, None, BOOT_WAIT).map(boxed)
     }
 }
 
-/// Serial ports that look like a robot's board, likeliest first.
-pub fn serial_ports() -> Vec<String> {
-    let Ok(ports) = serialport::available_ports() else { return Vec::new() };
-    let mut out: Vec<(u8, String)> = Vec::new();
-    for p in ports {
-        let name = p.port_name.clone();
-        // On a Mac every device is there twice; the callout (cu) one is the one to open.
-        if name.starts_with("/dev/tty.") {
-            continue;
-        }
-        let looks = ["/dev/cu.usbmodem", "/dev/cu.usbserial", "/dev/cu.wchusbserial", "/dev/ttyACM", "/dev/ttyUSB", "COM"]
-            .iter()
-            .any(|prefix| name.starts_with(prefix));
-        let rank = match &p.port_type {
-            // Arduino (and its clone makers), WCH CH340, FTDI.
-            serialport::SerialPortType::UsbPort(u) if matches!(u.vid, 0x2341 | 0x2A03) => 0,
-            serialport::SerialPortType::UsbPort(u) if matches!(u.vid, 0x1A86 | 0x0403) => 1,
-            serialport::SerialPortType::UsbPort(_) => 2,
-            _ if looks => 3,
-            _ => continue,
-        };
-        out.push((rank, name));
+/// Whether a serial port is (still) there.
+fn port_present(path: &str) -> bool {
+    if path.starts_with('/') {
+        std::path::Path::new(path).exists()
+    } else {
+        super::detect::serial_ports().iter().any(|p| p.path == path)
     }
-    out.sort();
-    out.into_iter().map(|(_, n)| n).collect()
 }
 
 pub struct MultiCuber {
@@ -125,15 +170,22 @@ pub struct MultiCuber {
     state_known: bool,
     enabled: bool,
     sim: Option<SimRobot>,
-    /// How B goes to the rotator (robot.py's default).
-    pub b_rule: BRule,
+    /// The quickest ways between the robot's states under `timing`.
+    space: Space,
+    /// A command's time was learned since `space` was made.
+    space_stale: bool,
+    /// Pictures only right after the flipper tipped the cube in front of
+    /// the camera, as in 2018 (`ANYCUBE_ROBOT_SCAN_SEATED=0` lifts this).
+    pub scan_seated: bool,
 }
 
 impl MultiCuber {
     /// The handshake and set-up over a link.
-    pub fn start(mut link: Link, port: String, size: Option<usize>, timing_path: Option<PathBuf>, sim: Option<SimRobot>) -> Result<MultiCuber, RobotError> {
-        // A real port restarts the Mega: its bootloader listens for a moment first.
-        link.wait_banner(Duration::from_millis(if sim.is_some() { 300 } else { 3000 }));
+    /// `boot_wait`: how long to wait for the banner of a board that has just restarted.
+    pub fn start(mut link: Link, port: String, size: Option<usize>, timing_path: Option<PathBuf>, sim: Option<SimRobot>, boot_wait: Duration) -> Result<MultiCuber, RobotError> {
+        if !boot_wait.is_zero() {
+            link.wait_banner(boot_wait);
+        }
         let hello = link.handshake(5, PROTOCOL)?;
         let fw_size: usize = hello.get("size").and_then(|s| s.parse().ok()).unwrap_or(3);
         let n = size.unwrap_or(fw_size);
@@ -156,6 +208,8 @@ impl MultiCuber {
         }
         let mut hello = hello;
         hello.insert("size".into(), n.to_string());
+        let space = Space::new(n, &timing);
+        let scan_seated = std::env::var("ANYCUBE_ROBOT_SCAN_SEATED").map_or(true, |v| v.trim() != "0");
         let mut robot = MultiCuber {
             link,
             port,
@@ -168,7 +222,9 @@ impl MultiCuber {
             state_known: false,
             enabled: false,
             sim,
-            b_rule: BRule::Legacy,
+            space,
+            space_stale: false,
+            scan_seated,
         };
         robot.sync()?;
         Ok(robot)
@@ -207,32 +263,40 @@ impl MultiCuber {
         Plan { ops: out, eta_ms: eta.round() }
     }
 
-    /// The planner's commands for a solution (without ENABLE/DISABLE).
-    /// A planner from where the robot is. The legacy planner never leaves
-    /// the lift at the scanning height, and never goes from there to a
-    /// turning level: if a stopped run left it there, it comes down first.
-    fn planner(&self) -> Planner<'_> {
-        let mut p = Planner::new(self.n, self.b_rule).with_timing(&self.timing).from_state(self.state);
-        if self.state.lift == Lift::Scan {
-            p.lift_to(Lift::Level(0));
-        }
-        p
+    /// A command builder from where the robot is.
+    fn builder(&self) -> Planner<'_> {
+        Planner::new(self.n).with_timing(&self.timing).from_state(self.state)
     }
 
-    pub fn solution_ops(&self, moves: &[Turn], mode: PlanMode) -> Vec<Op> {
-        let mut p = self.planner();
-        match mode {
-            PlanMode::Legacy => p.solution(moves),
-            PlanMode::Optimized => optimize::solution(&mut p, moves, &self.timing),
-        }
+    /// The planner's commands for a solution (without ENABLE/DISABLE).
+    pub fn solution_ops(&self, moves: &[Turn]) -> Vec<Op> {
+        let mut p = self.builder();
+        self.space.solution(&mut p, moves);
         p.ops
+    }
+
+    /// The planner's commands for a scan (without ENABLE/DISABLE), the pictures named.
+    pub fn scan_ops(&self) -> Vec<Op> {
+        let mut p = self.builder();
+        self.space.scan(&mut p, self.scan_seated);
+        let mut ops = p.ops;
+        optimize::name_photos(self.n, self.state, &mut ops);
+        ops
+    }
+
+    /// The quickest ways again, after command times were learned or set.
+    pub fn refresh(&mut self) {
+        self.space = Space::new(self.n, &self.timing);
+        self.space_stale = false;
     }
 
     fn abort(&mut self) {
         // Whatever is running finishes; DISABLE comes right after it.
         self.state_known = false;
-        let _ = self.link.send("DISABLE");
         self.enabled = false;
+        if self.link.send("DISABLE").is_err() {
+            return; // the port is gone: there is nothing to wait for
+        }
         // Read the answers still on their way, so that the next command gets its own.
         let deadline = Instant::now() + Duration::from_millis(3000);
         while let Ok(Some(reply)) = self.link.read_reply(deadline) {
@@ -279,10 +343,6 @@ impl Robot for MultiCuber {
         json!(self.hello)
     }
 
-    fn scan_photos(&self) -> Vec<PhotoSpec> {
-        planner::SCAN_PHOTOS.iter().enumerate().map(|(i, &(face, rotate))| PhotoSpec { index: i, face, rotate }).collect()
-    }
-
     fn sync(&mut self) -> Result<(), RobotError> {
         let reply = self.link.command("STATE", Duration::from_secs(3))?;
         let f = link::fields(&reply);
@@ -296,33 +356,34 @@ impl Robot for MultiCuber {
         self.state = RobotState { lift, flip_up: f.get("flip").is_none_or(|v| v == "UP") };
         self.enabled = f.get("enabled").is_some_and(|v| v == "1");
         self.state_known = true;
+        if self.space_stale {
+            self.refresh();
+        }
         Ok(())
     }
 
     fn plan_scan(&self) -> Plan {
-        let mut p = self.planner();
-        p.scan(false);
-        self.planned(p.ops)
+        self.planned(self.scan_ops())
     }
 
-    fn plan_solution(&self, moves: &[Turn], mode: PlanMode) -> Plan {
-        self.planned(self.solution_ops(moves, mode))
+    fn plan_solution(&self, moves: &[Turn]) -> Plan {
+        self.planned(self.solution_ops(moves))
     }
 
-    fn estimate_ms(&self, moves: &[Turn], mode: PlanMode) -> f64 {
-        match mode {
-            PlanMode::Legacy => {
-                let mut p = Planner::costing(self.n, self.b_rule, &self.timing).from_state(self.state);
-                if self.state.lift == Lift::Scan {
-                    p.lift_to(Lift::Level(0));
-                }
-                p.solution(moves);
-                p.ms
+    fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + '_> {
+        let (space, start) = (&self.space, self.state);
+        Box::new(move |moves| space.cost(start, moves))
+    }
+
+    fn presence(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        match &self.sim {
+            Some(sim) => {
+                let sim = sim.clone();
+                Arc::new(move || !sim.is_closed())
             }
-            PlanMode::Optimized => {
-                let mut p = self.planner();
-                optimize::solution(&mut p, moves, &self.timing);
-                p.ms
+            None => {
+                let port = self.port.clone();
+                Arc::new(move || port_present(&port))
             }
         }
     }
@@ -407,7 +468,9 @@ impl Robot for MultiCuber {
                     let finished = Instant::now().checked_sub(one_way).unwrap_or_else(Instant::now);
                     let start = started[done].unwrap_or(finished);
                     let actual = finished.saturating_duration_since(start).as_secs_f64() * 1000.0;
-                    self.timing.record(&parsed[done], actual);
+                    if self.timing.record(&parsed[done], actual) {
+                        self.space_stale = true;
+                    }
                     bytes_in_flight = bytes_in_flight.saturating_sub(lines[done].len() + 1);
                     match parsed[done].cmd {
                         Cmd::Enable => self.enabled = true,
@@ -445,9 +508,8 @@ impl Robot for MultiCuber {
         if !self.state_known {
             self.sync()?;
         }
-        let mut p = Planner::new(self.n, self.b_rule).from_state(self.state);
-        p.lift_to(Lift::Level(0));
-        p.park();
+        let mut p = self.builder();
+        self.space.park(&mut p);
         if p.ops.is_empty() {
             return Ok(());
         }

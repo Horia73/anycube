@@ -228,12 +228,15 @@ way, `2` for a half turn; `Rw` turns two layers and `3Rw` three.
 
 `anycube app` can drive a cube robot over a serial port; the first one is
 [MultiCuber](https://github.com/Horia73/MultiCuber) (firmware 2, protocol 1,
-3x3x3 to 5x5x5). It scans, solves and turns the cube, and picks the solution
-the robot makes quickest by its own planner and a time model of its motors
-(learned as it runs, kept with the settings), not the one with the fewest
-moves. `anycube app --robot-sim` offers a simulated robot (port `sim`) that
-answers like the firmware and takes as long. The API is in `src/app/robots.rs`;
-the code in `src/robot/`.
+3x3x3 to 5x5x5). The robot is found when its board is plugged in: each new
+serial port is asked once what it is (the handshake only, nothing moves),
+and a robot that is pulled out ends its run and its connection. It scans,
+solves and turns the cube with the quickest commands under a time model of
+its motors (learned as it runs, kept with the settings), each command one
+the 2018 programs send in the same state, and picks the solution the robot
+makes quickest, not the one with the fewest moves. `anycube app --robot-sim`
+offers a simulated robot (port `sim`) that answers like the firmware and
+takes as long. The API is in `src/app/robots.rs`; the code in `src/robot/`.
 
 ## How it works
 

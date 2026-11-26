@@ -21,7 +21,7 @@
 //! Other sizes: the solver is run on the cube seen from each of the 24
 //! orientations, as long as the time allows, and the quickest is taken.
 
-use super::{PlanMode, Turn};
+use super::Turn;
 use crate::api::check::{ApiError, Checked};
 use crate::api::solve::{solve, Mode};
 use crate::cube::Cube;
@@ -47,10 +47,6 @@ pub struct Options {
     pub orientation_ms: f64,
     /// The solver's mode for other sizes.
     pub mode: Mode,
-    /// How the robot plans: with the optimizing planner, the best few by
-    /// the legacy plan are planned again with it.
-    pub plan: PlanMode,
-    pub optimize_best: usize,
 }
 
 impl Default for Options {
@@ -64,8 +60,6 @@ impl Default for Options {
             phase2: 4,
             orientation_ms: 2000.0,
             mode: Mode::Normal,
-            plan: PlanMode::Legacy,
-            optimize_best: 6,
         }
     }
 }
@@ -73,7 +67,7 @@ impl Default for Options {
 #[derive(Clone, Debug)]
 pub struct Choice {
     pub moves: Vec<Turn>,
-    /// The robot's estimate of its time (ms), under the plan mode.
+    /// The robot's estimate of its time (ms).
     pub est_ms: f64,
     /// Move sequences whose robot time was computed.
     pub candidates: usize,
@@ -88,8 +82,8 @@ impl Choice {
     }
 }
 
-/// The robot's time for a sequence under a plan mode.
-pub type Cost<'a> = dyn Fn(&[Turn], PlanMode) -> f64 + 'a;
+/// The robot's time (ms) for a sequence of moves.
+pub type Cost<'a> = dyn Fn(&[Turn]) -> f64 + 'a;
 
 /// The 24 ways to hold a cube, as whole-cube quarter turns (0 = x, 1 = y,
 /// 2 = z) in the sense of `Geometry::turned`; the first is none.
@@ -171,20 +165,15 @@ pub fn orders(seq: &[usize], cap: usize) -> Vec<Vec<usize>> {
     out
 }
 
-/// Keeps the `k` cheapest.
-struct Best {
-    k: usize,
-    items: Vec<(f64, Vec<Turn>)>,
-}
+/// Keeps the cheapest (the first of equals).
+#[derive(Default)]
+struct Best(Option<(f64, Vec<Turn>)>);
 
 impl Best {
     fn offer(&mut self, ms: f64, moves: &[Turn]) {
-        if self.items.len() == self.k && ms >= self.items[self.k - 1].0 {
-            return;
+        if self.0.as_ref().is_none_or(|(best, _)| ms < *best) {
+            self.0 = Some((ms, moves.to_vec()));
         }
-        let at = self.items.partition_point(|(c, _)| *c <= ms);
-        self.items.insert(at, (ms, moves.to_vec()));
-        self.items.truncate(self.k);
     }
 }
 
@@ -210,10 +199,9 @@ pub fn choose(c: &Checked, cost: &Cost, opts: &Options) -> Result<Choice, ApiErr
     let t0 = Instant::now();
     let g = if c.size == 2 { Geometry::new(2) } else { Geometry::new(c.size) };
     if g.is_solved(&c.facelets) {
-        return Ok(Choice { moves: Vec::new(), est_ms: cost(&[], opts.plan), candidates: 1, solutions: 1, compute_ms: 0.0 });
+        return Ok(Choice { moves: Vec::new(), est_ms: cost(&[]), candidates: 1, solutions: 1, compute_ms: 0.0 });
     }
-    let keep = if opts.plan == PlanMode::Optimized { opts.optimize_best.max(1) } else { 1 };
-    let mut best = Best { k: keep, items: Vec::new() };
+    let mut best = Best::default();
     let mut candidates = 0;
     let solutions;
     if c.size == 3 {
@@ -238,7 +226,7 @@ pub fn choose(c: &Checked, cost: &Cost, opts: &Options) -> Result<Choice, ApiErr
             for s in orders(&seq, 16) {
                 let turns: Vec<Turn> = s.iter().map(|&m| Turn::from_index(m)).collect();
                 candidates += 1;
-                best.offer(cost(&turns, PlanMode::Legacy), &turns);
+                best.offer(cost(&turns), &turns);
             }
         }
     } else {
@@ -262,21 +250,12 @@ pub fn choose(c: &Checked, cost: &Cost, opts: &Options) -> Result<Choice, ApiErr
             for s in orders(&seq, 16) {
                 let moves: Vec<Turn> = s.iter().map(|&m| Turn::from_index(m)).collect();
                 candidates += 1;
-                best.offer(cost(&moves, PlanMode::Legacy), &moves);
+                best.offer(cost(&moves), &moves);
             }
         }
         solutions = count;
     }
-    // With the optimizing planner, the best few are planned again with it.
-    let (est_ms, moves) = if opts.plan == PlanMode::Optimized {
-        best.items
-            .iter()
-            .map(|(_, m)| (cost(m, PlanMode::Optimized), m.clone()))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .ok_or_else(|| ApiError::new("solver_failed", "no solution was found"))?
-    } else {
-        best.items.first().cloned().ok_or_else(|| ApiError::new("solver_failed", "no solution was found"))?
-    };
+    let (est_ms, moves) = best.0.ok_or_else(|| ApiError::new("solver_failed", "no solution was found"))?;
     let seq: Vec<usize> = moves.iter().filter_map(layers_index).collect();
     if !verify(&g, &c.facelets, &seq) {
         return Err(ApiError::new("solver_failed", "the chosen solution does not solve the cube; this is a bug"));

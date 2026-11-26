@@ -2,7 +2,7 @@
 //! robot session, answers as JSON.
 //!
 //! ```text
-//! GET  /api/robots                          drivers, their sizes and ports, the connected robot
+//! GET  /api/robots                          drivers, their sizes and ports, what each port carries, the connected robot
 //! POST /api/robot/connect                   {"driver": "multicuber", "port": "...", "size": 3} (port and size optional)
 //! POST /api/robot/disconnect                {}
 //! POST /api/robot/scan                      {}                                   -> {"ok": true, "run": "..."}
@@ -24,7 +24,8 @@ use std::time::Duration;
 pub fn route(session: &Session, method: &str, path: &str, url: &str, body: &str, json_body: bool, origin_ok: bool) -> Option<(u16, Value)> {
     let err = |status: u16, code: &str, message: &str| Some((status, json!({"ok": false, "error": {"code": code, "message": message}})));
     match (method, path) {
-        ("GET", "/api/robots") => Some((200, session.list())),
+        // `?probe=0`: only what is known already; no port is opened to ask what is on it.
+        ("GET", "/api/robots") => Some((200, session.list(super::server::query(url, "probe") != Some(0)))),
         ("GET", "/api/robot/events") => {
             let q = |name: &str| super::server::query(url, name);
             let since = q("since").unwrap_or(0);

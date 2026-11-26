@@ -9,10 +9,15 @@
 //! estimate of a solution's time, and `session` runs scans and solves for
 //! the local server's API (robots-spec/API.md).
 //!
+//! Boards are found as they are plugged in: `detect` lists the serial ports
+//! that may carry one and asks each new one once, with the drivers'
+//! handshakes, what it is.
+//!
 //! The first driver is MultiCuber's (`multicuber`). A simulated MultiCuber
 //! (`multicuber::sim`) answers like the firmware and takes as long, or a
 //! given fraction of it, so all of this can run without the hardware.
 
+pub mod detect;
 pub mod fastest;
 pub mod multicuber;
 pub mod physical;
@@ -121,17 +126,41 @@ impl std::fmt::Display for RobotError {
     }
 }
 
+/// A serial port that may carry a robot's board, with what USB says of the board.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Default)]
+pub struct PortId {
+    pub path: String,
+    /// Vendor and product numbers.
+    pub usb: Option<(u16, u16)>,
+    pub serial: Option<String>,
+}
+
+/// What a driver's handshake on a port found.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Probe {
+    /// The driver's robot answered: what it said of itself.
+    Robot(serde_json::Value),
+    /// A board that does not answer as this robot.
+    NotThis,
+    /// The port could not be opened: another program holds it.
+    Busy,
+}
+
 /// A kind of robot.
 pub trait Driver: Send + Sync {
     fn id(&self) -> &'static str;
     fn name(&self) -> &'static str;
     /// Cube sizes the robot takes.
     fn sizes(&self) -> Vec<usize>;
-    /// Ports where one may be, most likely first.
-    fn ports(&self) -> Vec<String>;
-    /// Opens a port (the first likely one for `None`) and checks that the robot answers.
+    /// Whether a port may carry this robot, going by its name and USB numbers.
+    fn claims(&self, _port: &PortId) -> bool {
+        true
+    }
+    /// Asks the board on a port what it is, with the handshake only: nothing moves.
+    fn probe(&self, port: &str) -> Probe;
+    /// Opens a port and checks that the robot answers.
     /// `size`: the cube that is in it, when the robot should be told.
-    fn connect(&self, port: Option<&str>, size: Option<usize>, opts: &ConnectOptions) -> Result<Box<dyn Robot>, RobotError>;
+    fn connect(&self, port: &str, size: Option<usize>, opts: &ConnectOptions) -> Result<Box<dyn Robot>, RobotError>;
 }
 
 /// What a connection is given: where it may keep what it learns, whether it is simulated.
@@ -170,16 +199,6 @@ pub struct Plan {
     pub eta_ms: f64,
 }
 
-/// How a solution is turned into commands.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum PlanMode {
-    /// What the robot's own software has always done.
-    #[default]
-    Legacy,
-    /// Shortest time over the robot's states, from the same safe steps.
-    Optimized,
-}
-
 /// What `execute` reports as it goes.
 #[derive(Clone, Debug)]
 pub enum Progress {
@@ -215,16 +234,26 @@ pub trait Robot: Send {
     fn size(&self) -> usize;
     /// What the robot said about itself at the handshake.
     fn info(&self) -> serde_json::Value;
-    /// The pictures of a scan, in order.
-    fn scan_photos(&self) -> Vec<PhotoSpec>;
     /// Asks the robot where it is, before planning.
     fn sync(&mut self) -> Result<(), RobotError>;
-    /// The commands of a scan, from where the robot is now.
+    /// The commands of a scan, from where the robot is now; the pictures are on them.
     fn plan_scan(&self) -> Plan;
+    /// The pictures of a scan from where the robot is now, in order.
+    fn scan_photos(&self) -> Vec<PhotoSpec> {
+        self.plan_scan().ops.iter().filter_map(|o| o.photo).collect()
+    }
     /// The commands of a solution, from where the robot is now.
-    fn plan_solution(&self, moves: &[Turn], mode: PlanMode) -> Plan;
-    /// The robot time of a solution from where the robot is now, quickly: candidates are compared by it.
-    fn estimate_ms(&self, moves: &[Turn], mode: PlanMode) -> f64;
+    fn plan_solution(&self, moves: &[Turn]) -> Plan;
+    /// The robot time (ms) of a solution from where the robot is now, quickly: candidates are compared by it.
+    fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + '_>;
+    /// The name of the planner, for the `plan` event.
+    fn planner_name(&self) -> &'static str {
+        "optimized"
+    }
+    /// Says, when asked, whether the robot is still plugged in (asked from another thread while it runs).
+    fn presence(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
+        Arc::new(|| true)
+    }
     /// Runs a plan. `progress` is called as the commands go; an error from it stops the run.
     fn execute(&mut self, plan: &Plan, stop: &StopFlag, progress: &mut dyn FnMut(Progress) -> Result<(), RobotError>) -> Result<(), RobotError>;
     /// Motors off, now (when no run is going on; a run stops through its `StopFlag`).
