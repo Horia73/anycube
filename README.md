@@ -234,9 +234,18 @@ and a robot that is pulled out ends its run and its connection. It scans,
 solves and turns the cube with the quickest commands under a time model of
 its motors (learned as it runs, kept with the settings), each command one
 the 2018 programs send in the same state, and picks the solution the robot
-makes quickest, not the one with the fewest moves. `anycube app --robot-sim`
-offers a simulated robot (port `sim`) that answers like the firmware and
-takes as long. The API is in `src/app/robots.rs`; the code in `src/robot/`.
+makes quickest, not the one with the fewest moves: the solver's own shortest
+answer is always one of the candidates, timed by the same planner, so the
+solution taken is never slower than it (the plan says both times). The
+3x3x3's tables are loaded when `anycube app` starts, a larger cube's when a
+robot is connected for it. `anycube app --robot-sim` offers a simulated robot
+(port `sim`) that answers like the firmware and takes as long. The API is in
+`src/app/robots.rs`; the code in `src/robot/`.
+
+The lift decides how much the rotator turns: at its lowest raised position
+(level 1) the top face alone, one more layer for each level above, the whole
+cube at the top level; with the lift down the cube rests in the flipper,
+which tips it over.
 
 ## How it works
 

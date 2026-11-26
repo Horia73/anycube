@@ -269,6 +269,36 @@ fn commands_sent_ahead_leave_no_gaps() {
     eprintln!("8 commands: {:.0} ms against {:.0} ms planned; mean gap {:.1} ms", elapsed, planned, gaps / 7.0);
 }
 
+/// The search for candidates given no time at all (as when it has run out before the first
+/// solution: cold tables, a slow machine): every solve still gets a plan and solves the cube.
+#[test]
+fn a_starved_search_never_fails_a_solve() {
+    tables();
+    let dir = std::env::temp_dir().join(format!("anycube-robot-session-{}-starved", std::process::id()));
+    let search = anycube::robot::fastest::Options { plain_ms: 0.0, search_ms: 0.0, total_ms: 0.0, ..Default::default() };
+    let s = Session::new(Config { settings_dir: Some(dir), sim_scale: Some(0.0), max_size: 50, photo_settle: Duration::ZERO, search });
+    let g = anycube::cuben::Geometry::new(3);
+    let mut since = 0;
+    for round in 0..12 {
+        // Each connect is a new simulated robot with a new scramble.
+        assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
+        let (raw, _, _, _) = sim_facelets(&s);
+        let facelets = g.to_string(&g.reframe(&g.from_string(&raw).unwrap(), &[]));
+        let r = s.solve(&json!({"size": 3, "facelets": facelets, "analysis_ms": 0}));
+        assert_eq!(r["ok"], true, "{}", r);
+        let events = read_until(&s, &mut since, &["done", "error"], false, Duration::from_secs(120));
+        assert_eq!(events.last().unwrap()["type"], "done", "round {}: {}", round, events.last().unwrap());
+        let plan = of_type(&events, "plan")[0];
+        assert!(plan["candidates"].as_u64().unwrap() >= 1 && !plan["moves"].as_array().unwrap().is_empty());
+        // The plain solver's answer is said with the plan, and the plan is never slower than it.
+        assert!(plan["plain"]["moves"].as_u64().unwrap() >= 1 && plan["est_ms"].as_f64().unwrap() <= plan["plain"]["est_ms"].as_f64().unwrap());
+        assert!(s.wait_idle(Duration::from_secs(5)));
+        let (_, solved, _, violations) = sim_facelets(&s);
+        assert!(solved && violations.is_empty(), "round {}: {:?}", round, violations);
+    }
+    assert_eq!(s.disconnect()["ok"], true);
+}
+
 fn sim_of(s: &Session) -> SimRobot {
     s.with_robot(|r| r.as_any().downcast_ref::<MultiCuber>().unwrap().sim().unwrap().clone()).unwrap()
 }

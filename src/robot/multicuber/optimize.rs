@@ -28,7 +28,13 @@
 //! (unless told otherwise) right after the flipper tipped the cube there,
 //! which is how every picture has been taken since 2018: the flipper's
 //! walls square the cube up.
+//!
+//! `Space::with_overlap` is the same search for a firmware that does not
+//! exist yet (a study: `overlap`, robots-spec/OVERLAP.md): the flipper,
+//! when the cube is off it, may move while the lift or the rotator moves.
+//! Such a pair is one more step between two states, with the pair's time.
 
+use super::overlap::{joinable, pair};
 use super::planner::{allowed, renamed, turn_perm, Cmd, Lift, Op, Planner, RobotState, CAMERA, PERM_X, PERM_Y};
 use super::timing::TimeModel;
 use crate::robot::physical::PhysicalCube;
@@ -49,6 +55,11 @@ enum Act {
     Flip(bool),
     /// The whole cube at level n.
     Whole(i8),
+    /// Overlap study: a lift move and the flipper's move to the other side,
+    /// started together (the flipper's command first if so).
+    LiftFlip(Lift, bool),
+    /// Overlap study: the whole cube at level n and the flipper's move, started together.
+    WholeFlip(i8),
 }
 
 fn turn_index(turns: i8) -> usize {
@@ -73,6 +84,10 @@ struct Target {
     pre_column: u32,
     pre_o: u8,
     post: Place,
+    /// The time of the turn (with the flipper's move, if it is made during it).
+    rot: u32,
+    /// Overlap study: the flipper moves to the other side during the turn.
+    joined: bool,
 }
 
 /// A state as `cost` keeps it: the start of its row of `dist`, its orientation.
@@ -107,9 +122,36 @@ pub struct Space {
     rot: [u32; 2],
 }
 
+/// The most states a move can be made from (two faces, four turns of the
+/// cube about them, the flipper on either side, and each again with the
+/// flipper moving during the turn).
+const MAX_TARGETS: usize = 32;
+
 impl Space {
+    /// The robot as it is: one command at a time.
     pub fn new(n: usize, t: &TimeModel) -> Space {
+        Space::build(n, t, false)
+    }
+
+    /// A study (`overlap`): the flipper's empty moves may be made while
+    /// the lift or the rotator moves. Not for the firmware of today.
+    pub fn with_overlap(n: usize, t: &TimeModel) -> Space {
+        Space::build(n, t, true)
+    }
+
+    fn build(n: usize, t: &TimeModel, overlap: bool) -> Space {
         let n8 = n as u8;
+        let op = |cmd: Cmd, lift_before: Lift| Op { cmd, remap: super::planner::Remap::None, photo: None, mv: None, lift_before, joined: false };
+        // The time of a lift move or rotator turn with the flipper's move to the other side, if they may overlap.
+        let joint = |lift: Lift, flip_up: bool, main: Cmd| -> Option<(bool, u32)> {
+            let first = joinable(n8, lift, flip_up, main).filter(|_| overlap)?;
+            let after = match main {
+                Cmd::Lift(to) => to,
+                _ => lift,
+            };
+            let flip = op(Cmd::Flip { up: !flip_up, normal: false }, if first { lift } else { after });
+            Some((first, cost_of(pair(t, &op(main, lift), &flip)?.end)))
+        };
         let lifts = n + 2;
         let count = lifts * 2 * ORIENTATIONS;
         // The 24 orientations, from the first by the flipper's and the rotator's turns.
@@ -152,6 +194,9 @@ impl Space {
                 for to in (0..=n8).map(Lift::Level).chain([Lift::Scan]) {
                     if allowed(n8, lift, flip_up, Cmd::Lift(to)) {
                         out.push((Act::Lift(to), sp.state(to, flip_up, o), cost_of(t.lift_pair_ms(lift, to) + t.overhead_ms)));
+                        if let Some((first, ms)) = joint(lift, flip_up, Cmd::Lift(to)) {
+                            out.push((Act::LiftFlip(to, first), sp.state(to, !flip_up, o), ms));
+                        }
                     }
                 }
                 let up = !flip_up;
@@ -163,7 +208,11 @@ impl Space {
                 if lift == Lift::Level(n8) {
                     for turns in TURNS {
                         if allowed(n8, lift, flip_up, Cmd::Rot(turns)) {
-                            out.push((Act::Whole(turns), sp.state(lift, flip_up, sp.find(&turned(frame, &PERM_Y, turns))), sp.rot[(turns == 2) as usize]));
+                            let o2 = sp.find(&turned(frame, &PERM_Y, turns));
+                            out.push((Act::Whole(turns), sp.state(lift, flip_up, o2), sp.rot[(turns == 2) as usize]));
+                            if let Some((_, ms)) = joint(lift, flip_up, Cmd::Rot(turns)) {
+                                out.push((Act::WholeFlip(turns), sp.state(lift, !flip_up, o2), ms));
+                            }
                         }
                     }
                 }
@@ -180,7 +229,7 @@ impl Space {
         for face in 0..6u8 {
             for depth in 1..n8.max(2) {
                 for turns in TURNS {
-                    let mut list = Vec::with_capacity(16);
+                    let mut list = Vec::with_capacity(MAX_TARGETS);
                     for o in 0..ORIENTATIONS {
                         let pos = sp.frames[o][face as usize];
                         if pos != U && pos != D {
@@ -190,8 +239,14 @@ impl Space {
                         let o2 = if pos == D || level == n8 { sp.find(&turned(sp.frames[o], &PERM_Y, turns)) } else { o };
                         for flip_up in [false, true] {
                             if allowed(n8, Lift::Level(level), flip_up, Cmd::Rot(turns)) {
-                                let (pre, post) = (sp.state(Lift::Level(level), flip_up, o), sp.state(Lift::Level(level), flip_up, o2));
-                                list.push(Target { pre, post_state: post, pre_column: (pre as usize / ORIENTATIONS * ORIENTATIONS) as u32, pre_o: o as u8, post: sp.place(post) });
+                                let pre = sp.state(Lift::Level(level), flip_up, o);
+                                let pre_column = (pre as usize / ORIENTATIONS * ORIENTATIONS) as u32;
+                                let post = sp.state(Lift::Level(level), flip_up, o2);
+                                list.push(Target { pre, post_state: post, pre_column, pre_o: o as u8, post: sp.place(post), rot: sp.rot[(turns == 2) as usize], joined: false });
+                                if let Some((_, ms)) = joint(Lift::Level(level), flip_up, Cmd::Rot(turns)) {
+                                    let post = sp.state(Lift::Level(level), !flip_up, o2);
+                                    list.push(Target { pre, post_state: post, pre_column, pre_o: o as u8, post: sp.place(post), rot: ms, joined: true });
+                                }
                             }
                         }
                     }
@@ -292,7 +347,7 @@ impl Space {
     /// The robot time (ms) of the quickest commands for `moves` from `start`,
     /// the lift brought down at the end.
     pub fn cost(&self, start: RobotState, moves: &[Turn]) -> f64 {
-        let mut now = [(Place::default(), 0u32); 16];
+        let mut now = [(Place::default(), 0u32); MAX_TARGETS];
         let mut next = now;
         now[0] = (self.place(self.start(start)), 0);
         let mut len = 1;
@@ -305,14 +360,13 @@ impl Space {
                 }
                 Turn::Layers { face, depth, turns } => {
                     let targets = self.targets(face, depth, turns);
-                    let rot = self.rot[(turns == 2) as usize];
                     for (j, t) in targets.iter().enumerate() {
                         let mut best = FAR;
                         for &(s, c) in &now[..len] {
                             let turn = self.rel[s.o as usize][t.pre_o as usize];
                             best = best.min(c + self.dist[(s.row + t.pre_column) as usize + turn as usize]);
                         }
-                        next[j] = (t.post, best + rot);
+                        next[j] = (t.post, best + t.rot);
                     }
                     len = targets.len();
                     std::mem::swap(&mut now, &mut next);
@@ -347,7 +401,7 @@ impl Space {
                     .iter()
                     .map(|t| {
                         let (i, c) = now.iter().enumerate().map(|(i, &(s, c, _))| (i, c + self.d(s, t.pre))).min_by_key(|&(i, c)| (c, i)).unwrap();
-                        (t.post_state, c + self.rot[(turns == 2) as usize], i)
+                        (t.post_state, c + t.rot, i)
                     })
                     .collect(),
             };
@@ -372,6 +426,9 @@ impl Space {
                     let level = if pos == U { depth } else { p.n - depth };
                     assert!((pos == U || pos == D) && p.lift == Lift::Level(level), "the move's face is at the rotator");
                     p.rot(turns, pos == D || level == p.n, Some(k as u16));
+                    if target.joined {
+                        self.flip_with_last(p);
+                    }
                     debug_assert_eq!(self.state(p.lift, p.flip_up, self.find(&p.frame)), target.post_state);
                 }
             }
@@ -394,7 +451,28 @@ impl Space {
             Act::Lift(l) => p.lift_to(l),
             Act::Flip(up) => p.flip(up, false),
             Act::Whole(turns) => p.rot(turns, true, None),
+            Act::LiftFlip(l, true) => {
+                p.flip(!p.flip_up, false);
+                let flip = p.last().expect("the flipper's command");
+                p.lift_to(l);
+                p.join(flip);
+            }
+            Act::LiftFlip(l, false) => {
+                p.lift_to(l);
+                self.flip_with_last(p);
+            }
+            Act::WholeFlip(turns) => {
+                p.rot(turns, true, None);
+                self.flip_with_last(p);
+            }
         }
+    }
+
+    /// Overlap study: the flipper's move to the other side, started together with the command just added.
+    fn flip_with_last(&self, p: &mut Planner) {
+        let main = p.last().expect("the command the flipper moves with");
+        p.flip(!p.flip_up, false);
+        p.join(main);
     }
 
     /// The quickest commands to where the robot can be switched off: lift down, flipper up.

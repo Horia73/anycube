@@ -99,6 +99,123 @@ fn same_up_to_rotation(g: &Geometry, a: &[u8], b: &[u8]) -> bool {
     fastest::orientations().iter().any(|t| g.turned(a, t) == b)
 }
 
+/// The mechanics, as MultiCuber's owner states them and as robot.py drove real cubes: with
+/// the lift at its lowest raised position (level 1) the rotator turns the top face alone;
+/// each level higher takes one more layer; at level n the whole cube turns; with the lift
+/// down (0) or at the scanning height the rotator holds nothing. Held three ways: the sticker
+/// model (which the simulator runs) against the stickers themselves, spelled out here without
+/// any of the solver's moves; the planner's commands for single moves; and robot.py's own
+/// command lists (the fixtures), which do on this model exactly what their moves do by hand.
+#[test]
+fn the_lift_decides_how_many_layers_turn() {
+    for n in [3usize, 4, 5] {
+        let nn = n * n;
+        let ids = |cube: &mut PhysicalCube| cube.facelets = (0..6 * nn).map(|i| i as u8).collect();
+        // Faces in the order U R F D L B, each row by row; the top row of a side face is next to U.
+        let (u, r, f, d, l, b) = (0, 1, 2, 3, 4, 5);
+        for level in 0..=n {
+            for (quarters, turns) in [(1, 1i8), (2, 2), (3, -1)] {
+                let mut cube = cube_at(n, RobotState { lift: Lift::Level(level as u8), flip_up: false });
+                ids(&mut cube);
+                let before = cube.facelets.clone();
+                cube.apply_line(&format!("ROT {}", turns));
+                // By hand: the top `level` layers a quarter turn clockwise seen from above, `quarters` times.
+                let mut want = before.clone();
+                for _ in 0..quarters {
+                    let old = want.clone();
+                    if level >= 1 {
+                        for i in 0..n {
+                            for j in 0..n {
+                                want[u * nn + i * n + j] = old[u * nn + (n - 1 - j) * n + i];
+                            }
+                        }
+                    }
+                    for row in 0..level {
+                        for j in 0..n {
+                            // Clockwise from above: the front goes to the left, the left to the back.
+                            want[l * nn + row * n + j] = old[f * nn + row * n + j];
+                            want[b * nn + row * n + j] = old[l * nn + row * n + j];
+                            want[r * nn + row * n + j] = old[b * nn + row * n + j];
+                            want[f * nn + row * n + j] = old[r * nn + row * n + j];
+                        }
+                    }
+                    if level == n {
+                        // The whole cube: the bottom face turns with it (anticlockwise seen from below).
+                        for i in 0..n {
+                            for j in 0..n {
+                                want[d * nn + i * n + j] = old[d * nn + j * n + (n - 1 - i)];
+                            }
+                        }
+                    }
+                }
+                assert_eq!(cube.facelets, want, "{0}x{0}x{0}: ROT {1} with the lift at level {2}", n, turns, level);
+                // The bottom layers never move below the level; the rotator is never used with the lift down.
+                assert_eq!(cube.violations.is_empty(), level >= 1);
+                if level < n {
+                    assert_eq!(cube.facelets[d * nn..(d + 1) * nn], before[d * nn..(d + 1) * nn]);
+                }
+            }
+        }
+        let mut cube = cube_at(n, RobotState { lift: Lift::Scan, flip_up: false });
+        ids(&mut cube);
+        let before = cube.facelets.clone();
+        cube.apply_line("ROT 1");
+        assert!(cube.facelets == before && !cube.violations.is_empty());
+        // The planner: k layers of the face on top are turned at level k, k layers of the face
+        // below at level n-k (the n-k layers above them turn instead), the turn in the same sense.
+        let timing = TimeModel::for_size(n);
+        let space = Space::new(n, &timing);
+        for depth in 1..n as u8 {
+            for (face, level) in [(0u8, depth), (3, n as u8 - depth)] {
+                for turns in [1i8, -1, 2] {
+                    let mut p = Planner::new(n).with_timing(&timing).from_state(PARKED);
+                    space.solution(&mut p, &[Turn::Layers { face, depth, turns }]);
+                    let lines: Vec<String> = p.ops.iter().map(Op::line).collect();
+                    assert_eq!(lines, [format!("LIFT {}", level), format!("ROT {}", turns), "LIFT 0".to_string()]);
+                }
+            }
+        }
+    }
+    // robot.py's own command lists, run on the sticker model, do what their moves do.
+    let data: serde_json::Value = serde_json::from_str(include_str!("fixtures/multicuber_planner.json")).unwrap();
+    let (mut cases, mut turns_at) = (0, std::collections::BTreeMap::new());
+    for c in data["cases"].as_array().unwrap() {
+        if c["kind"] != "solution" {
+            continue;
+        }
+        let n = c["n"].as_u64().unwrap() as usize;
+        if n > 5 {
+            // (Stickers are followed as bytes: up to 5x5x5, the sizes the firmware has tables for.)
+            continue;
+        }
+        let moves = Turn::parse_all(c["moves"].as_str().unwrap(), n).unwrap();
+        let start = RobotState { lift: Lift::parse(c["lift"].as_str().unwrap()).unwrap(), flip_up: c["flip_up"].as_bool().unwrap() };
+        let mut cube = cube_at(n, start);
+        cube.facelets = (0..6 * n * n).map(|i| i as u8).collect();
+        let want = by_hand(n, &cube.facelets, &moves);
+        for line in c["ops"].as_array().unwrap() {
+            // A line is the command, then what robot.py notes of it (@x: how the cube turned).
+            let text = line.as_str().unwrap().split(" @").next().unwrap().to_string();
+            if text.starts_with("ROT") {
+                *turns_at.entry((n, cube.lift.arg())).or_insert(0) += 1;
+            }
+            cube.apply_line(&text);
+        }
+        assert!(same_up_to_rotation(&cube.g, &want, &cube.facelets), "robot.py's commands for {} on a {}x{}x{}", c["moves"], n, n, n);
+        // (From the lift down, where robot.py really starts; the fixtures also try it from elsewhere.)
+        assert!(start.lift != Lift::Level(0) || cube.violations.is_empty(), "{:?}", cube.violations);
+        cases += 1;
+    }
+    // robot.py turns at every raised level of every size, and never with the lift down.
+    assert!(cases >= 100, "{} solutions of robot.py", cases);
+    for n in [3usize, 4, 5] {
+        for level in 1..=n {
+            assert!(turns_at.get(&(n, level.to_string())).copied().unwrap_or(0) > 0, "robot.py never turns a {0}x{0}x{0} at level {1}", n, level);
+        }
+        assert!(!turns_at.contains_key(&(n, "0".to_string())) && !turns_at.contains_key(&(n, "SCAN".to_string())));
+    }
+}
+
 /// Every state the robot can be in: each lift position with the flipper on either side.
 fn all_states(n: usize) -> Vec<RobotState> {
     let lifts = (0..=n as u8).map(Lift::Level).chain([Lift::Scan]);
@@ -180,7 +297,7 @@ fn allowed_is_exactly_what_the_2018_planner_sends() {
         for &lift in &lifts {
             for flip_up in [true, false] {
                 for &cmd in &cmds {
-                    let line = Op { cmd, remap: anycube::robot::multicuber::planner::Remap::None, photo: None, mv: None, lift_before: lift }.line();
+                    let line = Op { cmd, remap: anycube::robot::multicuber::planner::Remap::None, photo: None, mv: None, lift_before: lift, joined: false }.line();
                     let sent = seen.contains(&(key(lift), flip_up, line.clone()));
                     assert_eq!(
                         allowed(n as u8, lift, flip_up, cmd),
@@ -443,8 +560,8 @@ fn the_cheaper_plan_is_chosen() {
     let g = Geometry::new(3);
     let mut rng = Rng(4242);
     // Deterministic: no deadline, a cap far away.
-    let opts = Options { search_ms: 1e9, total_ms: 1e9, max_solutions: 1_000_000, depth: 12, ..Options::default() };
-    let (mut wins, mut saved) = (0, 0.0);
+    let opts = Options { plain_ms: 1e9, search_ms: 1e9, total_ms: 1e9, max_solutions: 1_000_000, depth: 12, mode: anycube::api::Mode::Fast, ..Options::default() };
+    let (mut wins, mut saved, mut rich) = (0, 0.0, 0);
     for k in 0..12 {
         let scramble: Vec<String> = random_turns(3, 25, false, &mut rng).iter().map(Turn::name).collect();
         let c = check(3, Input::Moves(&scramble.join(" ")), 3).unwrap();
@@ -460,13 +577,16 @@ fn the_cheaper_plan_is_chosen() {
             .collect();
         g.apply_seq(&mut f, &idx);
         assert!(g.is_solved(&f));
-        // The solver's own answer with the same first-phase depth (fast mode) is one of the candidates.
+        // The solver's own answer (/api/solve's, in the mode asked for) is one of the candidates.
         let plain = anycube::api::solve(&c, anycube::api::Mode::Fast).unwrap();
         let plain_turns: Vec<Turn> = plain.moves.iter().map(|&m| Turn::from_index(m)).collect();
         let plain_ms = cost(&plain_turns);
+        assert!(choice.plain.complete && choice.plain.moves == plain_turns && (choice.plain.est_ms - plain_ms).abs() < 1e-6);
         assert!(choice.est_ms <= plain_ms + 1e-6, "cube {}: chosen {:.0} ms, plain {:.0} ms", k, choice.est_ms, plain_ms);
         assert!((cost(&choice.moves) - choice.est_ms).abs() < 1e-6);
-        assert!(choice.candidates >= choice.solutions && choice.solutions > 10, "{} solutions", choice.solutions);
+        // (A cube whose shortest solution is a lucky one has few others within two moves of it.)
+        assert!(choice.candidates >= choice.solutions && choice.solutions >= 1, "{} solutions", choice.solutions);
+        rich += (choice.solutions > 10) as usize;
         saved += plain_ms - choice.est_ms;
         if choice.est_ms < plain_ms - 500.0 {
             wins += 1;
@@ -474,4 +594,5 @@ fn the_cheaper_plan_is_chosen() {
     }
     eprintln!("the robot-time choice: {:.0} ms a cube less than the solver's own answer, half a second or more on {} of 12", saved / 12.0, wins);
     assert!(wins >= 3 && saved / 12.0 > 300.0, "the robot-time choice saved half a second on only {} of 12 cubes", wins);
+    assert!(rich >= 8, "only {} of 12 cubes had more than ten solutions to choose from", rich);
 }

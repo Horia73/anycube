@@ -106,6 +106,21 @@ pub fn load(size: usize) {
     }
 }
 
+/// `load`, and the 3x3x3's tables read through. They are mapped from their
+/// files, so loading reads nothing: each page is read when a search first
+/// looks at it, which spreads thousands of waits over the first searches of
+/// a program. A solve that is timed from the first one on (a robot's) asks
+/// for this instead. The tables of larger cubes are gigabytes and are left
+/// to be read as they are needed.
+pub fn warm(size: usize) {
+    load(size);
+    #[cfg(not(target_arch = "wasm32"))]
+    if size == 3 {
+        t3().warm();
+        two3().warm();
+    }
+}
+
 /// A cube of even size has no middle stickers to say which colour belongs
 /// on which face, so the same cube can be written down in 24 ways. This
 /// picks the one in which the corner at D, B and L is at home: the colours

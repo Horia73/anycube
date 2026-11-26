@@ -375,6 +375,12 @@ impl T3 {
         load_or_gen(&table_dir().join(CE_FILE), CE_LEN, || gen_corners_edges(cperm_mv, uperm_mv))
     }
 
+    /// Reads the table of the second phase through, so that no search waits for the disk.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn warm(&self) {
+        self.ce.touch();
+    }
+
     /// Moves to put the corners and the U/D edges in place together, exactly
     /// up to `CE_DEPTH`; `CE_FAR` stands for more.
     #[inline(always)]

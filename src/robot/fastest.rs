@@ -9,17 +9,27 @@
 //! length is taken, and on which axis it works, changes the robot's time a
 //! lot.
 //!
-//! 3x3x3: the two-phase search goes on past its first solution and keeps
-//! every solution within two moves of the shortest it has met (all ways into
-//! the domino subgroup on the three axes, for the cube and its inverse,
-//! shortest first), for a few milliseconds. Each also counts in the orders
-//! of its pairs of opposite-face turns (U D or D U), which the robot makes
-//! differently. Searching the 24 orientations of the cube on top of that
-//! would add nothing: the axes and the inverse already give every way into
-//! the subgroup of each length, which is what the orientations would change.
+//! The plain solver's answer (what /api/solve gives for the cube, in the
+//! mode of `Options`) is always the first candidate, costed like every
+//! other, so the solution taken is never slower on the robot than it; and
+//! since it is always there, a cube that passed the check always gets a
+//! solution, whatever becomes of the search for more.
 //!
-//! Other sizes: the solver is run on the cube seen from each of the 24
-//! orientations, as long as the time allows, and the quickest is taken.
+//! 3x3x3: first the plain two-phase search, for the shortest solution
+//! (`plain_ms` at most: past that it gives the shortest it has, which
+//! `Choice::plain_complete` says). Then the search again, this time keeping
+//! every solution it meets of at most `slack` moves more than that one (all
+//! ways into the domino subgroup on the three axes, for the cube and its
+//! inverse, shortest first), for `search_ms`. Each also counts in the
+//! orders of its pairs of opposite-face turns (U D or D U), which the robot
+//! makes differently. Searching the 24 orientations of the cube on top of
+//! that would add nothing: the axes and the inverse already give every way
+//! into the subgroup of each length, which is what the orientations would
+//! change.
+//!
+//! Other sizes: the solver is run on the cube as it lies (the plain
+//! answer), then on the cube seen from each of the other 23 orientations,
+//! as long as the time allows, and the quickest is taken.
 
 use super::Turn;
 use crate::api::check::{ApiError, Checked};
@@ -30,14 +40,18 @@ use std::time::Instant;
 
 #[derive(Clone, Debug)]
 pub struct Options {
-    /// 3x3x3: how long the candidate search may run (ms).
+    /// 3x3x3: the longest the plain search for the shortest solution may
+    /// take (ms). Within it the answer is /api/solve's own; past it, the
+    /// shortest found by then.
+    pub plain_ms: f64,
+    /// 3x3x3: how long the search for more candidates may run after that (ms).
     pub search_ms: f64,
-    /// 3x3x3: no candidate is costed after this (ms from the start; the
-    /// shortest solutions are costed first).
+    /// 3x3x3: no candidate is costed after this (ms from the start of the
+    /// search for more; the shortest solutions are costed first).
     pub total_ms: f64,
     /// 3x3x3: at most this many solutions from the search.
     pub max_solutions: usize,
-    /// 3x3x3: moves above the shortest that a candidate may have.
+    /// 3x3x3: moves above the plain answer that a candidate may have.
     pub slack: usize,
     /// 3x3x3: the longest first phase followed.
     pub depth: usize,
@@ -45,15 +59,16 @@ pub struct Options {
     pub phase2: usize,
     /// Other sizes: the time (ms) after which no further orientation is started.
     pub orientation_ms: f64,
-    /// The solver's mode for other sizes.
+    /// The plain solver's mode (every size).
     pub mode: Mode,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
-            search_ms: 15.0,
-            total_ms: 25.0,
+            plain_ms: 1000.0,
+            search_ms: 150.0,
+            total_ms: 160.0,
             max_solutions: 2000,
             slack: 2,
             depth: 14,
@@ -64,11 +79,25 @@ impl Default for Options {
     }
 }
 
+/// The plain solver's answer, as a candidate.
+#[derive(Clone, Debug)]
+pub struct Plain {
+    pub moves: Vec<Turn>,
+    /// The robot's time (ms) for it as the solver gave it, by the same planner.
+    pub est_ms: f64,
+    /// The search for it ran to its end: it is /api/solve's own answer.
+    pub complete: bool,
+    /// What finding it took (ms).
+    pub compute_ms: f64,
+}
+
 #[derive(Clone, Debug)]
 pub struct Choice {
     pub moves: Vec<Turn>,
     /// The robot's estimate of its time (ms).
     pub est_ms: f64,
+    /// The plain solver's answer: the chosen solution is never slower than it.
+    pub plain: Plain,
     /// Move sequences whose robot time was computed.
     pub candidates: usize,
     /// Solutions the solver gave (before the orders of opposite turns).
@@ -183,82 +212,152 @@ fn verify(g: &Geometry, facelets: &[u8], moves: &[usize]) -> bool {
     g.is_solved(&f)
 }
 
-fn layers_index(t: &Turn) -> Option<usize> {
-    match *t {
-        Turn::Layers { face, depth, turns } => Some((face as usize + 6 * (depth as usize - 1)) * 3 + match turns {
-            1 => 0,
-            2 => 1,
-            _ => 2,
-        }),
-        Turn::Whole { .. } => None,
-    }
-}
-
 /// The quickest solution of a checked cube for a robot with time `cost`.
+///
+/// The plain solver's answer is always a candidate (`Choice::plain`), so a
+/// cube that passed the check always gets a solution and never a slower
+/// one than that. Each search is given a time (`Options`), kept to once it
+/// has a solution.
 pub fn choose(c: &Checked, cost: &Cost, opts: &Options) -> Result<Choice, ApiError> {
     let t0 = Instant::now();
-    let g = if c.size == 2 { Geometry::new(2) } else { Geometry::new(c.size) };
+    let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+    let after = |t: Instant, ms: f64| t + std::time::Duration::from_secs_f64(ms.clamp(0.0, 3.6e6) / 1000.0);
+    let g = Geometry::new(c.size);
     if g.is_solved(&c.facelets) {
-        return Ok(Choice { moves: Vec::new(), est_ms: cost(&[]), candidates: 1, solutions: 1, compute_ms: 0.0 });
+        let plain = Plain { moves: Vec::new(), est_ms: cost(&[]), complete: true, compute_ms: 0.0 };
+        return Ok(Choice { moves: Vec::new(), est_ms: plain.est_ms, plain, candidates: 1, solutions: 1, compute_ms: 0.0 });
     }
     let mut best = Best::default();
     let mut candidates = 0;
-    let solutions;
-    if c.size == 3 {
-        let c3 = Cube::from_small_facelets(&g.to_string(&c.facelets))
-            .ok()
-            .and_then(|x| x.with_home_centres())
-            .and_then(|x| crate::c3::C3::from_cube(&x))
-            .ok_or_else(|| ApiError::new("solver_failed", "not a 3x3x3 state"))?;
-        let deadline = t0 + std::time::Duration::from_secs_f64(opts.search_ms.max(0.0) / 1000.0);
-        let found = crate::api::solve::two3().candidates(
-            crate::api::solve::t3(),
+    let mut solutions = 0;
+    // A solution's orders of opposite turns, each costed.
+    let mut offer = |seq: &[usize], best: &mut Best| {
+        for s in orders(seq, 16) {
+            let turns: Vec<Turn> = s.iter().map(|&m| Turn::from_index(m)).collect();
+            candidates += 1;
+            best.offer(cost(&turns), &turns);
+        }
+    };
+    let as_plain = |seq: &[usize], complete: bool| {
+        let moves: Vec<Turn> = seq.iter().map(|&m| Turn::from_index(m)).collect();
+        Plain { est_ms: cost(&moves), moves, complete, compute_ms: ms(t0) }
+    };
+    let c3 = if c.size == 3 {
+        Cube::from_small_facelets(&g.to_string(&c.facelets)).ok().and_then(|x| x.with_home_centres()).and_then(|x| crate::c3::C3::from_cube(&x))
+    } else {
+        None
+    };
+    let plain;
+    if let Some(c3) = c3 {
+        let (two3, t3) = (crate::api::solve::two3(), crate::api::solve::t3());
+        // The plain search: the first candidate, whatever the time.
+        let effort = if opts.mode == Mode::Fast { crate::two3::Effort::FAST } else { crate::two3::Effort::NORMAL };
+        let (sol, complete) = two3.solve_until(t3, &c3, effort, after(t0, opts.plain_ms));
+        let seq: Vec<usize> = sol.iter().map(|&m| m as usize).collect();
+        if !verify(&g, &c.facelets, &seq) {
+            return Err(ApiError::new("solver_failed", "the solver's answer does not solve the cube; this is a bug in the solver"));
+        }
+        plain = as_plain(&seq, complete);
+        solutions += 1;
+        offer(&seq, &mut best);
+        // More candidates, none more than the slack longer than that one.
+        let t1 = Instant::now();
+        let found = two3.candidates(
+            t3,
             &c3,
-            crate::two3::Candidates { depth: opts.depth, slack: opts.slack, max: opts.max_solutions, deadline: Some(deadline), phase2: opts.phase2 },
+            crate::two3::Candidates {
+                depth: opts.depth,
+                slack: opts.slack,
+                max: opts.max_solutions,
+                deadline: Some(after(t1, opts.search_ms)),
+                phase2: opts.phase2,
+                seed: Some(seq.len()),
+            },
         );
-        solutions = found.len();
-        let total = std::time::Duration::from_secs_f64(opts.total_ms.max(opts.search_ms).max(0.0) / 1000.0);
-        for (k, sol) in found.iter().enumerate() {
-            if k > 0 && k % 32 == 0 && t0.elapsed() > total {
+        let total = after(t1, opts.total_ms.max(opts.search_ms));
+        for found in &found {
+            // The shortest come first; they are costed while there is time.
+            if Instant::now() > total {
                 break;
             }
-            let seq: Vec<usize> = sol.iter().map(|&m| m as usize).collect();
-            for s in orders(&seq, 16) {
-                let turns: Vec<Turn> = s.iter().map(|&m| Turn::from_index(m)).collect();
-                candidates += 1;
-                best.offer(cost(&turns), &turns);
+            let more: Vec<usize> = found.iter().map(|&m| m as usize).collect();
+            if more == seq || !verify(&g, &c.facelets, &more) {
+                continue;
             }
+            solutions += 1;
+            offer(&more, &mut best);
         }
     } else {
-        let mut count = 0;
+        let mut first = None;
         for (i, turns) in orientations().iter().enumerate() {
-            if i > 0 && t0.elapsed().as_secs_f64() * 1000.0 > opts.orientation_ms {
+            if i > 0 && ms(t0) > opts.orientation_ms {
                 break;
             }
             let seen = if c.size % 2 == 1 { g.reframe(&c.facelets, turns) } else { g.held(&c.facelets, turns) };
             let solved = match solve(&Checked { size: c.size, facelets: seen, scramble: None }, opts.mode) {
                 Ok(s) => s,
+                // The cube as it lies is the plain answer: without it there is none.
                 Err(e) if i == 0 => return Err(e),
                 Err(_) => continue,
             };
-            count += 1;
             let fm = move_map(&g, turns);
             let seq: Vec<usize> = solved.moves.iter().map(|&m| fm[m]).collect();
             if !verify(&g, &c.facelets, &seq) {
+                if i == 0 {
+                    return Err(ApiError::new("solver_failed", "the solver's answer does not solve the cube; this is a bug in the solver"));
+                }
                 continue;
             }
-            for s in orders(&seq, 16) {
-                let moves: Vec<Turn> = s.iter().map(|&m| Turn::from_index(m)).collect();
-                candidates += 1;
-                best.offer(cost(&moves), &moves);
+            if i == 0 {
+                first = Some(as_plain(&seq, true));
+            }
+            solutions += 1;
+            offer(&seq, &mut best);
+        }
+        plain = first.expect("the first orientation was solved or the error returned");
+    }
+    let (est_ms, moves) = best.0.expect("the plain answer was offered");
+    debug_assert!(est_ms <= plain.est_ms);
+    Ok(Choice { moves, est_ms, plain, candidates, solutions, compute_ms: ms(t0) })
+}
+
+/// How many cubes `warm` solves.
+const WARM_SOLVES: u64 = 4;
+
+/// Makes the first choice of a program as quick as any later one, once for
+/// each size: the tables are read through (`api::solve::warm`) and, for the
+/// 3x3x3, a few random cubes are solved as `choose` solves them, which
+/// wakes the cores and brings the search and its tables into the
+/// processor's caches. Without this the first choices of a fresh program
+/// spend their few milliseconds waiting for pages and find a handful of
+/// candidates where later ones find hundreds. Whoever calls while another
+/// call is at it waits until it is done. Returns whether this call did the work.
+pub fn warm(size: usize, cost: &Cost, opts: &Options) -> bool {
+    static DONE: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+    let mut done = DONE.lock().unwrap_or_else(|e| e.into_inner());
+    if done.contains(&size) {
+        return false;
+    }
+    crate::api::solve::warm(size);
+    if size == 3 {
+        // Cubes mixed by thirty moves each, the same ones every time.
+        let mut seed = 0x3a57_e57_u64;
+        for _ in 0..WARM_SOLVES {
+            let moves: Vec<String> = (0..30)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    Turn::from_index((seed % 18) as usize).name()
+                })
+                .collect();
+            if let Ok(cube) = crate::api::check(3, crate::api::Input::Moves(&moves.join(" ")), 3) {
+                // Both searches, each for a short while.
+                let quick = Options { plain_ms: opts.plain_ms.min(30.0), search_ms: opts.search_ms.min(15.0), total_ms: opts.total_ms.min(25.0), ..opts.clone() };
+                let _ = choose(&cube, cost, &quick);
             }
         }
-        solutions = count;
     }
-    let (est_ms, moves) = best.0.ok_or_else(|| ApiError::new("solver_failed", "no solution was found"))?;
-    let seq: Vec<usize> = moves.iter().filter_map(layers_index).collect();
-    if !verify(&g, &c.facelets, &seq) {
-        return Err(ApiError::new("solver_failed", "the chosen solution does not solve the cube; this is a bug"));
-    }
-    Ok(Choice { moves, est_ms, candidates, solutions, compute_ms: t0.elapsed().as_secs_f64() * 1000.0 })
+    done.push(size);
+    true
 }

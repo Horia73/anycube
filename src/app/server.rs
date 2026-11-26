@@ -555,6 +555,9 @@ pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Con
         settings: Mutex::new(super::data_dir().join("settings.json")), max_size,
         robots: crate::robot::session::Session::new(robots),
     });
+    // The 3x3x3's solver tables now, in the background, so that a robot's first solve finds
+    // them in memory (190 MB; a larger cube's are loaded when a robot is connected for it).
+    shared.robots.preload(3);
     let jobs = shared.clone();
     std::thread::spawn(move || run_jobs(jobs));
     std::thread::spawn(move || {

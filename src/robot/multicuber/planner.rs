@@ -4,13 +4,27 @@
 //! `Planner` in MultiCuber's `robot.py`, ported faithfully), and the rule
 //! that says which command may follow in which state (`allowed`).
 //!
-//! The robot has a lift that raises the cube into a rotator (at level k the
-//! rotator turns the k top layers, at level n the whole cube; at 0 the cube
-//! sits in the flipper), a flipper that tips the cube about the left-right
-//! axis when the lift is at 0 and moves alone otherwise, and the rotator.
-//! A turn of U (k layers) is LIFT k + ROT; a turn of D (k layers) is
-//! LIFT n-k + ROT, after which the part of the cube with the solver's frame
-//! has turned, so the side faces have new names.
+//! The robot has a lift that raises the cube into a rotator, a flipper
+//! that tips the cube about the left-right axis when the lift is at 0 and
+//! moves alone otherwise, and the rotator.
+//!
+//! The lift decides how much of the cube the rotator turns. At 0, its
+//! rest, the cube sits in the flipper and the rotator holds nothing (no
+//! ROT is ever sent there). Level 1, the lowest of the raised positions
+//! (370 steps on a 3x3x3), brings the top layer alone into the rotator: a
+//! ROT there turns the top face. Each level higher (some 50 to 70 steps)
+//! brings in one more layer: level 2 turns the top two layers, level k the
+//! top k, and at level n the whole cube is in the rotator and turns as one.
+//! The scanning height is below level 1: the cube is clear of the flipper
+//! there and of the rotator too.
+//!
+//! So a turn of U (k layers) is LIFT k + ROT. A turn of D (k layers) is
+//! LIFT n-k + ROT: the top n-k layers turn over the bottom k, which is the
+//! same change to the cube as D turned the same way and the whole cube
+//! turned with it (y), so afterwards the side faces have new names (the
+//! command's remap). `physical` has the same mechanics on stickers and
+//! `sim` runs them; `tests/robot_plans.rs` holds all three against the
+//! command lists that robot.py itself made (`the_lift_decides_how_many_layers_turn`).
 //!
 //! Which commands, in which order, is decided in `optimize` (the planner
 //! that drives the robot). The 2018 rules live on in `legacy`, only as the
@@ -97,6 +111,10 @@ pub struct Op {
     /// What the lift was before: the time of a LIFT depends on where it starts,
     /// and a FLIP carries the cube only from level 0.
     pub lift_before: Lift,
+    /// Overlap study only (`overlap`): started together with the command
+    /// before it instead of after it. Never set for the firmware of today,
+    /// which runs one command at a time.
+    pub joined: bool,
 }
 
 impl Op {
@@ -191,6 +209,7 @@ pub struct Planner<'a> {
     /// Robot time of the commands so far, under the time model.
     pub ms: f64,
     pub count: usize,
+    last: Option<Op>,
 }
 
 impl<'a> Planner<'a> {
@@ -205,6 +224,7 @@ impl<'a> Planner<'a> {
             timing: None,
             ms: 0.0,
             count: 0,
+            last: None,
         }
     }
 
@@ -230,14 +250,36 @@ impl<'a> Planner<'a> {
 
     // -- primitives (they keep the state as the firmware does)
     fn emit(&mut self, cmd: Cmd, remap: Remap, mv: Option<u16>, lift_before: Lift) {
-        let op = Op { cmd, remap, photo: None, mv, lift_before };
+        let op = Op { cmd, remap, photo: None, mv, lift_before, joined: false };
         if let Some(t) = self.timing {
             self.ms += t.op_ms(&op);
         }
         self.count += 1;
+        self.last = Some(op);
         if self.keep {
             self.ops.push(op);
         }
+    }
+
+    /// Overlap study (`overlap`): the last two commands, a lift move or a
+    /// rotator turn and a move of the flipper alone, are started together.
+    /// The time counted for them becomes that of the pair.
+    pub fn join(&mut self, before: Op) {
+        let Some(mut last) = self.last else { return };
+        last.joined = true;
+        if let Some(t) = self.timing {
+            let pair = super::overlap::pair(t, &before, &last).expect("only pairs that may overlap are joined");
+            self.ms += pair.end - t.op_ms(&before) - t.op_ms(&last);
+        }
+        self.last = Some(last);
+        if self.keep {
+            *self.ops.last_mut().expect("the command was kept") = last;
+        }
+    }
+
+    /// The command added last.
+    pub fn last(&self) -> Option<Op> {
+        self.last
     }
 
     pub fn lift_to(&mut self, level: Lift) {
@@ -308,7 +350,7 @@ impl<'a> Planner<'a> {
         match self.ops.last_mut() {
             Some(last) => last.photo = Some(photo),
             None => {
-                self.ops.push(Op { cmd: Cmd::State, remap: Remap::None, photo: Some(photo), mv: None, lift_before: self.lift });
+                self.ops.push(Op { cmd: Cmd::State, remap: Remap::None, photo: Some(photo), mv: None, lift_before: self.lift, joined: false });
                 self.count += 1;
             }
         }

@@ -44,11 +44,18 @@ pub struct Config {
 
 impl Config {
     /// From the environment: `ANYCUBE_ROBOT_SIM` (time scale),
-    /// `ANYCUBE_ROBOT_PHOTO_SETTLE_MS`, `ANYCUBE_ROBOT_SEARCH_MS`.
+    /// `ANYCUBE_ROBOT_PHOTO_SETTLE_MS`, and the times of the choice of a
+    /// 3x3x3's solution (`fastest::Options`): `ANYCUBE_ROBOT_PLAIN_MS` (the
+    /// plain search for the shortest), `ANYCUBE_ROBOT_SEARCH_MS` (the search
+    /// for more candidates).
     pub fn from_env(settings_dir: Option<PathBuf>, max_size: usize) -> Config {
         let var = |k: &str| std::env::var(k).ok().and_then(|v| v.trim().parse::<f64>().ok());
         let mut search = Options::default();
+        if let Some(ms) = var("ANYCUBE_ROBOT_PLAIN_MS") {
+            search.plain_ms = ms.max(0.0);
+        }
         if let Some(ms) = var("ANYCUBE_ROBOT_SEARCH_MS") {
+            search.total_ms += ms.max(0.0) - search.search_ms;
             search.search_ms = ms.max(0.0);
         }
         Config {
@@ -75,6 +82,8 @@ struct State {
     run: Option<Run>,
     /// A thread is driving the robot.
     busy: bool,
+    /// Counts the times the robot was taken: whose turn `busy` stands for.
+    turn: u64,
     acks: HashSet<(String, usize)>,
     count: u64,
     /// Counts the connections: a watcher of an earlier one stops.
@@ -286,13 +295,9 @@ impl Session {
                 return me.lost(generation, "the robot's board is no longer plugged in");
             }
         });
-        // The solver's tables for this size, now, so that a solve never waits for them.
-        let me = self.clone();
-        std::thread::spawn(move || {
-            let t = Instant::now();
-            crate::api::solve::load(size);
-            me.log(None, format!("solver tables for {0}x{0}x{0} ready in {1} ms", size, t.elapsed().as_millis()));
-        });
+        // The solver's tables for this size (the 3x3x3's were made ready when the program
+        // started; a larger cube's are gigabytes and are loaded when its size is chosen, here).
+        self.preload(size);
         json!({"ok": true, "size": size, "info": info, "port": port})
     }
 
@@ -384,8 +389,37 @@ impl Session {
         }
     }
 
+    /// Makes the solver ready for a size in the background, and says so in a
+    /// `log` event when it is. `anycube app` asks this for the 3x3x3 when it
+    /// starts, a connect for the size of its cube.
+    pub fn preload(&self, size: usize) {
+        let me = self.clone();
+        std::thread::spawn(move || {
+            let t = Instant::now();
+            me.warm(size);
+            me.log(None, format!("solver tables for {0}x{0}x{0} ready in {1} ms", size, t.elapsed().as_millis()));
+        });
+    }
+
+    /// The solver made ready for a size (once in the life of the program):
+    /// tables loaded and, for the 3x3x3, read through and a few cubes
+    /// solved, so that the first solve is as quick as the hundredth
+    /// (`fastest::warm`). Whoever calls while that is going on waits for it.
+    fn warm(&self, size: usize) {
+        // Loading may take long (a table that must be built): not while holding the robot.
+        crate::api::solve::load(size);
+        let opts = &self.inner.config.search;
+        // Costed with the robot's own times if it is free to say them, else by the number of moves.
+        let cost = self.inner.robot.try_lock().ok().and_then(|guard| guard.as_ref().map(|robot| robot.estimator()));
+        match cost {
+            Some(cost) => fastest::warm(size, &*cost, opts),
+            None => fastest::warm(size, &|moves: &[super::Turn]| moves.len() as f64, opts),
+        };
+    }
+
     /// Starts a run for a robot that is free: the new run's id.
-    fn begin(&self, id: Option<&str>, keep_scan: bool) -> Result<String, Value> {
+    /// With it the turn, to give the robot back with (`end`, `emit_last`).
+    fn begin(&self, id: Option<&str>, keep_scan: bool) -> Result<(String, u64), Value> {
         let mut s = self.inner.state.lock().unwrap();
         if s.connected.is_none() || s.lost.is_some() {
             return Err(err("not_connected", "no robot is connected"));
@@ -401,36 +435,52 @@ impl Session {
             s.run = Some(Run { id, started: Instant::now(), scan_ms: None });
         }
         s.busy = true;
+        s.turn += 1;
         s.acks.clear();
         self.inner.stop.clear();
-        Ok(s.run.as_ref().unwrap().id.clone())
+        Ok((s.run.as_ref().unwrap().id.clone(), s.turn))
     }
 
-    fn end(&self) {
+    /// The robot is free again, unless it was given back already and somebody else has it.
+    fn end(&self, turn: u64) {
         let mut s = self.inner.state.lock().unwrap();
-        s.busy = false;
+        if s.turn == turn {
+            s.busy = false;
+        }
         self.inner.changed.notify_all();
     }
 
+    /// The event that ends a turn well (`scan-done`, `done`), the robot given
+    /// back in the same breath: whoever answers the event at once (the page
+    /// sends its solve the moment it has `scan-done`) finds the robot free,
+    /// not `busy` for a few microseconds more.
+    fn emit_last(&self, turn: u64, kind: &str, run: &str, fields: Value) {
+        let mut s = self.inner.state.lock().unwrap();
+        if s.turn == turn {
+            s.busy = false;
+        }
+        self.emit_locked(&mut s, kind, Some(run), fields);
+    }
+
     pub fn scan(&self) -> Value {
-        let id = match self.begin(None, false) {
-            Ok(id) => id,
+        let (id, turn) = match self.begin(None, false) {
+            Ok(begun) => begun,
             Err(e) => return e,
         };
         let me = self.clone();
         let run = id.clone();
         std::thread::spawn(move || {
-            me.scan_run(&run);
-            me.end();
+            me.scan_run(&run, turn);
+            me.end(turn);
         });
         json!({"ok": true, "run": id})
     }
 
-    fn scan_run(&self, run: &str) {
+    fn scan_run(&self, run: &str, turn: u64) {
         let mut guard = self.inner.robot.lock().unwrap();
         let result = match guard.as_mut() {
             None => Err(RobotError::new("not_connected", "no robot is connected")),
-            Some(robot) => self.scan_on(run, robot.as_mut()),
+            Some(robot) => self.scan_on(run, turn, robot.as_mut()),
         };
         let note = guard.as_mut().and_then(|r| r.after_run_note());
         if let Err(e) = result {
@@ -442,7 +492,7 @@ impl Session {
         }
     }
 
-    fn scan_on(&self, run: &str, robot: &mut dyn Robot) -> Result<(), RobotError> {
+    fn scan_on(&self, run: &str, turn: u64, robot: &mut dyn Robot) -> Result<(), RobotError> {
         let t0 = Instant::now();
         robot.sync()?;
         let plan = robot.plan_scan();
@@ -453,7 +503,7 @@ impl Session {
         if let Some(r) = self.inner.state.lock().unwrap().run.as_mut().filter(|r| r.id == run) {
             r.scan_ms = Some(scan_ms);
         }
-        self.emit("scan-done", Some(run), json!({"scan_ms": scan_ms}));
+        self.emit_last(turn, "scan-done", run, json!({"scan_ms": scan_ms}));
         Ok(())
     }
 
@@ -537,25 +587,31 @@ impl Session {
             Err(e) => return err(e.code, e.message),
         };
         let analysis_ms = body["analysis_ms"].as_f64().unwrap_or(0.0);
-        let id = match self.begin(body["run"].as_str(), true) {
-            Ok(id) => id,
+        let (id, turn) = match self.begin(body["run"].as_str(), true) {
+            Ok(begun) => begun,
             Err(e) => return e,
         };
         let me = self.clone();
         std::thread::spawn(move || {
-            me.solve_run(&id, cube, analysis_ms);
-            me.end();
+            me.solve_run(&id, turn, cube, analysis_ms);
+            me.end(turn);
         });
         json!({"ok": true})
     }
 
-    fn solve_run(&self, run: &str, cube: crate::api::Checked, analysis_ms: f64) {
-        // A solve never waits for tables while it is timed; the connect started loading them.
-        crate::api::solve::load(cube.size);
+    fn solve_run(&self, run: &str, turn: u64, cube: crate::api::Checked, analysis_ms: f64) {
+        // The tables were made ready when the program started (3x3x3) or at the connect. If
+        // that is still going on the solve waits for it, and the wait counts as compute time.
+        let t = Instant::now();
+        self.warm(cube.size);
+        let waited_ms = t.elapsed().as_secs_f64() * 1000.0;
+        if waited_ms > 5.0 {
+            self.log(Some(run), format!("waited {:.0} ms for the solver tables", waited_ms));
+        }
         let mut guard = self.inner.robot.lock().unwrap();
         let result = match guard.as_mut() {
             None => Err(RobotError::new("not_connected", "no robot is connected")),
-            Some(robot) => self.solve_on(run, robot.as_mut(), &cube, analysis_ms),
+            Some(robot) => self.solve_on(run, turn, robot.as_mut(), &cube, analysis_ms, waited_ms),
         };
         let note = guard.as_mut().and_then(|r| r.after_run_note());
         if let Err(e) = result {
@@ -567,7 +623,7 @@ impl Session {
         }
     }
 
-    fn solve_on(&self, run: &str, robot: &mut dyn Robot, cube: &crate::api::Checked, analysis_ms: f64) -> Result<(), RobotError> {
+    fn solve_on(&self, run: &str, turn: u64, robot: &mut dyn Robot, cube: &crate::api::Checked, analysis_ms: f64, waited_ms: f64) -> Result<(), RobotError> {
         robot.sync()?;
         let choice = {
             let cost = robot.estimator();
@@ -577,7 +633,8 @@ impl Session {
             return Err(RobotError::new("stopped", "stopped"));
         }
         let plan = robot.plan_solution(&choice.moves);
-        let compute_ms = (choice.compute_ms * 10.0).round() / 10.0;
+        // All the time from the solve's arrival to the plan, a wait for the tables included.
+        let compute_ms = ((waited_ms + choice.compute_ms) * 10.0).round() / 10.0;
         let ops_json: Vec<Value> =
             plan.ops.iter().map(|o| json!({"cmd": o.cmd, "arg": o.arg, "est_ms": o.est_ms, "move": o.mv})).collect();
         self.emit(
@@ -589,6 +646,13 @@ impl Session {
                 "eta_ms": plan.eta_ms,
                 "compute_ms": compute_ms,
                 "candidates": choice.candidates,
+                "plain": {
+                    "moves": choice.plain.moves.len(),
+                    "est_ms": choice.plain.est_ms.round(),
+                    "complete": choice.plain.complete,
+                    "compute_ms": (choice.plain.compute_ms * 10.0).round() / 10.0,
+                },
+                "est_ms": choice.est_ms.round(),
                 "metric": "robot-ms",
                 "planner": robot.planner_name(),
             }),
@@ -602,9 +666,10 @@ impl Session {
             let r = s.run.as_ref().filter(|r| r.id == run);
             (r.and_then(|r| r.scan_ms).unwrap_or(0.0), r.map_or(0.0, |r| (r.started.elapsed().as_secs_f64() * 1000.0).round()))
         };
-        self.emit(
+        self.emit_last(
+            turn,
             "done",
-            Some(run),
+            run,
             json!({"times": {"scan_ms": scan_ms, "analysis_ms": analysis_ms, "compute_ms": compute_ms, "exec_ms": exec_ms, "total_ms": total_ms}}),
         );
         Ok(())

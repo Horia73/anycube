@@ -27,6 +27,7 @@
 pub mod legacy;
 pub mod link;
 pub mod optimize;
+pub mod overlap;
 pub mod planner;
 pub mod sim;
 pub mod timing;
@@ -171,7 +172,7 @@ pub struct MultiCuber {
     enabled: bool,
     sim: Option<SimRobot>,
     /// The quickest ways between the robot's states under `timing`.
-    space: Space,
+    space: Arc<Space>,
     /// A command's time was learned since `space` was made.
     space_stale: bool,
     /// Pictures only right after the flipper tipped the cube in front of
@@ -208,7 +209,7 @@ impl MultiCuber {
         }
         let mut hello = hello;
         hello.insert("size".into(), n.to_string());
-        let space = Space::new(n, &timing);
+        let space = Arc::new(Space::new(n, &timing));
         let scan_seated = std::env::var("ANYCUBE_ROBOT_SCAN_SEATED").map_or(true, |v| v.trim() != "0");
         let mut robot = MultiCuber {
             link,
@@ -240,12 +241,12 @@ impl MultiCuber {
 
     fn planned(&self, ops: Vec<Op>) -> Plan {
         // ENABLE before, DISABLE after, as robot.py does for every scan and solve.
-        let enable = Op { cmd: Cmd::Enable, remap: Remap::None, photo: None, mv: None, lift_before: self.state.lift };
+        let enable = Op { cmd: Cmd::Enable, remap: Remap::None, photo: None, mv: None, lift_before: self.state.lift, joined: false };
         let end = ops.last().map_or(self.state.lift, |o| match o.cmd {
             Cmd::Lift(l) => l,
             _ => o.lift_before,
         });
-        let disable = Op { cmd: Cmd::Disable, remap: Remap::None, photo: None, mv: None, lift_before: end };
+        let disable = Op { cmd: Cmd::Disable, remap: Remap::None, photo: None, mv: None, lift_before: end, joined: false };
         let mut out = Vec::with_capacity(ops.len() + 2);
         let mut eta = 0.0;
         for op in std::iter::once(enable).chain(ops).chain(std::iter::once(disable)) {
@@ -286,7 +287,7 @@ impl MultiCuber {
 
     /// The quickest ways again, after command times were learned or set.
     pub fn refresh(&mut self) {
-        self.space = Space::new(self.n, &self.timing);
+        self.space = Arc::new(Space::new(self.n, &self.timing));
         self.space_stale = false;
     }
 
@@ -323,7 +324,7 @@ fn op_of(p: &PlannedOp, lift: Lift) -> Op {
         "DISABLE" => Cmd::Disable,
         _ => Cmd::State,
     };
-    Op { cmd, remap: Remap::None, photo: None, mv: None, lift_before: lift }
+    Op { cmd, remap: Remap::None, photo: None, mv: None, lift_before: lift, joined: false }
 }
 
 impl Robot for MultiCuber {
@@ -370,8 +371,8 @@ impl Robot for MultiCuber {
         self.planned(self.solution_ops(moves))
     }
 
-    fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + '_> {
-        let (space, start) = (&self.space, self.state);
+    fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + Send> {
+        let (space, start) = (self.space.clone(), self.state);
         Box::new(move |moves| space.cost(start, moves))
     }
 

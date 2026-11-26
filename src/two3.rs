@@ -49,6 +49,13 @@ impl Effort {
 /// `slack` moves more than the shortest so far, with first phases of up to
 /// `depth` moves, until it has `max` of them or `deadline` passes. Each
 /// first phase gives up to `phase2` second phases of its shortest length.
+///
+/// `seed`: the length of a solution the caller already has (the plain
+/// search's). The slack then counts from it from the start, so nothing
+/// longer than `seed + slack` is ever kept, and the deadline may end the
+/// search with nothing. Without a seed a deadline never ends the search
+/// with nothing: it goes on until it has one solution, however late that
+/// is (cold tables, a slow machine).
 #[derive(Clone, Copy, Debug)]
 pub struct Candidates {
     pub depth: usize,
@@ -56,6 +63,7 @@ pub struct Candidates {
     pub max: usize,
     pub deadline: Option<Instant>,
     pub phase2: usize,
+    pub seed: Option<usize>,
 }
 
 /// Solutions met by a search that keeps more than the best.
@@ -64,10 +72,11 @@ struct Collector {
     max: usize,
     phase2: usize,
     deadline: Option<Instant>,
+    /// The caller has a solution already: the search may end with none.
+    seeded: bool,
     found: Mutex<Vec<(usize, Vec<u8>)>>,
     count: AtomicUsize,
     stop: AtomicBool,
-    ticks: AtomicUsize,
 }
 
 impl Collector {
@@ -76,8 +85,9 @@ impl Collector {
         self.stop.load(Relaxed)
     }
 
-    fn tick(&self) {
-        if self.ticks.fetch_add(1, Relaxed) % 64 == 63 && self.deadline.is_some_and(|d| Instant::now() >= d) {
+    /// Looks at the clock: past the deadline the search stops, once there is a solution.
+    fn check(&self) {
+        if (self.seeded || self.count.load(Relaxed) > 0) && self.deadline.is_some_and(|d| Instant::now() >= d) {
             self.stop.store(true, Relaxed);
         }
     }
@@ -87,6 +97,24 @@ impl Collector {
         if self.count.fetch_add(1, Relaxed) + 1 >= self.max {
             self.stop.store(true, Relaxed);
         }
+        // The first solution after the deadline ends the search at once.
+        self.check();
+    }
+}
+
+/// The time of a search for the best solution alone (`Two3::solve_until`).
+struct Halt {
+    until: Instant,
+    stop: AtomicBool,
+}
+
+impl Halt {
+    /// Whether the time is over (asked only once there is a solution).
+    fn check(&self) -> bool {
+        if !self.stop.load(Relaxed) && Instant::now() >= self.until {
+            self.stop.store(true, Relaxed);
+        }
+        self.stop.load(Relaxed)
     }
 }
 
@@ -199,6 +227,11 @@ impl Two3 {
         Two3 { first, cp_mv, cdist, edge_moves }
     }
 
+    /// Reads the table of the first phase through, so that no search waits for the disk.
+    pub fn warm(&self) {
+        self.first.warm();
+    }
+
     /// A short solution in outer moves (0..18); see `Effort` for how hard it looks.
     pub fn solve(&self, t: &T3, cube: &C3, effort: Effort) -> Vec<u8> {
         self.solve_counted(t, cube, effort).0
@@ -208,7 +241,7 @@ impl Two3 {
     /// goes on past its effort until it has a solution, this stops there; and a first phase
     /// that leaves too few moves for the second is not followed, so a low limit is quick.
     pub fn solve_within(&self, t: &T3, cube: &C3, effort: Effort, max_len: usize) -> Option<Vec<u8>> {
-        self.search(t, cube, effort, Some(max_len), 0, None).0
+        self.search(t, cube, effort, Some(max_len), 0, None, None).0
     }
 
     /// Many short solutions instead of one: for a robot, whose time for a
@@ -228,12 +261,14 @@ impl Two3 {
             max: opts.max.max(1),
             phase2: opts.phase2.max(1),
             deadline: opts.deadline,
+            seeded: opts.seed.is_some(),
             found: Mutex::new(Vec::new()),
             count: AtomicUsize::new(0),
             stop: AtomicBool::new(false),
-            ticks: AtomicUsize::new(0),
         };
-        self.search(t, cube, Effort { depth: opts.depth, variants: 6 }, None, 0, Some(&c));
+        // A seed stands as the best solution so far (a limit one below it starts the search so):
+        // the slack counts from its length.
+        self.search(t, cube, Effort { depth: opts.depth, variants: 6 }, opts.seed.map(|len| len.saturating_sub(1)), 0, Some(&c), None);
         let ct = cube_tables();
         let mut variants = Vec::new();
         for (r, _, _) in &t.frames {
@@ -331,7 +366,7 @@ impl Two3 {
                     if start > depth || start > limit {
                         return None;
                     }
-                    let sol = self.search(t, &cubes[k].1, Effort { depth, variants: 6 }, Some(limit), start, None).0?;
+                    let sol = self.search(t, &cubes[k].1, Effort { depth, variants: 6 }, Some(limit), start, None, None).0?;
                     best.fetch_min(cubes[k].0 + sol.len(), Relaxed);
                     Some((k, sol))
                 })
@@ -359,8 +394,19 @@ impl Two3 {
 
     /// The solution and the number of ways into the subgroup that were looked at.
     pub fn solve_counted(&self, t: &T3, cube: &C3, effort: Effort) -> (Vec<u8>, u64) {
-        let (sol, ways) = self.search(t, cube, effort, None, 0, None);
+        let (sol, ways) = self.search(t, cube, effort, None, 0, None, None);
         (sol.expect("a 3x3x3 state has a solution"), ways)
+    }
+
+    /// `solve` with a time: past `until` the search ends as soon as it has
+    /// a solution (it is never left with none) and gives the shortest it
+    /// has met. Returns the solution and whether the search ran to its end:
+    /// if so the solution is the very one `solve` gives; if not it may be
+    /// longer, and which one it is depends on the cores.
+    pub fn solve_until(&self, t: &T3, cube: &C3, effort: Effort, until: Instant) -> (Vec<u8>, bool) {
+        let halt = Halt { until, stop: AtomicBool::new(false) };
+        let (sol, _) = self.search(t, cube, effort, None, 0, None, Some(&halt));
+        (sol.expect("a 3x3x3 state has a solution"), !halt.stop.load(Relaxed))
     }
 
     fn search(
@@ -371,6 +417,7 @@ impl Two3 {
         max_len: Option<usize>,
         first_depth: usize,
         collect: Option<&Collector>,
+        halt: Option<&Halt>,
     ) -> (Option<Vec<u8>>, u64) {
         if *cube == C3::identity() {
             return (Some(Vec::new()), 0);
@@ -407,16 +454,26 @@ impl Two3 {
             let found = best.load(Relaxed);
             if let Some(c) = collect {
                 // Collecting: on to the effort's depth, while a phase this long can still be within the slack.
+                c.check();
                 if c.stopped() || found != u64::MAX && ((d1 as u64) > (found >> 32) + c.slack as u64 || d1 > effort.depth) {
                     break;
                 }
-            } else if found != u64::MAX && (d1 as u64 >= found >> 32 || d1 > effort.depth) {
+            } else if found != u64::MAX && (d1 as u64 >= found >> 32 || d1 > effort.depth || halt.is_some_and(Halt::check)) {
                 break;
             }
             let nv = if d1 == effort.depth { effort.variants.clamp(1, variants.len()) } else { variants.len() };
             let work: &[Start] = if d1 < 4 { &roots } else { &starts };
             let wanted = |s: &Start| s.variant < nv && s.node.d as usize <= d1 - s.len;
             let run = |scratch: &mut (Vec<Node>, Vec<Arrival>), (i, s): (usize, &Start)| {
+                // A piece of work may be too short to look at the clock itself.
+                if let Some(c) = collect {
+                    c.check();
+                    if c.stopped() {
+                        return 0;
+                    }
+                } else if best.load(Relaxed) != u64::MAX && halt.is_some_and(Halt::check) {
+                    return 0;
+                }
                 let mut job = Job {
                     e: self,
                     t,
@@ -432,6 +489,8 @@ impl Two3 {
                     rank: (d1 as u64) << 24 | i as u64,
                     probes: 0,
                     collect,
+                    halt,
+                    clock: 0,
                 };
                 job.path[..s.len].copy_from_slice(&s.moves[..s.len]);
                 let (key, sym) = self.first.key(s.node.tw as usize, s.node.fl as usize, s.node.sl as usize);
@@ -525,9 +584,33 @@ struct Job<'a> {
     probes: u64,
     /// Keep every solution within the slack instead of only the best.
     collect: Option<&'a Collector>,
+    /// A search for the best alone that has a time.
+    halt: Option<&'a Halt>,
+    /// Positions since the clock was last looked at.
+    clock: u32,
 }
 
 impl Job<'_> {
+    /// Whether a collecting search is over. Asked at every position of both
+    /// phases, so that a deadline is kept to within a few hundred positions
+    /// whatever they cost; the clock itself is read once in 256 times.
+    #[inline(always)]
+    fn stopped(&mut self) -> bool {
+        if let Some(c) = self.collect {
+            self.clock = self.clock.wrapping_add(1);
+            if self.clock & 255 == 0 {
+                c.check();
+            }
+            return c.stopped();
+        }
+        let Some(h) = self.halt else { return false };
+        self.clock = self.clock.wrapping_add(1);
+        if self.clock & 255 == 0 && self.best.load(Relaxed) != u64::MAX {
+            h.check();
+        }
+        h.stop.load(Relaxed)
+    }
+
     /// A position `depth` moves along the path, `key` and `sym` in the table, with `rem` moves
     /// left to arrive in. If that is exactly how far it is and its ways are listed, they are
     /// read later, with those of other positions; otherwise it waits on the stack to be searched.
@@ -555,7 +638,7 @@ impl Job<'_> {
 
     /// Every way from `n`, `depth` moves along the path, into the subgroup in exactly `rem` moves.
     fn search(&mut self, n: &Node, rem: usize, depth: usize) {
-        if rem <= 1 || self.collect.is_some_and(Collector::stopped) {
+        if rem <= 1 || self.stopped() {
             // In the subgroup with a move to spare: that move would be one of the second phase's.
             return;
         }
@@ -702,11 +785,8 @@ impl Job<'_> {
     }
 
     fn phase2_start(&mut self, cp: usize, d1: usize, last: u8) {
-        if let Some(c) = self.collect {
-            if c.stopped() {
-                return;
-            }
-            c.tick();
+        if self.stopped() {
+            return;
         }
         let wanted = self.wanted();
         if d1 + self.e.cdist[cp] as usize > wanted {
@@ -752,6 +832,9 @@ impl Job<'_> {
                 *left -= 1;
                 return true;
             }
+            return false;
+        }
+        if self.stopped() {
             return false;
         }
         let t = self.t;

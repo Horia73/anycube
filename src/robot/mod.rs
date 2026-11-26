@@ -245,7 +245,8 @@ pub trait Robot: Send {
     /// The commands of a solution, from where the robot is now.
     fn plan_solution(&self, moves: &[Turn]) -> Plan;
     /// The robot time (ms) of a solution from where the robot is now, quickly: candidates are compared by it.
-    fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + '_>;
+    /// It stands on its own: it may be used while the robot does something else.
+    fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + Send>;
     /// The name of the planner, for the `plan` event.
     fn planner_name(&self) -> &'static str {
         "optimized"

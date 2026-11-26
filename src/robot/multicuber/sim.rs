@@ -210,7 +210,7 @@ impl SimRobot {
                 };
                 let Some(to) = to else { return (vec![format!("ERR RANGE LIFT 0..{}|DOWN|UP|SCAN", n)], 0.0) };
                 let from = s.cube.lift;
-                let op = super::planner::Op { cmd: super::planner::Cmd::Lift(to), remap: super::planner::Remap::None, photo: None, mv: None, lift_before: from };
+                let op = super::planner::Op { cmd: super::planner::Cmd::Lift(to), remap: super::planner::Remap::None, photo: None, mv: None, lift_before: from, joined: false };
                 let ms = if from == to { 0.0 } else { model.op_ms(&op) - model.overhead_ms };
                 s.cube.apply_line(line);
                 (vec![format!("OK LIFT {} {}", w[1], height(to))], ms)
@@ -230,6 +230,7 @@ impl SimRobot {
                     photo: None,
                     mv: None,
                     lift_before: s.cube.lift,
+                    joined: false,
                 };
                 let ms = if moved { model.op_ms(&op) - model.overhead_ms } else { 0.0 };
                 s.cube.apply_line(line);

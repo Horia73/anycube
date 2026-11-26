@@ -119,6 +119,46 @@ fn ramp_ms(d: f64, a: f64) -> f64 {
     1000.0 * s
 }
 
+/// Where a motor is, in full steps from its start, `ms` into a move of `d` steps (the same ramp).
+pub(crate) fn ramp_pos(d: f64, a: f64, ms: f64) -> f64 {
+    let total = ramp_ms(d, a) / 1000.0;
+    let t = (ms / 1000.0).clamp(0.0, total);
+    // Speeding up for `up` seconds (to VMAX, or to the middle of a short move), and the same slowing down.
+    let up = if d >= VMAX * VMAX / a { VMAX / a } else { (d / a).sqrt() };
+    if t <= up {
+        0.5 * a * t * t
+    } else if t <= total - up {
+        0.5 * a * up * up + a * up * (t - up)
+    } else {
+        d - 0.5 * a * (total - t) * (total - t)
+    }
+}
+
+/// Milliseconds into a move of `d` steps at which the motor has made `x` of them.
+pub(crate) fn ramp_time_to(d: f64, a: f64, x: f64) -> f64 {
+    let x = x.clamp(0.0, d);
+    let total = ramp_ms(d, a) / 1000.0;
+    let up = if d >= VMAX * VMAX / a { VMAX / a } else { (d / a).sqrt() };
+    let ramp = 0.5 * a * up * up;
+    let t = if x <= ramp {
+        (2.0 * x / a).sqrt()
+    } else if x <= d - ramp {
+        up + (x - ramp) / (a * up)
+    } else {
+        total - (2.0 * (d - x) / a).sqrt()
+    };
+    1000.0 * t
+}
+
+/// The acceleration of a lift move (full steps/s²): the fast one going down to 0.
+pub(crate) fn lift_accel(to: Lift) -> f64 {
+    if to == Lift::Level(0) {
+        ACCEL_FAST
+    } else {
+        ACCEL_LIFT
+    }
+}
+
 /// The kinds of motion, each with its own correction factor.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, PartialOrd, Ord)]
 pub enum Kind {
@@ -318,6 +358,31 @@ impl TimeModel {
         self.lift_ms[self.lift_index(from) * (self.cal.n + 2) + self.lift_index(to)]
     }
 
+    /// How high the lift is (full steps) `ms` into a move from one position
+    /// to another: the ramp of the motion, stretched to the time the move takes.
+    pub fn lift_height_at(&self, from: Lift, to: Lift, ms: f64) -> f64 {
+        let (a, b) = (self.cal.height(from) as f64, self.cal.height(to) as f64);
+        let (d, total) = ((a - b).abs(), self.lift_pair_ms(from, to));
+        if d == 0.0 || total <= 0.0 {
+            return b;
+        }
+        let accel = lift_accel(to);
+        let done = ramp_pos(d, accel, ms / total * ramp_ms(d, accel));
+        a + (b - a).signum() * done
+    }
+
+    /// Milliseconds into a lift move at which the lift is at `height`
+    /// (between its ends; the ramp of the motion, stretched to the move's time).
+    pub fn lift_time_to(&self, from: Lift, to: Lift, height: f64) -> f64 {
+        let (a, b) = (self.cal.height(from) as f64, self.cal.height(to) as f64);
+        let d = (a - b).abs();
+        if d == 0.0 {
+            return 0.0;
+        }
+        let accel = lift_accel(to);
+        self.lift_pair_ms(from, to) * ramp_time_to(d, accel, (height - a).abs()) / ramp_ms(d, accel)
+    }
+
     /// A flipper move's time: carrying the cube or alone.
     #[inline]
     pub fn flip_move_ms(&self, carry: bool) -> f64 {
@@ -407,7 +472,7 @@ fn physics(cal: &Cal, key: &str) -> Option<(Kind, f64)> {
         let (a, b) = (Lift::parse(a)?, Lift::parse(b)?);
         let d = (cal.height(a) - cal.height(b)).abs() as f64;
         // Going down to 0 uses the fast acceleration; everything else the preset.
-        return Some(if b == Lift::Level(0) { (Kind::LiftDown, ramp_ms(d, ACCEL_FAST)) } else { (Kind::LiftUp, ramp_ms(d, ACCEL_LIFT)) });
+        return Some((if b == Lift::Level(0) { Kind::LiftDown } else { Kind::LiftUp }, ramp_ms(d, lift_accel(b))));
     }
     let (q, o) = (cal.rotq as f64, cal.roto as f64);
     match key {
@@ -482,7 +547,7 @@ mod tests {
     #[test]
     fn learning_follows_the_robot_and_is_saved() {
         let mut m = TimeModel::for_size(3);
-        let op = Op { cmd: Cmd::Rot(1), remap: super::super::planner::Remap::None, photo: None, mv: None, lift_before: Lift::Level(1) };
+        let op = Op { cmd: Cmd::Rot(1), remap: super::super::planner::Remap::None, photo: None, mv: None, lift_before: Lift::Level(1), joined: false };
         let before = m.op_ms(&op);
         for _ in 0..20 {
             assert!(m.record(&op, 600.0));

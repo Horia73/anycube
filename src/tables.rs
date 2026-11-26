@@ -144,6 +144,24 @@ impl std::ops::Deref for Bytes {
     }
 }
 
+impl Bytes {
+    /// Reads every page once. A table that is mapped from its file is only
+    /// read when a search first looks at each page of it: thousands of small
+    /// waits spread over the first searches of a program, each many times
+    /// slower than the lookup it is for. A program that must answer quickly
+    /// from its first search on (the robot's) calls this when it loads.
+    pub fn touch(&self) {
+        let bytes: &[u8] = self;
+        #[cfg(unix)]
+        if let Bytes::Mapped(m) = self {
+            // The system may start reading ahead of the loop below.
+            let _ = m.advise(memmap2::Advice::WillNeed);
+        }
+        let sum: u64 = bytes.par_chunks(4 << 20).map(|chunk| chunk.iter().step_by(4096).map(|&b| b as u64).sum::<u64>()).sum();
+        std::hint::black_box(sum);
+    }
+}
+
 pub struct Tabs {
     pub bp: BitPerm,
     pub ranks: Ranks,

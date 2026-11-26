@@ -352,6 +352,11 @@ impl First3 {
         First3 { data, fs_class, tw_conj, raw_move, raw_mask }
     }
 
+    /// Reads the whole table once (see `Bytes::touch`).
+    pub fn warm(&self) {
+        self.data.touch();
+    }
+
     #[inline(always)]
     fn word(&self, at: usize) -> u64 {
         u64::from_le_bytes(self.data[at..at + 8].try_into().unwrap())
