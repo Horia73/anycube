@@ -224,6 +224,17 @@ See [search flags](docs/search-flags.md#projected-face-turns-on-the-4x4x4-and-5x
 Moves are written as on any cube: `U R F D L B`, `'` for a turn the other
 way, `2` for a half turn; `Rw` turns two layers and `3Rw` three.
 
+### Cube robots
+
+`anycube app` can drive a cube robot over a serial port; the first one is
+[MultiCuber](https://github.com/Horia73/MultiCuber) (firmware 2, protocol 1,
+3x3x3 to 5x5x5). It scans, solves and turns the cube, and picks the solution
+the robot makes quickest by its own planner and a time model of its motors
+(learned as it runs, kept with the settings), not the one with the fewest
+moves. `anycube app --robot-sim` offers a simulated robot (port `sim`) that
+answers like the firmware and takes as long. The API is in `src/app/robots.rs`;
+the code in `src/robot/`.
+
 ## How it works
 
 Every solver here turns the cube into a smaller problem in a few phases and

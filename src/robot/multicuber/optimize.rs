@@ -57,9 +57,6 @@ impl Space {
         (self.n as usize + 2) * 2 * 36
     }
 
-    fn lifts(&self) -> Vec<Lift> {
-        (0..=self.n).map(Lift::Level).chain([Lift::Scan]).collect()
-    }
 }
 
 fn turned(frame: [u8; 6], perm: &[u8; 6], turns: i8) -> [u8; 6] {
@@ -70,7 +67,7 @@ fn turned(frame: [u8; 6], perm: &[u8; 6], turns: i8) -> [u8; 6] {
 /// The steps allowed from a state, with where they lead and what they cost (ms).
 fn steps(sp: &Space, s: &Node, t: &TimeModel, out: &mut Vec<(Act, Node, f64)>) {
     out.clear();
-    for to in sp.lifts() {
+    for to in (0..=sp.n).map(Lift::Level).chain([Lift::Scan]) {
         if to == s.lift {
             continue;
         }
@@ -78,17 +75,17 @@ fn steps(sp: &Space, s: &Node, t: &TimeModel, out: &mut Vec<(Act, Node, f64)>) {
         if scan_hop {
             continue;
         }
-        let ms = t.key_ms(&format!("LIFT {}>{}", s.lift.arg(), to.arg())) + t.overhead_ms;
+        let ms = t.lift_pair_ms(s.lift, to) + t.overhead_ms;
         out.push((Act::Lift(to), Node { lift: to, ..*s }, ms));
     }
     let up = !s.flip_up;
     let carry = s.lift == Lift::Level(0);
     let frame = if carry { turned(s.frame, &PERM_X, if up { 1 } else { -1 }) } else { s.frame };
-    let ms = t.key_ms(if carry { "FLIP carry" } else { "FLIP empty" }) + t.overhead_ms;
+    let ms = t.flip_move_ms(carry) + t.overhead_ms;
     out.push((Act::Flip(up), Node { flip_up: up, frame, ..*s }, ms));
     if s.lift == Lift::Level(sp.n) {
         for turns in [1, -1, 2] {
-            let ms = t.key_ms(if turns == 2 { "ROT 2" } else { "ROT 1" }) + t.overhead_ms;
+            let ms = t.rot_turn_ms(turns == 2) + t.overhead_ms;
             out.push((Act::Whole(turns), Node { frame: turned(s.frame, &PERM_Y, turns), ..*s }, ms));
         }
     }
@@ -168,9 +165,9 @@ pub fn solution(p: &mut Planner, moves: &[Turn], t: &TimeModel) {
                 if node.lift == Lift::Scan {
                     continue;
                 }
-                ms += t.key_ms(&format!("LIFT {}>{}", node.lift.arg(), level)) + t.overhead_ms;
+                ms += t.lift_pair_ms(node.lift, Lift::Level(level)) + t.overhead_ms;
             }
-            ms += t.key_ms(if turns == 2 { "ROT 2" } else { "ROT 1" }) + t.overhead_ms;
+            ms += t.rot_turn_ms(turns == 2) + t.overhead_ms;
             let frame = if pos == D || level == sp.n { turned(node.frame, &PERM_Y, turns) } else { node.frame };
             let next = Node { lift: Lift::Level(level), flip_up: node.flip_up, frame };
             let nk = sp.key(&next);

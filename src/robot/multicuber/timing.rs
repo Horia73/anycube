@@ -312,6 +312,24 @@ impl TimeModel {
         self.rot_ms = [self.key_ms("ROT 1"), self.key_ms("ROT 2")];
     }
 
+    /// A lift move's time (from the table).
+    #[inline]
+    pub fn lift_pair_ms(&self, from: Lift, to: Lift) -> f64 {
+        self.lift_ms[self.lift_index(from) * (self.cal.n + 2) + self.lift_index(to)]
+    }
+
+    /// A flipper move's time: carrying the cube or alone.
+    #[inline]
+    pub fn flip_move_ms(&self, carry: bool) -> f64 {
+        self.flip_ms[if carry { 0 } else { 1 }]
+    }
+
+    /// A rotator turn's time: quarter or half.
+    #[inline]
+    pub fn rot_turn_ms(&self, half: bool) -> f64 {
+        self.rot_ms[half as usize]
+    }
+
     /// The time of one command (fast: this runs for every command of every candidate).
     #[inline]
     pub fn op_ms(&self, op: &Op) -> f64 {

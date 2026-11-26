@@ -32,12 +32,17 @@ use std::time::Instant;
 pub struct Options {
     /// 3x3x3: how long the candidate search may run (ms).
     pub search_ms: f64,
+    /// 3x3x3: no candidate is costed after this (ms from the start; the
+    /// shortest solutions are costed first).
+    pub total_ms: f64,
     /// 3x3x3: at most this many solutions from the search.
     pub max_solutions: usize,
     /// 3x3x3: moves above the shortest that a candidate may have.
     pub slack: usize,
     /// 3x3x3: the longest first phase followed.
     pub depth: usize,
+    /// 3x3x3: second phases of the shortest length kept per first phase.
+    pub phase2: usize,
     /// Other sizes: the time (ms) after which no further orientation is started.
     pub orientation_ms: f64,
     /// The solver's mode for other sizes.
@@ -52,13 +57,15 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             search_ms: 15.0,
-            max_solutions: 3000,
+            total_ms: 25.0,
+            max_solutions: 2000,
             slack: 2,
-            depth: 12,
+            depth: 14,
+            phase2: 4,
             orientation_ms: 2000.0,
             mode: Mode::Normal,
             plan: PlanMode::Legacy,
-            optimize_best: 12,
+            optimize_best: 6,
         }
     }
 }
@@ -219,10 +226,14 @@ pub fn choose(c: &Checked, cost: &Cost, opts: &Options) -> Result<Choice, ApiErr
         let found = crate::api::solve::two3().candidates(
             crate::api::solve::t3(),
             &c3,
-            crate::two3::Candidates { depth: opts.depth, slack: opts.slack, max: opts.max_solutions, deadline: Some(deadline) },
+            crate::two3::Candidates { depth: opts.depth, slack: opts.slack, max: opts.max_solutions, deadline: Some(deadline), phase2: opts.phase2 },
         );
         solutions = found.len();
-        for sol in &found {
+        let total = std::time::Duration::from_secs_f64(opts.total_ms.max(opts.search_ms).max(0.0) / 1000.0);
+        for (k, sol) in found.iter().enumerate() {
+            if k > 0 && k % 32 == 0 && t0.elapsed() > total {
+                break;
+            }
             let seq: Vec<usize> = sol.iter().map(|&m| m as usize).collect();
             for s in orders(&seq, 16) {
                 let turns: Vec<Turn> = s.iter().map(|&m| Turn::from_index(m)).collect();

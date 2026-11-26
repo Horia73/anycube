@@ -47,19 +47,22 @@ impl Effort {
 
 /// What `Two3::candidates` collects: every solution it meets of at most
 /// `slack` moves more than the shortest so far, with first phases of up to
-/// `depth` moves, until it has `max` of them or `deadline` passes.
+/// `depth` moves, until it has `max` of them or `deadline` passes. Each
+/// first phase gives up to `phase2` second phases of its shortest length.
 #[derive(Clone, Copy, Debug)]
 pub struct Candidates {
     pub depth: usize,
     pub slack: usize,
     pub max: usize,
     pub deadline: Option<Instant>,
+    pub phase2: usize,
 }
 
 /// Solutions met by a search that keeps more than the best.
 struct Collector {
     slack: usize,
     max: usize,
+    phase2: usize,
     deadline: Option<Instant>,
     found: Mutex<Vec<(usize, Vec<u8>)>>,
     count: AtomicUsize,
@@ -223,6 +226,7 @@ impl Two3 {
         let c = Collector {
             slack: opts.slack,
             max: opts.max.max(1),
+            phase2: opts.phase2.max(1),
             deadline: opts.deadline,
             found: Mutex::new(Vec::new()),
             count: AtomicUsize::new(0),
@@ -718,12 +722,15 @@ impl Job<'_> {
         let sp = perm_rank(&s);
         let max2 = (wanted - d1).min(12);
         for d2 in t.h2(cp, up, sp) as usize..=max2 {
-            if self.phase2(cp, up, sp, d2, last, d1) {
-                if let Some(c) = self.collect {
-                    c.push(self.variant, &self.sol[..d1 + d2]);
+            if let Some(c) = self.collect {
+                let mut left = c.phase2;
+                if self.phase2_all(c, cp, up, sp, d2, last, d1, d1 + d2, &mut left) {
                     self.best.fetch_min(((d1 + d2) as u64) << 32, Relaxed);
                     break;
                 }
+                continue;
+            }
+            if self.phase2(cp, up, sp, d2, last, d1) {
                 let key = ((d1 + d2) as u64) << 32 | self.rank;
                 if self.best.fetch_min(key, Relaxed) > key {
                     let mut out = self.out.lock().unwrap();
@@ -734,6 +741,39 @@ impl Job<'_> {
                 break;
             }
         }
+    }
+
+    /// Like `phase2`, but every second phase of exactly `rem` moves is kept, up to `left` of them.
+    #[allow(clippy::too_many_arguments)]
+    fn phase2_all(&mut self, c: &Collector, cp: usize, up: usize, sp: usize, rem: usize, last: u8, depth: usize, len: usize, left: &mut usize) -> bool {
+        if rem == 0 {
+            if cp == 0 && up == 0 && sp == 0 {
+                c.push(self.variant, &self.sol[..len]);
+                *left -= 1;
+                return true;
+            }
+            return false;
+        }
+        let t = self.t;
+        let mut any = false;
+        for (k, &m) in G1_MOVES.iter().enumerate() {
+            if *left == 0 {
+                break;
+            }
+            if last != NO_MOVE && skip_move(last, m) {
+                continue;
+            }
+            let (a, b, cc) = (t.cperm_mv[cp][k] as usize, t.uperm_mv[up][k] as usize, t.sperm_mv[sp][k] as usize);
+            if t.p_cs[a * N_SPERM + cc].max(t.p_us[b * N_SPERM + cc]) as usize > rem - 1 {
+                continue;
+            }
+            if t.corners_and_edges(a, b) as usize > rem - 1 {
+                continue;
+            }
+            self.sol[depth] = m;
+            any |= self.phase2_all(c, a, b, cc, rem - 1, m, depth + 1, len, left);
+        }
+        any
     }
 
     fn phase2(&mut self, cp: usize, up: usize, sp: usize, rem: usize, last: u8, depth: usize) -> bool {
