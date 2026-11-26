@@ -7,10 +7,11 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { CameraFeed } from "../js/camera.js";
 import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 import {
-  assembleFaces, choosePort, Eta, frameSize, GRID_SHARE, gridCells, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
+  assembleFaces, bindScanInfo, choosePort, robotChoices, Eta, frameSize, GRID_SHARE, gridCells, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
   RobotWatch, rotateSquare, squareCrop,
 } from "../js/robot.js";
 import { picture, quad, rng } from "./pictures.mjs";
@@ -788,7 +789,7 @@ test("RobotWatch: disconnected by hand it stays so, until the cable has been out
   watch.hold("multicuber", "");
   watch.start();
   assert.equal(await watch.looking, "nothing");
-  watch.release();
+  watch.release("multicuber", PORT);
   assert.equal(await watch.look(), "connected");
 });
 
@@ -938,4 +939,59 @@ test("a board that goes by its name and is no robot is asked once, then left alo
   // The robot beside it is connected all the same.
   server.plug(PORT);
   assert.equal(await watch.look(), "connected");
+});
+
+test("robot picker names the held port and describes available, busy and unrecognised boards", () => {
+  const drivers = [{ id: "multicuber", name: "MultiCuber", ports: ["/dev/ttyUSB1"] }];
+  const ports = [{ path: "sim", driver: "multicuber" }, { path: "/dev/no", driver: null }, { path: "/dev/held", busy: true }];
+  const choices = robotChoices({ drivers, ports }, { driver: "multicuber", port: "/dev/usbmodem21301" });
+  assert.deepEqual(choices.map(c => [c.text, c.driver]), [
+    ["MultiCuber · ttyUSB1 · checking", "multicuber"],
+    ["Simulated MultiCuber", "multicuber"], ["no · not a robot", undefined],
+    ["held · busy", undefined], ["MultiCuber · usbmodem21301", "multicuber"],
+  ]);
+});
+
+test("scan details support hover, pinned clicks, outside dismissal and Escape", () => {
+  const button = new EventTarget(), area = new EventTarget(), doc = new EventTarget();
+  const details = { hidden: true };
+  button.parentElement = area;
+  button.setAttribute = (name, value) => assert.equal(value, String(!details.hidden));
+  area.contains = target => target === button;
+  bindScanInfo(button, details, doc);
+  const send = (target, type, props) => target.dispatchEvent(Object.assign(new Event(type), props));
+  send(area, "pointerenter", { pointerType: "touch" });
+  assert.ok(details.hidden);
+  send(area, "pointerenter", { pointerType: "mouse" });
+  assert.ok(!details.hidden);
+  send(area, "pointerleave");
+  assert.ok(details.hidden);
+  send(button, "click");
+  send(area, "pointerleave");
+  assert.ok(!details.hidden);
+  send(button, "click");
+  assert.ok(details.hidden);
+  for (const [type, props] of [["keydown", { key: "Escape" }], ["pointerdown"], ["focusin"]]) {
+    send(button, "click");
+    send(doc, type, props);
+    assert.ok(details.hidden);
+  }
+});
+
+test("disconnecting during camera permission stops a late stream", async (t) => {
+  let grant;
+  const stream = new Promise(resolve => { grant = resolve; });
+  const video = { srcObject: null };
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true, value: { getUserMedia: () => stream },
+  });
+  t.after(() => { delete navigator.mediaDevices; });
+  const feed = new CameraFeed(video);
+  const opened = feed.open();
+  feed.close();
+  let stopped = false;
+  grant({ getTracks: () => [{ stop() { stopped = true; } }] });
+  await assert.rejects(opened, { name: "AbortError" });
+  assert.equal(video.srcObject, null);
+  assert.ok(stopped);
 });

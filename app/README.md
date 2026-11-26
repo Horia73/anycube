@@ -131,14 +131,12 @@ The robot is connected for the size of cube on the page, if it takes that
 size; another size chosen while it is connected and at rest connects it
 anew for that size.
 
-While a robot is connected, the scramble, paint and camera give way to
-the robot's panel: the camera as the robot's photos take it (the middle
-square, not mirrored, with the grid of 0.8 of its side), the six photos of
-the last scan, the camera to use (remembered on this device), and one line
-of what the robot or the page has to say, always whole: the camera and the
-photos make way for it. Solve gives way to Scan. Everything else is as it
-was. Without a robot, or without a server that drives robots, nothing of
-it is on the page.
+While a robot is connected, its panel shows the selected robot port and
+camera above the camera preview and six face photos. Choose another port
+to switch robots, or choose None / disconnect. The camera choice is
+remembered on this device. Hover over the info button beside Camera or
+activate it to see scan details. Escape or a second activation closes it.
+Errors appear in the panel or beside the main action.
 
 Scan starts the robot and follows its events (`/api/robot/events`, long
 polls). At each `photo` the page grabs the frame of the moment, cuts out
@@ -156,7 +154,7 @@ of the robot. Otherwise the cube goes to `/api/robot/solve` with
 screen turns each move as the robot starts it, over its estimated time;
 the time left is the plan's, corrected by the ops as they finish; at the
 end the times of the run are shown (how the photos were read is in the
-title of Analysis and of the robot's line). Scan is Stop while the robot
+Scan details and the title of Analysis). Scan is Stop while the robot
 moves.
 
 How large a photo is read (`ReadPace`): the robot takes about a second
@@ -186,10 +184,6 @@ for a 4x4x4. With the robot a second from photo to photo, every face but
 the last is read at 720 in about 70 ms, the last at 320 in about 20 ms.
 The first reading in a page is several times slower, so the page reads
 once when a robot is connected.
-
-What the server logs (the tables of a size being ready, what a simulated
-robot's cube looks like after a run) is shown after the robot's line, not
-in its place.
 
 `anycube app --robot-sim` offers a simulated robot that takes as long as
 the real one; each of its `photo` events says what its camera would see

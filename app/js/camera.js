@@ -78,6 +78,7 @@ export class CameraFeed {
   constructor(video) {
     this.video = video;
     this.stream = null;
+    this.generation = 0;
     this.cameras = [];
     this.deviceId = undefined;
     // Whether the camera looks at its user, and is best shown as a mirror.
@@ -96,16 +97,24 @@ export class CameraFeed {
       throw error;
     }
     this.close();
-    this.stream = await navigator.mediaDevices.getUserMedia({
+    const generation = this.generation;
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { ...video, width: { ideal: 1280 }, height: { ideal: 720 } },
     });
-    this.video.srcObject = this.stream;
+    if (generation !== this.generation) {
+      stream.getTracks().forEach(track => track.stop());
+      throw new DOMException("Camera choice changed.", "AbortError");
+    }
+    this.stream = stream;
+    this.video.srcObject = stream;
     await this.video.play().catch(() => {});
-    const settings = this.stream.getVideoTracks()[0]?.getSettings?.() ?? {};
+    if (generation !== this.generation) throw new DOMException("Camera choice changed.", "AbortError");
+    const settings = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
     this.deviceId = settings.deviceId;
     this.facesUser = settings.facingMode ? settings.facingMode === "user" : !/Android|iPhone|iPad/i.test(navigator.userAgent);
     const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
+    if (generation !== this.generation) throw new DOMException("Camera choice changed.", "AbortError");
     this.cameras = devices.filter((d) => d.kind === "videoinput");
   }
 
@@ -117,6 +126,7 @@ export class CameraFeed {
   }
 
   close() {
+    this.generation++;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.video.srcObject = null;

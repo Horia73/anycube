@@ -310,7 +310,7 @@ export class RobotApi {
     return answer;
   }
 
-  robots() { return this.#request("GET", "/api/robots"); }
+  robots(probe = true) { return this.#request("GET", probe ? "/api/robots" : "/api/robots?probe=0"); }
   connect(driver, port, size) {
     return this.#request("POST", "/api/robot/connect", { driver, ...(port ? { port } : {}), ...(Number.isInteger(size) ? { size } : {}) });
   }
@@ -448,9 +448,11 @@ export class RobotWatch {
   }
 
   /** Forgets what was held back or given up (the choice was made by hand). */
-  release() {
-    this.held.clear();
-    this.failed.clear();
+  release(driver, port) {
+    for (const key of [pair(driver, port), pair(driver, ANY)]) {
+      this.held.delete(key);
+      this.failed.delete(key);
+    }
   }
 
   /** One look at the server, one at a time. Says what came of it. */
@@ -850,10 +852,63 @@ export const portName = (port) => String(port ?? "").replace(/^\/dev\//, "");
 
 const ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 8V4.5M9.5 13.5v.5M14.5 13.5v.5M2 12.5v3M22 12.5v3"/></svg>';
 
+// Keep the native picker and its keyboard behaviour. The displayed name wraps
+// independently because native selects can only paint a single line.
+export function robotChoices(answer, active, last) {
+  const paths = portsListed(answer);
+  if (active?.port) paths.add(active.port);
+  const ports = new Map((answer.ports ?? []).map(p => [p.path, p]));
+  return [...paths].map(path => {
+    const p = ports.get(path);
+    const current = path === active?.port;
+    const candidate = choosePort(answer, last, (_, port) => port !== path);
+    const id = current ? active.driver : candidate?.driver;
+    const driver = answer.drivers.find(d => d.id === (id ?? p?.driver));
+    const state = current ? "" : p?.busy ? "busy" : p?.driver === null ? "not a robot" : !p?.driver ? "checking" : "";
+    const label = driver?.name ?? driver?.id ?? id;
+    const name = path === "sim" && label ? `Simulated ${label}` : [label, portName(path)].filter(Boolean).join(" · ");
+    return { path, driver: id, text: [name, state].filter(Boolean).join(" · ") };
+  });
+}
+
+export function bindScanInfo(button, details, doc) {
+  let pinned = false;
+  const area = button.parentElement;
+  function show(open) {
+    details.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+    if (!open) pinned = false;
+  }
+  area.addEventListener("pointerenter", e => { if (e.pointerType === "mouse") show(true); });
+  area.addEventListener("pointerleave", () => { if (!pinned) show(false); });
+  button.addEventListener("click", () => { pinned = !pinned; show(pinned); });
+  doc.addEventListener("pointerdown", e => { if (!area.contains(e.target)) show(false); });
+  doc.addEventListener("focusin", e => { if (!area.contains(e.target)) show(false); });
+  doc.addEventListener("keydown", e => { if (e.key === "Escape") show(false); });
+  return () => show(false);
+}
+
 const PANEL = `
-  <div class="robot-head">
-    <p class="robot-name"><i aria-hidden="true"></i><b id="robot-name"></b><span id="robot-where"></span></p>
-    <button type="button" class="button quiet small" id="robot-disconnect">Disconnect</button>
+  <label for="robot-device">Robot (port)</label>
+  <div class="robot-choice">
+    <span aria-hidden="true" id="robot-device-name"></span>
+    <select id="robot-device"></select>
+  </div>
+  <div class="robot-camera-label">
+    <label for="robot-camera">Camera</label>
+    <div class="robot-info">
+      <button type="button" id="robot-info" aria-label="Scan details" aria-controls="robot-details" aria-expanded="false">i</button>
+      <section id="robot-details" aria-label="Scan details" hidden>
+        <b>Scan details</b>
+        <p id="robot-summary"></p>
+        <dl id="robot-measures"></dl>
+        <p id="robot-lock"></p>
+      </section>
+    </div>
+  </div>
+  <div class="robot-choice">
+    <span aria-hidden="true" id="robot-camera-name">Default camera</span>
+    <select id="robot-camera"><option>Default camera</option></select>
   </div>
   <div class="robot-body">
     <div class="robot-cam" id="robot-cam">
@@ -863,7 +918,7 @@ const PANEL = `
     </div>
     <div class="robot-side">
       <ol class="robot-shots" id="robot-shots" aria-label="Photos of this scan"></ol>
-      <label class="robot-camera"><span class="sr">Camera</span><select id="robot-camera" title="The camera that sees the cube"></select></label>
+
     </div>
   </div>
   <p class="robot-note" id="robot-note" role="status"></p>`;
@@ -947,38 +1002,23 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   panel.innerHTML = PANEL;
   root.querySelector(".panels").after(panel);
 
-  // The panel lies over the tabs and what they open, which keep their place.
-  const tabs = root.querySelector(".tabs");
-  const panels = root.querySelector(".panels");
-  const place = () => {
-    if (!tabs.offsetParent) return;
-    panel.style.top = `${tabs.offsetTop}px`;
-    panel.style.height = `${panels.offsetTop + panels.offsetHeight - tabs.offsetTop}px`;
-  };
-  new ResizeObserver(place).observe(root.querySelector(".panel"));
-
   const scanButton = el("button", { type: "button", class: "button primary large", id: "robot-scan", text: "Scan" });
   $("solve").after(scanButton);
 
   const video = panel.querySelector("video");
   video.muted = true;
   const feed = new CameraFeed(video);
+  let openingCamera = false;
   const scratch = document.createElement("canvas");
   const thumb = document.createElement("canvas");
   const note = $("robot-note");
-  // The line under the camera: short enough to be read whole (`more` is for whoever asks, on hover).
-  const short = (text) => (text.length > 140 ? `${text.slice(0, 139)}…` : text);
-  const say = (text, warn = false, more = "") => {
-    const whole = String(text ?? "");
-    note.textContent = short(whole);
-    note.title = whole.length > 140 ? whole : more;
-    note.classList.toggle("warn", warn);
-  };
-  // What the server logs goes after what the page said, not in its place.
-  const log = (text) => {
-    note.querySelector("span")?.remove();
-    const said = note.textContent;
-    note.append(el("span", { class: "robot-log", text: short(said ? ` · ${text}` : text), title: text }));
+  const info = $("robot-info");
+  const details = $("robot-details");
+  const closeInfo = bindScanInfo(info, details, document);
+  const say = (text, warn = false) => {
+    delete note.dataset.source;
+    note.textContent = warn ? text : "";
+    $("robot-summary").textContent = text || "Scan the cube to see its reading details.";
   };
 
   let drivers = [];
@@ -996,6 +1036,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   let ticker = 0;
   let scanEnd = null; // when the scan is expected to be over (the page's clock)
   let reading = ""; // how the last scan's photos were read, for the times at the end
+  let switching = false;
   let sizing = false; // the robot is being set to another size of cube
   let gone = false; // the cube's line says the robot is no longer connected
   // What reading costs on this machine, kept from one robot and scan to the next.
@@ -1031,7 +1072,12 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     drivers = Array.isArray(answer.drivers) ? answer.drivers.filter((d) => d && typeof d.id === "string") : [];
     ports = new Map((Array.isArray(answer.ports) ? answer.ports : []).filter((p) => typeof p?.path === "string").map((p) => [p.path, p]));
     const now = JSON.stringify([answer.drivers ?? null, answer.ports ?? null]);
-    if (now === listed || connected) return;
+    if (connected) {
+      if (now !== listed) showWhere();
+      listed = now;
+      return;
+    }
+    if (now === listed) return;
     if (listed) trouble = ""; // something was plugged in or out since
     listed = now;
     const was = [$("robot-driver").value, $("robot-port").value];
@@ -1051,11 +1097,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const connect = $("robot-connect");
     connect.textContent = on ? "Disconnect" : busy ? "Connecting…" : "Connect";
     connect.classList.toggle("primary", !on);
-    connect.disabled = on ? !!robot?.busy : busy || !drivers.length;
+    connect.disabled = switching || sizing || (on ? !!robot?.busy : busy || !drivers.length);
+    connect.title = connect.disabled ? $("robot-lock").textContent || (busy ? "Connecting to the robot…" : "No robot driver available.") : "";
     if (on) {
       $("robot-driver").replaceChildren(el("option", { text: driverName(connected.driver) }));
       $("robot-port").replaceChildren(el("option", { text: portName(connected.port) || "–" }));
-      listed = "";
     }
     const watching = memory.auto && !on;
     $("robot-dialog-status").textContent =
@@ -1135,6 +1181,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     if (connecting) return;
     const driver = $("robot-driver").value;
     const port = $("robot-port").value || undefined;
+    await connectManually(driver, port);
+  });
+
+  async function connectManually(driver, port) {
     // The choice is made by hand: the watching stands back until it is settled.
     watch.stop();
     await watch.looking;
@@ -1146,43 +1196,63 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       const answer = await api.connect(driver, port, sizeFor(driver));
       connecting = null;
       memory.last = { driver, port: answer.port ?? port };
-      watch.release();
-      dialog.close();
+      watch.release(driver, answer.port ?? port);
+      if (dialog.open) dialog.close();
       await enter({ driver, port: answer.port ?? port ?? "", size: answer.size, info: answer.info ?? {} });
     } catch (error) {
       connecting = null;
       trouble = `Not connected: ${error.message}`;
+      host.say("bad", trouble);
       showDialog();
       // Not tried again at once behind the dialog's back.
       watch.missed(driver, port);
       if (memory.auto) watch.start();
     }
-  });
+  }
 
   // ------------------------------------------------------------ camera
 
   async function openCamera(deviceId = recall(CAMERA_CHOICE)) {
+    if (openingCamera) return false;
+    const session = robot;
+    openingCamera = true;
+    setButtons();
+    try {
+      return await startCamera(deviceId, session);
+    } finally {
+      if (robot === session) {
+        openingCamera = false;
+        setButtons();
+      }
+    }
+  }
+
+  async function startCamera(deviceId, session) {
     const start = $("robot-camera-start");
     try {
       try {
         await feed.open(deviceId ? { deviceId: { exact: deviceId } } : undefined);
       } catch (error) {
         // The camera remembered is not there today (the phone is away): any other.
-        if (!deviceId || !["OverconstrainedError", "NotFoundError", "NotReadableError"].includes(error.name)) throw error;
+        if (session !== robot || !deviceId || !["OverconstrainedError", "NotFoundError", "NotReadableError"].includes(error.name)) throw error;
         await feed.open();
       }
     } catch (error) {
+      if (session !== robot) return false;
       start.hidden = false;
       say(error.name === "NotAllowedError" ? "The camera is not allowed for this page. Allow it, then start it." : "The camera could not be started.", true);
+      note.dataset.source = "camera";
       return false;
     }
+    if (session !== robot) return false;
     start.hidden = true;
     const select = $("robot-camera");
     select.replaceChildren(...feed.cameras.map((c, k) => el("option", { value: c.deviceId, text: c.label || `Camera ${k + 1}` })));
-    select.value = feed.deviceId ?? "";
+    select.value = feed.deviceId ?? deviceId ?? "";
     if (select.selectedIndex < 0) select.selectedIndex = 0;
-    select.hidden = feed.cameras.length < 2;
-    if (note.classList.contains("warn")) say("");
+    if (!select.options.length) select.add(new Option("Default camera", ""));
+    $("robot-camera-name").textContent = select.selectedOptions[0].textContent;
+    if (note.dataset.source === "camera") { say(""); delete note.dataset.source; }
     return true;
   }
 
@@ -1201,6 +1271,8 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   // ------------------------------------------------------------ shots
 
   function clearShots() {
+    $("robot-measures").replaceChildren();
+    reading = "";
     $("robot-shots").replaceChildren(
       ...[..."URFDLB"].map((f) => el("li", { "data-face": f, title: `${f}: not taken yet` }, [el("canvas", { width: "56", height: "56" }), el("span", { text: f })])),
     );
@@ -1226,8 +1298,15 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     scanButton.classList.toggle("primary", !busy);
     scanButton.classList.toggle("danger", busy);
     scanButton.title = busy ? "Stop the robot at once" : "Scan the cube in the robot, then solve it";
-    scanButton.disabled = !robot || sizing;
-    $("robot-disconnect").disabled = busy;
+    const reason = busy ? "Device choices are locked until the robot stops." : sizing ? "Setting the robot’s cube size…" : switching ? "Changing robot…" : openingCamera ? "Opening the camera…" : "";
+    $("robot-device").disabled = busy || sizing || switching;
+    $("robot-camera").disabled = !!reason;
+    $("robot-camera-start").disabled = openingCamera;
+    $("robot-device").title = $("robot-camera").title = reason;
+    $("robot-lock").textContent = reason;
+    scanButton.disabled = !robot || sizing || switching || openingCamera;
+    if (scanButton.disabled && reason) scanButton.title = reason;
+    if (dialog.open) showDialog();
   }
 
   function stopTicker() {
@@ -1275,14 +1354,22 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       const sizes = result.sizes.filter(Boolean);
       const times = result.read_ms.filter((ms) => ms !== null);
       const span = (list, unit) => (Math.min(...list) === Math.max(...list) ? `${list[0]} ${unit}` : `${Math.min(...list)} to ${Math.max(...list)} ${unit}`);
-      reading = sizes.length
-        ? `The six photos were read at ${span(sizes, "pixels")} a side (the last at ${sizes.at(-1)}), a face in ${span(times.map(Math.round), "ms")}, ${duration(result.work_ms)} in all while the robot moved. The cube was ready ${duration(result.analysis_ms)} after the scan; each photo was grabbed within ${duration(result.grab_ms)}.`
-        : "";
+      const measures = sizes.length ? [
+        ["Resolution", span(sizes, "px")],
+        ["Last photo", `${sizes.at(-1)} px`],
+        ["Read per face", span(times.map(Math.round), "ms")],
+        ["Total reading", duration(result.work_ms)],
+        ["Longest frame grab", duration(result.grab_ms)],
+        ["Ready after scan", duration(result.analysis_ms)],
+      ] : [];
+      $("robot-measures").replaceChildren(...measures.flatMap(([label, value]) => [
+        el("dt", { text: label }), el("dd", { text: value }),
+      ]));
+      reading = measures.map(([label, value]) => `${label}: ${value}`).join(" · ");
+      say(read);
       if (ok && result.ok) {
-        say(read, false, reading);
         host.say("busy", "Finding the robot's fastest solution…");
       } else {
-        say(read, true, reading);
         const twice = result.repeated?.[0];
         if (twice) {
           // The likeliest cause of all, said first.
@@ -1297,7 +1384,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       following = host.plan(plan.moves ?? []);
       eta = new Eta(plan, performance.now());
       const left = el("b");
-      const more = `${host.count(plan.moves?.length ?? 0, "move")} · found in ${duration(plan.compute_ms)}${plan.candidates ? ` among ${plan.candidates}` : ""}${following ? "" : " · the page could not follow these moves on its cube"}`;
+      const more = following ? "" : "The page could not follow these moves on its cube.";
       const tick = () => {
         left.textContent = duration(eta.left(performance.now()));
       };
@@ -1342,9 +1429,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     onlost(event) {
       lost(event.message);
     },
-    onlog(text) {
-      if (text) log(text);
-    },
+
     onlink(ok) {
       say(ok ? "" : "No answer from the anycube server. Trying again…", !ok);
       // A server that was away may have come back without the robot.
@@ -1360,7 +1445,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       setButtons();
       return;
     }
+    const session = robot;
     if (!feed.running && !(await openCamera())) return;
+    if (robot !== session) return;
     const n = connected.size;
     host.setSize(n);
     robot.n = n;
@@ -1376,10 +1463,46 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   // ------------------------------------------------------------ connected
 
   function showWhere() {
-    $("robot-name").textContent = driverName(connected.driver);
-    $("robot-where").textContent = [Number.isInteger(connected.size) ? host.name(connected.size) : "", portName(connected.port)].filter(Boolean).join(" · ");
-    $("robot-where").title = connected.port ?? "";
+    const select = $("robot-device");
+    const choices = robotChoices({ drivers, ports: [...ports.values()] }, connected, memory.last);
+    select.replaceChildren(...choices.map(choice => {
+      const option = new Option(choice.text, choice.path);
+      option.disabled = !choice.driver;
+      option.dataset.driver = choice.driver ?? "";
+      return option;
+    }), new Option("None / disconnect", ""));
+    select.value = connected.port;
+    $("robot-device-name").textContent = select.selectedOptions[0]?.textContent ?? driverName(connected.driver);
   }
+
+  // Refresh on approach or keyboard focus while automatic connection polling is idle.
+  async function refreshDevices() {
+    const was = connected;
+    if (!was || switching || robot?.busy) return;
+    try {
+      const answer = await api.robots(memory.auto);
+      if (connected === was && !switching && !robot?.busy) showList(answer);
+    } catch (error) {
+      say(`Could not refresh robot ports: ${error.message}`, true);
+    }
+  }
+  const devices = $("robot-device");
+  devices.addEventListener("focus", refreshDevices);
+  devices.addEventListener("pointerenter", refreshDevices);
+  devices.addEventListener("change", async () => {
+    if (switching || robot?.busy || sizing) return;
+    const port = devices.value;
+    const driver = devices.selectedOptions[0]?.dataset.driver;
+    switching = true;
+    setButtons();
+    try {
+      if (!(await disconnect(!port))) { showWhere(); return; }
+      if (port) await connectManually(driver, port);
+    } finally {
+      switching = false;
+      setButtons();
+    }
+  });
 
   // Another size chosen on the page while the robot is at rest: the robot is
   // connected anew for that cube (its firmware starts as a 3x3x3 and is told).
@@ -1413,7 +1536,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
   }
   host.onsize((n) => {
-    if (connected && robot && !robot.busy && !sizing && Number.isInteger(connected.size) && n !== connected.size) void resize(n);
+    if (connected && robot && !robot.busy && !switching && !sizing && Number.isInteger(connected.size) && n !== connected.size) void resize(n);
   });
 
   async function enter(info) {
@@ -1426,7 +1549,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     showWhere();
     if (Number.isInteger(info.size)) host.setSize(info.size);
     host.setMode(true);
-    place();
     clearShots();
     drawGrid(info.size ?? 3);
     const mine = (robot = new RobotRun({
@@ -1463,16 +1585,19 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   function leave() {
     stopTicker();
+    closeInfo();
     robot?.unfollow();
     robot = null;
     connected = null;
     feed.close();
+    openingCamera = false;
+    listed = "";
     host.setMode(false);
     setButtons();
     showDialog();
   }
 
-  async function disconnect() {
+  async function disconnect(resume = true) {
     const was = connected;
     try {
       await api.disconnect();
@@ -1483,10 +1608,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     // Disconnected by hand: it stays so until it is plugged in again or connected by hand.
     if (was) watch.hold(was.driver, was.port);
     leave();
-    watch.start();
+    if (resume) watch.start();
     return true;
   }
-  $("robot-disconnect").addEventListener("click", disconnect);
+
 
   // The robot is gone (unplugged, or the server lost it): the page as it is
   // without one, watching for it to come back.

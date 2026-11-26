@@ -1720,17 +1720,13 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   }
 }
 
-/* A robot connected (js/robot.js): its panel lies where the scramble, paint
-   and camera were, in exactly their place (those keep it, out of sight, so
-   that nothing under them moves), and Scan stands where Solve was. Without
-   a robot none of this is on the page. */
 .robot-panel,
 #robot-scan {
   display: none;
 }
 .robot-mode .tabs,
 .robot-mode .panels {
-  visibility: hidden;
+  display: none;
 }
 .robot-mode #mode-field,
 .robot-mode #solve {
@@ -1743,51 +1739,99 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   display: inline-flex;
 }
 .robot-panel {
-  position: absolute;
-  left: 12px;
-  right: 12px;
+  position: relative;
   flex-direction: column;
-  gap: 8px;
-  min-height: 0;
+  gap: 5px;
+  min-width: 0;
 }
-.robot-head {
+.robot-panel label {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.robot-choice {
+  position: relative;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  padding: 7px 32px 7px 10px;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: .88rem;
+  overflow-wrap: anywhere;
+}
+.robot-choice::after {
+  content: "";
+  position: absolute;
+  right: 13px;
+  top: calc(50% - 4px);
+  width: 6px;
+  height: 6px;
+  border: solid var(--ink-2);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.robot-choice select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.robot-choice:focus-within, #robot-info:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.robot-choice:has(select:disabled) { color: var(--ink-3); }
+.robot-choice select:disabled { cursor: default; }
+.robot-camera-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
+  gap: 6px;
+  margin-top: 3px;
 }
-/* The robot's name, then its size and port: on a line of their own where they do not fit beside it. */
-.robot-name {
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 8px;
-}
-.robot-name i {
-  flex: none;
-  align-self: center;
-  width: 8px;
-  height: 8px;
+#robot-info {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line-2);
   border-radius: 50%;
-  background: var(--ok);
+  background: var(--panel);
+  color: var(--ink-2);
+  font: bold 14px Georgia, serif;
+  cursor: pointer;
 }
-.robot-name b {
-  font-weight: 650;
-}
-.robot-name span {
-  min-width: 0;
+#robot-details {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 6px 18px #0003;
+  font-size: .85rem;
+  line-height: 1.45;
   overflow-wrap: anywhere;
-  font: 500 0.78rem/1.3 var(--mono);
-  color: var(--ink-3);
 }
+#robot-details p { margin: 5px 0 0; }
+#robot-measures {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  margin: 8px 0 0;
+}
+#robot-measures dt { color: var(--ink-2); }
+#robot-measures dd { margin: 0; font-variant-numeric: tabular-nums; }
+#robot-measures:empty, #robot-details p:empty, .robot-note:empty { display: none; }
 .robot-body {
-  flex: 1 1 0;
-  min-height: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
+  height: clamp(76px, 13vh, 120px);
+  margin-top: 5px;
   gap: 10px;
 }
 /* The camera as the robot's photos take it: the middle square of the picture, not mirrored. */
@@ -1880,7 +1924,6 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   font: 600 0.68rem/1.4 var(--mono);
   color: var(--ink-2);
 }
-.robot-camera select,
 .robot-fields select {
   width: 100%;
   min-height: 32px;
@@ -1892,24 +1935,12 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   font: inherit;
   font-size: 0.82rem;
 }
-.robot-camera select[hidden] {
-  display: none;
-}
-/* The robot's line: always whole, on as many lines as it needs. */
 .robot-note {
-  flex: none;
   margin: 0;
-  min-height: 1.35em;
-  font-size: 0.8rem;
-  line-height: 1.35;
-  color: var(--ink-2);
-  overflow-wrap: anywhere;
-}
-.robot-note.warn {
+  font-size: .82rem;
+  line-height: 1.4;
   color: var(--danger);
-}
-.robot-log {
-  color: var(--ink-3);
+  overflow-wrap: anywhere;
 }
 /* "Scanning…" on the line that says whether the cube can be solved: a line like the others. */
 .robot-mode .valid.wait {
@@ -1995,10 +2026,7 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   color: var(--ok);
 }
 @media (max-width: 759px) {
-  .robot-panel {
-    left: 8px;
-    right: 8px;
-  }
+  .robot-body { height: 76px; }
   .robot-times {
     grid-template-columns: repeat(3, auto);
   }
