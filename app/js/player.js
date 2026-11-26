@@ -199,6 +199,18 @@ export class Player {
     else this.play();
   }
 
+  // Move `k` of the solution turned over `ms`, as something else (a robot)
+  // turns it: from wherever the cube is, the move before it is finished
+  // at once, or the cube is put where the move begins.
+  turnAt(k, ms) {
+    if (!Number.isInteger(k) || k < 0 || k >= this.length) return;
+    this.playing = false;
+    if (this.anim) this.#finish();
+    if (this.position !== k || this.partial || this.detour.length) this.seek(k);
+    this.#turn(1, false, Math.max(60, ms));
+    this.onchange();
+  }
+
   // One move forwards (1) or backwards (-1), animated.
   step(direction) {
     this.playing = false;
@@ -208,7 +220,7 @@ export class Player {
     this.onchange();
   }
 
-  #turn(direction, wait) {
+  #turn(direction, wait, took = null) {
     const m = this.model;
     const back = direction < 0 && !this.partial && this.detour.length === 0;
     let move = this.nextMove;
@@ -222,7 +234,7 @@ export class Player {
     }
     const { face, from, to, quarters } = m.info(move);
     const full = (quarters * Math.PI) / 2;
-    const ms = (QUARTER_MS * (Math.abs(quarters) === 2 ? 1.4 : 1)) / this.speed;
+    const ms = took ?? (QUARTER_MS * (Math.abs(quarters) === 2 ? 1.4 : 1)) / this.speed;
     // In play, with the cue on, the arrows of this move stand for a moment first.
     const lead = wait && this.cue ? (QUARTER_MS * CUE_SHARE) / this.speed : 0;
     const anim = { back, move, start: performance.now() + lead, ms };

@@ -882,6 +882,66 @@ export async function mount(root, options = {}) {
     });
   }
 
+  // Six faces' colours to the cube they make, as a scan (the camera's, or a
+  // robot's) reads them: `read` is assembleScan's answer if it is at hand.
+  // What to say about it goes to the note over the painted cube.
+  function readScan(n, samples, sources, lastFace, read = assembleScan(n, samples)) {
+    const { sorted, made } = read;
+    const lying = placed(n, made.labels, made);
+    const { facelets: reconstructed, palette } = named(n, sorted, lying);
+    const centreMismatch = n % 2 === 1 && !oppositeCentres(palette);
+    const model = state.model;
+    const facelets = centreMismatch ? reconstructed : model.withCentres(reconstructed);
+    const doubt = placed(n, sorted.doubt, made);
+    if (solver.config.scan_diagnostics) {
+      saveScan({
+        size: n,
+        rgb: samples,
+        sources,
+        facelets: model.toText(facelets),
+        palette,
+        assembly: { kind: made.kind, from: made.from, rot: made.rot, swapped: made.swapped, hidden: made.hidden },
+        uncertainty: Array.from(doubt, (value) => Math.round(value * 1000) / 1000),
+        centre_mismatch: centreMismatch,
+      });
+    }
+    if (centreMismatch) return { centreMismatch };
+    const stickers = reviewStickers(n, doubt);
+    const review = stickers.length ? { stickers, active: made.kind === "none" } : undefined;
+    const face = made.from.indexOf(lastFace);
+    const capture = { face, quarters: made.rot[face] };
+    const canSolve = made.kind !== "none" && made.kind !== "several";
+    const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
+    let note = "Read from the camera.";
+    if (made.kind === "placed" && made.moved.length === 0) {
+      note = `Reoriented the ${faces(made.turned)} ${made.turned.length > 1 ? "faces" : "face"}. Check against your cube.`;
+    } else if (made.kind === "placed") {
+      note = `${made.moved.length > 2 ? "Some" : "Two"} faces were shown out of order and moved into place. Check against your cube.`;
+    } else if (made.kind === "recoloured") {
+      note = "Two similar sticker colours were swapped to make a valid cube. Check against your cube.";
+    } else if (made.kind === "several" && made.hidden?.length) {
+      note = "Glare hid the colour of some stickers. Move the light or tilt the cube, then scan again.";
+    } else if (made.kind === "several") {
+      note = "These pictures fit together as more than one cube. Scan again, or correct it here.";
+    } else if (made.kind === "none") {
+      note = review?.active ? SCAN_REVIEW_NOTE : SCAN_RETAKE_NOTE;
+    }
+    return { scan: { facelets, palette, review, capture, canSolve }, note };
+  }
+
+  // A finished scan becomes the painted cube, on screen: solved at once if `solveIt`.
+  function takeScan(scan, solveIt) {
+    const { facelets, palette, review, capture } = scan;
+    state.painted.set(state.size, { facelets, palette, review, capture });
+    showTab("paint");
+    state.input = "paint";
+    paint.set(state.size, facelets, palette);
+    setTouch();
+    show(false, solveIt);
+    if (review?.active) lookAtReview(review);
+    else lookAtScan(scan, 0);
+  }
+
   let guiding = 0;
   let finishedScan = null;
   const scanner = new CameraScanner($("camera-frame"), $("camera-side"), {
@@ -905,50 +965,12 @@ export async function mount(root, options = {}) {
       view.setRaw(state.scan);
     },
     ondone: (samples, sources, lastFace) => {
-      const n = state.size;
-      const { sorted, made } = assembleScan(n, samples);
-      const lying = placed(n, made.labels, made);
-      const { facelets: reconstructed, palette } = named(n, sorted, lying);
-      const centreMismatch = n % 2 === 1 && !oppositeCentres(palette);
-      const facelets = centreMismatch ? reconstructed : state.model.withCentres(reconstructed);
-      const doubt = placed(n, sorted.doubt, made);
-      if (solver.config.scan_diagnostics) {
-        saveScan({
-          size: n,
-          rgb: samples,
-          sources,
-          facelets: state.model.toText(facelets),
-          palette,
-          assembly: { kind: made.kind, from: made.from, rot: made.rot, swapped: made.swapped, hidden: made.hidden },
-          uncertainty: Array.from(doubt, (value) => Math.round(value * 1000) / 1000),
-          centre_mismatch: centreMismatch,
-        });
-      }
-      if (centreMismatch) {
+      const read = readScan(state.size, samples, sources, lastFace);
+      if (read.centreMismatch) {
         return `${CENTRE_PROBLEM} Select a face below to retake it.`;
       }
-      const stickers = reviewStickers(n, doubt);
-      const review = stickers.length ? { stickers, active: made.kind === "none" } : undefined;
-      const face = made.from.indexOf(lastFace);
-      const capture = { face, quarters: made.rot[face] };
-      const canSolve = made.kind !== "none" && made.kind !== "several";
-      finishedScan = { facelets, palette, review, capture, canSolve };
-      const faces = (list) => list.map((f) => FACE_NAMES[f].toLowerCase()).join(", ").replace(/, ([^,]*)$/, " and $1");
-      let note = "Read from the camera.";
-      if (made.kind === "placed" && made.moved.length === 0) {
-        note = `Reoriented the ${faces(made.turned)} ${made.turned.length > 1 ? "faces" : "face"}. Check against your cube.`;
-      } else if (made.kind === "placed") {
-        note = `${made.moved.length > 2 ? "Some" : "Two"} faces were shown out of order and moved into place. Check against your cube.`;
-      } else if (made.kind === "recoloured") {
-        note = "Two similar sticker colours were swapped to make a valid cube. Check against your cube.";
-      } else if (made.kind === "several" && made.hidden?.length) {
-        note = "Glare hid the colour of some stickers. Move the light or tilt the cube, then scan again.";
-      } else if (made.kind === "several") {
-        note = "These pictures fit together as more than one cube. Scan again, or correct it here.";
-      } else if (made.kind === "none") {
-        note = review?.active ? SCAN_REVIEW_NOTE : SCAN_RETAKE_NOTE;
-      }
-      $("paint-note").textContent = note;
+      finishedScan = read.scan;
+      $("paint-note").textContent = read.note;
     },
     onstop: () => {
       // What was read of an unfinished scan is dropped; the painted cube is as it was.
@@ -959,17 +981,12 @@ export async function mount(root, options = {}) {
       const scan = finishedScan;
       finishedScan = null;
       if (scan) {
-        const { facelets, palette, review, capture } = scan;
-        state.painted.set(state.size, { facelets, palette, review, capture });
-        showTab("paint");
-        state.input = "paint";
-        paint.set(state.size, facelets, palette);
+        takeScan(scan, scan.canSolve);
+      } else {
+        setTouch();
+        show(false, undefined);
+        view.look(null);
       }
-      setTouch();
-      show(false, scan?.canSolve);
-      if (scan?.review?.active) lookAtReview(scan.review);
-      else if (scan) lookAtScan(scan, 0);
-      else view.look(null);
     },
   });
 
@@ -1248,7 +1265,7 @@ export async function mount(root, options = {}) {
     $("to-end").disabled = $("step-on").disabled = position >= length;
     if (state.scramblePlayback) setBusy(!!state.job);
     // Once the solution is being followed, the line that announced it is in the way.
-    if (state.result?.[0] === "good" && !state.job && (playing || player.canStepBack)) {
+    if (state.result?.[0] === "good" && !state.result.keep && !state.job && (playing || player.canStepBack)) {
       state.result = null;
       restStatus();
     }
@@ -1510,6 +1527,97 @@ export async function mount(root, options = {}) {
     view.draw();
   }
 
+  // ---------------------------------------------------------------- robot
+
+  // What the robot extension (robot.js) may do with the page. While a robot
+  // is connected the scramble, paint and camera give way to its Scan button;
+  // the cube, its playback and the solution stay as they are.
+  function robotHost() {
+    return {
+      root,
+      $,
+      el,
+      view,
+      player,
+      state,
+      solver,
+      name,
+      count,
+      setMode(on) {
+        root.classList.toggle("robot-mode", on);
+        if (on) {
+          scanner.stop();
+          setHelp(false);
+          if (state.tab === "moves" && !narrow.matches) setTab(state.input);
+        } else {
+          state.result = null;
+          show();
+        }
+      },
+      setSize(n) {
+        if (state.size !== n) setSize(n);
+      },
+      // A scan begins: the cube on screen empties and fills in as faces are read.
+      scanStart() {
+        state.solution = null;
+        state.result = null;
+        state.detail = null;
+        state.job?.abort();
+        state.job = null;
+        renderMoves();
+        const raw = new Array(state.model.count).fill(null);
+        player.load(state.model, new Uint8Array(state.model.count).fill(BLANK), []);
+        view.setScanReview(null);
+        view.setRaw(raw);
+        setValid("wait", "Scanning…");
+        restStatus();
+        return raw;
+      },
+      // The robot's six faces read and put together: on screen as the
+      // camera's scan would be. Returns what to say about it.
+      scanned(result, sources, lastFace) {
+        view.setRaw(null);
+        const read = readScan(state.size, result.samples, sources, lastFace, { sorted: result.sorted, made: result.made });
+        if (read.centreMismatch) {
+          show();
+          return { ok: false, note: `${CENTRE_PROBLEM} Scan again.` };
+        }
+        $("paint-note").textContent = read.note;
+        takeScan(read.scan, false);
+        return { ok: result.ok, note: read.note };
+      },
+      // The robot's solution of the cube on screen, to follow move by move.
+      // False if the page cannot follow it (its model disagrees).
+      plan(names) {
+        const start = state.input === "scramble" ? player.facelets : painted().facelets;
+        let moves;
+        try {
+          moves = state.model.parse(names.join(" "));
+        } catch {
+          return false;
+        }
+        if (moves.length !== names.length || !state.model.isSolved(state.model.applyAll(start, moves))) return false;
+        state.solution = { moves, parts: [], label: "robot-fastest", found: moves.length };
+        state.scramblePlayback = false;
+        renderMoves();
+        player.load(state.model, start, moves);
+        return true;
+      },
+      move(k, ms) {
+        player.turnAt(k, ms);
+      },
+      // A line over the cube that stays until the next one (`keep`: even once the solution is followed).
+      say(kind, text, more = "", extra = null, keep = false) {
+        state.result = kind ? Object.assign([kind, text, more, extra], { keep }) : null;
+        if (kind !== "bad") state.detail = null;
+        restStatus();
+      },
+      wait(title, more = "") {
+        drawWait(title, more);
+      },
+    };
+  }
+
   // ---------------------------------------------------------------- start
 
   narrow.addEventListener("change", arrange);
@@ -1554,6 +1662,15 @@ export async function mount(root, options = {}) {
   }
   ready = true;
   updateScrambleButtons();
+  // A robot, when the server drives one: nothing of it is on the page otherwise.
+  if (solver.config.robots) {
+    try {
+      const { mountRobot } = await import("./robot.js");
+      mountRobot(robotHost());
+    } catch (error) {
+      console.error("The robot extension could not be started", error);
+    }
+  }
   keeping = true;
   keep();
   // Leaving the page (a reload is that too) keeps it as it stands at that moment.

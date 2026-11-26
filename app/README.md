@@ -104,6 +104,48 @@ host is written in these files.
   the cube fits together only one way, and two stickers the sorting was
   unsure of are exchanged when that is what makes a cube.
 - `paint.js`: the colours to paint with and the cube unfolded.
+- `robot.js`: a cube robot driven from the page, mounted only when the
+  server's `/api/config` says `robots: true` (the contract is
+  `robots-spec/API.md`). See below.
+
+## A robot
+
+When the server drives robots, a Robot button sits by the cube. It opens
+the robots the server knows (driver and serial port, from `/api/robots`);
+a robot left connected is taken up again when the page is reloaded. While
+one is connected, the scramble, paint and camera give way to the robot's
+panel: the camera as the robot's photos take it (the middle square,
+not mirrored, with the grid of 0.8 of its side), the six photos of the
+last scan, and the camera to use (remembered on this device). Solve gives
+way to Scan. Everything else is as it was. Without a robot, or without a
+server that drives robots, nothing of it is on the page.
+
+Scan starts the robot and follows its events (`/api/robot/events`, long
+polls). At each `photo` the page grabs the frame of the moment, cuts out
+its centred square, makes it 240 pixels (360 from 6x6x6), turns it as the
+event says, and answers `photo-taken` at once: 1 to 2 ms in Chromium.
+The face is read afterwards, while the robot moves on: `detect.js`, or a
+centred grid of 0.8 of the side when no face is found, then `colour.js`
+and `scan-fit.js`, as MultiCuber's `anycube_scan.mjs` does. The six faces
+fill in on the cube as they are read. A scan that makes no cube is shown
+as the camera's would be, and nothing more is asked of the robot.
+Otherwise the cube goes to `/api/robot/solve` with `analysis_ms`, the time
+from `scan-done` to the facelets (a few milliseconds: by then only the
+last face and the assembly are left). The cube on screen turns each move
+as the robot starts it, over its estimated time; the time left is the
+plan's, corrected by the ops as they finish; at the end the times of the
+run are shown. Scan is Stop while the robot moves.
+
+Reading six faces, measured on the robot's own pictures of a 4x4x4
+(MultiCuber's `CubeScan`) under Node: 33, 44, 80 and 172 ms at 200, 240,
+320 and 480 pixels, and 6 ms to put them together. In Chromium, warm,
+on drawn pictures of a 3x3x3: about 50 ms for the six and 2 ms to put
+them together; the first time is several times slower, so the page reads
+once when a robot is connected.
+
+`node app/tests/robot-mock-server.mjs` serves the page with a mock robot
+behind a mock server (`tests/robot-mock.mjs`, the same one the tests run
+against).
 
 ## Limits
 
@@ -126,6 +168,10 @@ cargo build --release -p anycube-wasm --target wasm32-unknown-unknown
 ```bash
 node --test app/tests/*.test.mjs
 ```
+
+`robot.test.mjs` reads MultiCuber's `CubeScan` pictures when that
+repository is beside this one (or at `$MULTICUBER_CUBESCAN`) and skips
+those cases otherwise.
 
 The Node tests that compare the page's model with the solver's need the
 WebAssembly build and skip without it; `cargo test --test wasm_native` runs
