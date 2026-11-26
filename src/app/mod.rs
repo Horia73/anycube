@@ -7,6 +7,7 @@
 
 pub mod assets;
 pub mod install;
+pub mod robots;
 pub mod server;
 pub mod window;
 
@@ -17,6 +18,8 @@ anycube app                 open the interface in a window of its own
 anycube app --browser       open it in the default browser instead
 anycube app --no-window     only serve it, and print its address
 anycube app --port N        serve on port N (any free port otherwise)
+anycube app --robot-sim[=S] offer a simulated MultiCuber (port \"sim\"), its motions taking S times
+                            their real time (1 by default; 0 = at once). ANYCUBE_ROBOT_SIM=S does the same
 anycube app --install       add anycube to this computer's applications, with its icon
 anycube app --uninstall     take that entry away again
 
@@ -131,7 +134,9 @@ pub fn main(args: &[String]) {
         return;
     }
     if let Some(unknown) = args.iter().enumerate().find(|(i, a)| {
-        !matches!(a.as_str(), "--browser" | "--no-window" | "--with-parent" | "--port") && !(*i > 0 && args[i - 1] == "--port")
+        !matches!(a.as_str(), "--browser" | "--no-window" | "--with-parent" | "--port" | "--robot-sim")
+            && !a.starts_with("--robot-sim=")
+            && !(*i > 0 && args[i - 1] == "--port")
     }) {
         eprintln!("unknown argument '{}'\n\n{}", unknown.1, HELP);
         std::process::exit(2);
@@ -148,7 +153,12 @@ pub fn main(args: &[String]) {
     }
     std::env::set_var("ANYCUBE_TABLES", &tables);
 
-    let running = server::start(port, MAX_SIZE).unwrap_or_else(|e| fail(&e));
+    let mut robots = crate::robot::session::Config::from_env(Some(data_dir()), MAX_SIZE);
+    if let Some(a) = args.iter().find(|a| *a == "--robot-sim" || a.starts_with("--robot-sim=")) {
+        let scale = a.strip_prefix("--robot-sim=").map_or(Some(1.0), |s| s.parse::<f64>().ok().filter(|s| *s >= 0.0));
+        robots.sim_scale = Some(scale.unwrap_or_else(|| fail("--robot-sim=S takes a time scale such as 1, 0.2 or 0")));
+    }
+    let running = server::start_with(port, MAX_SIZE, robots).unwrap_or_else(|e| fail(&e));
     // The address first and alone on its line: whoever started this program reads it there.
     println!("{}", running.url);
     eprintln!("anycube is at {} (tables in {}). Ctrl-C stops it.", running.url, tables.display());

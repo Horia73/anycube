@@ -1,0 +1,60 @@
+//! The robot API of the local server (robots-spec/API.md): requests to the
+//! robot session, answers as JSON.
+//!
+//! ```text
+//! GET  /api/robots                          drivers, their sizes and ports, the connected robot
+//! POST /api/robot/connect                   {"driver": "multicuber", "port": "...", "size": 3} (port and size optional)
+//! POST /api/robot/disconnect                {}
+//! POST /api/robot/scan                      {}                                   -> {"ok": true, "run": "..."}
+//! POST /api/robot/photo-taken               {"run": "...", "index": 0..5}
+//! POST /api/robot/solve                     {"run": "...", "size": 3, "facelets": "...", "analysis_ms": 412}
+//! POST /api/robot/stop                      {}
+//! GET  /api/robot/events?since=<seq>&wait=<s>
+//! ```
+//!
+//! A command moves a machine, so a POST must come as JSON from this app's
+//! own page: a page elsewhere cannot send a JSON body here without the
+//! browser asking first, and this server never says yes.
+
+use crate::robot::session::Session;
+use serde_json::{json, Value};
+use std::time::Duration;
+
+/// Answers a robot request, or `None` if the path is not one.
+pub fn route(session: &Session, method: &str, path: &str, url: &str, body: &str, json_body: bool, origin_ok: bool) -> Option<(u16, Value)> {
+    let err = |status: u16, code: &str, message: &str| Some((status, json!({"ok": false, "error": {"code": code, "message": message}})));
+    match (method, path) {
+        ("GET", "/api/robots") => Some((200, session.list())),
+        ("GET", "/api/robot/events") => {
+            let q = |name: &str| super::server::query(url, name);
+            let since = q("since").unwrap_or(0);
+            let wait = Duration::from_secs(q("wait").unwrap_or(0).min(10));
+            Some((200, session.events(since, wait)))
+        }
+        ("POST", p) if p.starts_with("/api/robot/") => {
+            if !origin_ok {
+                return err(403, "forbidden", "robot commands must come from this app");
+            }
+            if !json_body {
+                return err(415, "bad_request", "robot commands must be sent as JSON (Content-Type: application/json)");
+            }
+            let body: Value = if body.trim().is_empty() { json!({}) } else {
+                match serde_json::from_str(body) {
+                    Ok(v) => v,
+                    Err(_) => return err(400, "bad_request", "the body is not JSON"),
+                }
+            };
+            let answer = match p {
+                "/api/robot/connect" => session.connect(&body),
+                "/api/robot/disconnect" => session.disconnect(),
+                "/api/robot/scan" => session.scan(),
+                "/api/robot/photo-taken" => session.photo_taken(&body),
+                "/api/robot/solve" => session.solve(&body),
+                "/api/robot/stop" => session.stop(),
+                _ => return err(404, "not_found", "no such endpoint"),
+            };
+            Some((200, answer))
+        }
+        _ => None,
+    }
+}

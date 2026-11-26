@@ -12,6 +12,7 @@
 //! GET    /api/scramble     ?size=3: a random-state scramble, for the sizes that have one
 //! GET    /api/config       what this server does
 //! POST   /api/settings     {"top_colour": "white" | "yellow", "scan_orientation": "capture" | "standard"} (either field or both)
+//! GET    /api/robots, POST /api/robot/..., GET /api/robot/events   a cube robot (robots.rs)
 //! ```
 //!
 //! A search cannot be interrupted from inside, so the solvers run in a
@@ -74,6 +75,9 @@ struct Shared {
     child: Mutex<Option<Child>>,
     settings: Mutex<PathBuf>,
     max_size: usize,
+    /// The cube robot, driven from this process (its solves need no worker:
+    /// they take milliseconds, with the tables kept loaded here).
+    robots: crate::robot::session::Session,
 }
 
 impl Shared {
@@ -299,7 +303,7 @@ fn checked(size: usize, kind: &str, input: &str, max_size: usize) -> Result<(), 
     check(size, input, max_size).map(|_| ()).map_err(|e| error(e.code, e.message.clone(), e.impossible()))
 }
 
-fn query(url: &str, name: &str) -> Option<u64> {
+pub(super) fn query(url: &str, name: &str) -> Option<u64> {
     url.split_once('?')?.1.split('&').find_map(|pair| pair.strip_prefix(name)?.strip_prefix('=')?.parse().ok())
 }
 
@@ -380,6 +384,22 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
     }
     let parsed = || serde_json::from_str::<Value>(&body).map_err(|_| error("bad_request", "the body is not JSON", false));
 
+    if path.starts_with("/api/robot") {
+        let origin = format!("http://{}", host);
+        let origin_ok = !request.headers().iter().any(|h| h.field.equiv("Origin") && h.value.as_str() != origin);
+        let json_body = request.headers().iter().any(|h| {
+            h.field.equiv("Content-Type") && h.value.as_str().split(';').next().is_some_and(|v| v.trim().eq_ignore_ascii_case("application/json"))
+        });
+        let m = match method {
+            Method::Get => "GET",
+            Method::Post => "POST",
+            _ => "OTHER",
+        };
+        if let Some((status, answer)) = super::robots::route(&shared.robots, m, &path, &url, &body, json_body, origin_ok) {
+            return respond_json(request, status, answer);
+        }
+    }
+
     match (&method, path.as_str()) {
         (Method::Get, "/api/config") => {
             let settings = read_settings(&shared.settings.lock().unwrap());
@@ -395,6 +415,7 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
                 "top_colour": if settings["top_colour"] == "yellow" { "yellow" } else { "white" },
                 "scan_orientation": if settings["scan_orientation"] == "standard" { "standard" } else { "capture" },
                 "version": env!("CARGO_PKG_VERSION"),
+                "robots": true,
             }))
         }
         (Method::Post, "/api/settings") => {
@@ -522,11 +543,17 @@ pub struct Running {
 /// Starts the server on 127.0.0.1, on `port` or on any free port for 0, and
 /// returns once it is listening. It serves until the program ends.
 pub fn start(port: u16, max_size: usize) -> Result<Running, String> {
+    start_with(port, max_size, crate::robot::session::Config::from_env(Some(super::data_dir()), max_size))
+}
+
+/// `start`, with the robot session set up as given.
+pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Config) -> Result<Running, String> {
     let server = Server::http(("127.0.0.1", port)).map_err(|e| format!("cannot listen on 127.0.0.1:{}: {}", port, e))?;
     let port = server.server_addr().to_ip().map(|a| a.port()).ok_or("no port")?;
     let shared = Arc::new(Shared {
         board: Mutex::default(), changed: Condvar::new(), child: Mutex::new(None),
         settings: Mutex::new(super::data_dir().join("settings.json")), max_size,
+        robots: crate::robot::session::Session::new(robots),
     });
     let jobs = shared.clone();
     std::thread::spawn(move || run_jobs(jobs));

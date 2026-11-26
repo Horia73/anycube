@@ -23,8 +23,9 @@ use crate::c3::{perm_rank, C3, G1_MOVES, N_PERM, N_SPERM, T3};
 use crate::cube::{inv_seq, skip_move, tables as cube_tables};
 use crate::first3::{First3, NEAR};
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::Mutex;
+use std::time::Instant;
 
 /// How far the first phase goes: every way of fewer than `depth` moves in
 /// all six variants, and those of exactly `depth` moves in the first
@@ -42,6 +43,48 @@ impl Effort {
     pub const NORMAL: Effort = Effort { depth: 14, variants: 6 };
     /// A few seconds: what `--mode full` asks for before it looks for the optimal solution.
     pub const DEEP: Effort = Effort { depth: 15, variants: 6 };
+}
+
+/// What `Two3::candidates` collects: every solution it meets of at most
+/// `slack` moves more than the shortest so far, with first phases of up to
+/// `depth` moves, until it has `max` of them or `deadline` passes.
+#[derive(Clone, Copy, Debug)]
+pub struct Candidates {
+    pub depth: usize,
+    pub slack: usize,
+    pub max: usize,
+    pub deadline: Option<Instant>,
+}
+
+/// Solutions met by a search that keeps more than the best.
+struct Collector {
+    slack: usize,
+    max: usize,
+    deadline: Option<Instant>,
+    found: Mutex<Vec<(usize, Vec<u8>)>>,
+    count: AtomicUsize,
+    stop: AtomicBool,
+    ticks: AtomicUsize,
+}
+
+impl Collector {
+    #[inline(always)]
+    fn stopped(&self) -> bool {
+        self.stop.load(Relaxed)
+    }
+
+    fn tick(&self) {
+        if self.ticks.fetch_add(1, Relaxed) % 64 == 63 && self.deadline.is_some_and(|d| Instant::now() >= d) {
+            self.stop.store(true, Relaxed);
+        }
+    }
+
+    fn push(&self, variant: usize, sol: &[u8]) {
+        self.found.lock().unwrap().push((variant, sol.to_vec()));
+        if self.count.fetch_add(1, Relaxed) + 1 >= self.max {
+            self.stop.store(true, Relaxed);
+        }
+    }
 }
 
 pub struct Two3 {
@@ -162,7 +205,54 @@ impl Two3 {
     /// goes on past its effort until it has a solution, this stops there; and a first phase
     /// that leaves too few moves for the second is not followed, so a low limit is quick.
     pub fn solve_within(&self, t: &T3, cube: &C3, effort: Effort, max_len: usize) -> Option<Vec<u8>> {
-        self.search(t, cube, effort, Some(max_len), 0).0
+        self.search(t, cube, effort, Some(max_len), 0, None).0
+    }
+
+    /// Many short solutions instead of one: for a robot, whose time for a
+    /// solution is not its length, to choose among. Every way into the
+    /// domino subgroup is followed on the three axes, for the cube and its
+    /// inverse, shortest first, and each gives its shortest second phase if
+    /// the whole is within `slack` moves of the best so far (see
+    /// `Candidates`). The shortest solution found is among them. Which ones
+    /// come back depends on the cores when a deadline or `max` stops the
+    /// search; without either, on nothing.
+    pub fn candidates(&self, t: &T3, cube: &C3, opts: Candidates) -> Vec<Vec<u8>> {
+        if *cube == C3::identity() {
+            return vec![Vec::new()];
+        }
+        let c = Collector {
+            slack: opts.slack,
+            max: opts.max.max(1),
+            deadline: opts.deadline,
+            found: Mutex::new(Vec::new()),
+            count: AtomicUsize::new(0),
+            stop: AtomicBool::new(false),
+            ticks: AtomicUsize::new(0),
+        };
+        self.search(t, cube, Effort { depth: opts.depth, variants: 6 }, None, 0, Some(&c));
+        let ct = cube_tables();
+        let mut variants = Vec::new();
+        for (r, _, _) in &t.frames {
+            variants.push((*r, false));
+            variants.push((*r, true));
+        }
+        let mut found = c.found.into_inner().unwrap();
+        found.sort_by_key(|(_, s)| s.len());
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for (v, mut sol) in found {
+            let (r, inverse) = variants[v];
+            if inverse {
+                sol = inv_seq(&sol);
+            }
+            for m in sol.iter_mut() {
+                *m = ct.relabel[r][*m as usize];
+            }
+            if seen.insert(sol.clone()) {
+                out.push(sol);
+            }
+        }
+        out
     }
 
     /// Smallest exact distance to a domino subgroup over the three axes, or `None` if it is
@@ -237,7 +327,7 @@ impl Two3 {
                     if start > depth || start > limit {
                         return None;
                     }
-                    let sol = self.search(t, &cubes[k].1, Effort { depth, variants: 6 }, Some(limit), start).0?;
+                    let sol = self.search(t, &cubes[k].1, Effort { depth, variants: 6 }, Some(limit), start, None).0?;
                     best.fetch_min(cubes[k].0 + sol.len(), Relaxed);
                     Some((k, sol))
                 })
@@ -265,11 +355,19 @@ impl Two3 {
 
     /// The solution and the number of ways into the subgroup that were looked at.
     pub fn solve_counted(&self, t: &T3, cube: &C3, effort: Effort) -> (Vec<u8>, u64) {
-        let (sol, ways) = self.search(t, cube, effort, None, 0);
+        let (sol, ways) = self.search(t, cube, effort, None, 0, None);
         (sol.expect("a 3x3x3 state has a solution"), ways)
     }
 
-    fn search(&self, t: &T3, cube: &C3, effort: Effort, max_len: Option<usize>, first_depth: usize) -> (Option<Vec<u8>>, u64) {
+    fn search(
+        &self,
+        t: &T3,
+        cube: &C3,
+        effort: Effort,
+        max_len: Option<usize>,
+        first_depth: usize,
+        collect: Option<&Collector>,
+    ) -> (Option<Vec<u8>>, u64) {
         if *cube == C3::identity() {
             return (Some(Vec::new()), 0);
         }
@@ -303,7 +401,12 @@ impl Two3 {
         let mut probes = 0;
         for d1 in first_depth..=20usize {
             let found = best.load(Relaxed);
-            if found != u64::MAX && (d1 as u64 >= found >> 32 || d1 > effort.depth) {
+            if let Some(c) = collect {
+                // Collecting: on to the effort's depth, while a phase this long can still be within the slack.
+                if c.stopped() || found != u64::MAX && ((d1 as u64) > (found >> 32) + c.slack as u64 || d1 > effort.depth) {
+                    break;
+                }
+            } else if found != u64::MAX && (d1 as u64 >= found >> 32 || d1 > effort.depth) {
                 break;
             }
             let nv = if d1 == effort.depth { effort.variants.clamp(1, variants.len()) } else { variants.len() };
@@ -324,6 +427,7 @@ impl Two3 {
                     out: &out,
                     rank: (d1 as u64) << 24 | i as u64,
                     probes: 0,
+                    collect,
                 };
                 job.path[..s.len].copy_from_slice(&s.moves[..s.len]);
                 let (key, sym) = self.first.key(s.node.tw as usize, s.node.fl as usize, s.node.sl as usize);
@@ -415,6 +519,8 @@ struct Job<'a> {
     /// Length of the first phase, then the number of this piece of work.
     rank: u64,
     probes: u64,
+    /// Keep every solution within the slack instead of only the best.
+    collect: Option<&'a Collector>,
 }
 
 impl Job<'_> {
@@ -445,7 +551,7 @@ impl Job<'_> {
 
     /// Every way from `n`, `depth` moves along the path, into the subgroup in exactly `rem` moves.
     fn search(&mut self, n: &Node, rem: usize, depth: usize) {
-        if rem <= 1 {
+        if rem <= 1 || self.collect.is_some_and(Collector::stopped) {
             // In the subgroup with a move to spare: that move would be one of the second phase's.
             return;
         }
@@ -584,11 +690,20 @@ impl Job<'_> {
         if best == u64::MAX {
             return 40;
         }
+        if let Some(c) = self.collect {
+            return ((best >> 32) as usize + c.slack).min(40);
+        }
         // Of two solutions of one length the one of the earlier piece of work is kept.
         (best >> 32) as usize - (self.rank >= best & 0xFFFF_FFFF) as usize
     }
 
     fn phase2_start(&mut self, cp: usize, d1: usize, last: u8) {
+        if let Some(c) = self.collect {
+            if c.stopped() {
+                return;
+            }
+            c.tick();
+        }
         let wanted = self.wanted();
         if d1 + self.e.cdist[cp] as usize > wanted {
             return;
@@ -604,6 +719,11 @@ impl Job<'_> {
         let max2 = (wanted - d1).min(12);
         for d2 in t.h2(cp, up, sp) as usize..=max2 {
             if self.phase2(cp, up, sp, d2, last, d1) {
+                if let Some(c) = self.collect {
+                    c.push(self.variant, &self.sol[..d1 + d2]);
+                    self.best.fetch_min(((d1 + d2) as u64) << 32, Relaxed);
+                    break;
+                }
                 let key = ((d1 + d2) as u64) << 32 | self.rank;
                 if self.best.fetch_min(key, Relaxed) > key {
                     let mut out = self.out.lock().unwrap();

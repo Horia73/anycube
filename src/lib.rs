@@ -34,6 +34,8 @@ pub mod nnn;
 pub mod opt3;
 pub mod orbits;
 pub mod rings;
+#[cfg(all(feature = "robots", not(target_arch = "wasm32")))]
+pub mod robot;
 pub mod search;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod solver;
