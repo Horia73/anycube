@@ -70,4 +70,18 @@ function addUpdateCheck(app) {
   check().catch(() => {});
 }
 
+// In a window that is the application (`anycube app` opens "/?window" in a
+// browser's application window) the page says when it is there and when it
+// goes: a browser on macOS lives on without its window, and the program
+// that serves the page ends with the window.
+if (new URLSearchParams(location.search).has("window")) {
+  // Each loading of the page has a number of its own, so that the "closed"
+  // of a page loaded anew is not taken for the new one's.
+  const id = Math.floor(Math.random() * 2 ** 50) + 1;
+  const tell = (what) => navigator.sendBeacon?.(`/api/window/${what}?id=${id}`, "");
+  tell("open");
+  addEventListener("pageshow", (e) => e.persisted && tell("open"));
+  addEventListener("pagehide", () => tell("closed"));
+}
+
 mount(document.getElementById("app")).then(addUpdateCheck);

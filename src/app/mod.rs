@@ -20,6 +20,7 @@ anycube app --no-window     only serve it, and print its address
 anycube app --port N        serve on port N (any free port otherwise)
 anycube app --robot-sim[=S] offer a simulated MultiCuber (port \"sim\"), its motions taking S times
                             their real time (1 by default; 0 = at once). ANYCUBE_ROBOT_SIM=S does the same
+anycube app --window-kind   say what the window would be here: chromium, webkit or tab
 anycube app --install       add anycube to this computer's applications, with its icon
 anycube app --uninstall     take that entry away again
 
@@ -120,6 +121,11 @@ pub fn main(args: &[String]) {
         }
         return;
     }
+    if has("--window-kind") {
+        // For the entry in Applications: what the window would be here (chromium, webkit or tab).
+        println!("{}", window::choice().word());
+        return;
+    }
     if has("--uninstall") {
         match install::remove() {
             Ok(gone) if gone.is_empty() => println!("There was no application entry to take away."),
@@ -184,7 +190,20 @@ pub fn main(args: &[String]) {
     match opened {
         window::Opened::Window(mut child) => {
             // The window is the application: when it closes, so does this.
-            let _ = child.wait();
+            // A browser on macOS lives on without its window, so the page's
+            // own word that it was closed ends the browser too (a page that
+            // is only loaded anew is back within the grace).
+            loop {
+                if !matches!(child.try_wait(), Ok(None)) {
+                    break;
+                }
+                if running.window_closed(std::time::Duration::from_millis(2500)) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
             window::tidy();
         }
         window::Opened::Tab => loop {

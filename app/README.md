@@ -47,11 +47,20 @@ between 0.25× and 24×.
   API (`src/app/server.rs` lists it). One search runs at a time, in a child
   process that keeps each size's tables loaded; Cancel stops that process,
   which is the only way to stop a search.
-- **The window** is the system's own: on macOS a Cocoa window with WebKit in
-  it, driven by `osascript` (`src/app/window.js`), so there is nothing to
-  install and no browser involved; elsewhere a Chromium-family browser
-  started as an application window, if one is installed, and the default
-  browser failing that. `--browser` asks for the default browser.
+- **The window** is a Chromium-family browser (Chrome, Edge, Brave,
+  Chromium) started as an application window, if one is installed, with a
+  profile of its own under the application data (`window-profile`). The
+  camera is allowed there for the page's own address before the browser
+  starts (the profile's own record of "Allow", for `http://127.0.0.1:<port>`
+  and nothing else), so the page is not asked at every start. The page
+  tells the server when that window is closed (`/api/window`), and the
+  program ends with it: a browser on macOS lives on without its window.
+  On macOS without such a browser it is a Cocoa window with the system's
+  WebKit in it, driven by `osascript` (`src/app/window.js`): nothing to
+  install, but no camera, since the page's request for one cannot be
+  answered from a script. Failing both, the default browser. `--browser`
+  asks for the default browser; `--window-kind` says which it would be
+  (`chromium`, `webkit` or `tab`); `ANYCUBE_BROWSER` names a browser to use.
 - **Lookup tables** are built on first use, as on the command line. What
   the solver reports while it builds them is passed to the page, which
   shows it under "Loading the tables". They go to `ANYCUBE_TABLES` if
@@ -63,7 +72,8 @@ between 0.25× and 24×.
 - **The entry among the applications** (`anycube app --install`): on
   macOS `~/Applications/anycube.app`, a bundle with `Info.plist`, icon
   set and a launcher, made on the machine so that it opens without a
-  warning; on Linux a `.desktop` entry and the icon in the usual sizes
+  warning (the launcher opens what `anycube app` would: it asks
+  `--window-kind`); on Linux a `.desktop` entry and the icon in the usual sizes
   under `~/.local/share`. Windows is not done.
 
 ## The page
@@ -147,9 +157,12 @@ The panel, from the top:
   out (the Robot button connects it by hand). The ports are asked for when
   the picker is come to, not all the time.
 - **Camera**, an "i" beside it, and the camera's picker (remembered on this
-  device). A picker shows the chosen name whole, on as many lines as it
-  needs: the browser's own select lies unseen over it, so the keyboard and
-  the list are the browser's.
+  device). A picker is a dropdown of the page's own (`js/dropdown.js`), not
+  the browser's select: the chosen name and the names in its list are whole,
+  on as many lines as they need, the list is as wide as the panel and opens
+  upward where there is no room under it, and a port that cannot be chosen
+  is listed with why ("busy", "not a robot", "checking"). To the keyboard it
+  is a combobox: arrows, Home and End, letters, Enter, Escape.
 - The "i" opens the details: the robot (driver, port, cube, firmware), the
   camera's picture size, how the last scan was read (faces found, the sizes
   and times of the reading, the slowest photo grab, how long after the scan

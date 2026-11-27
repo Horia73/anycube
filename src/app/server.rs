@@ -75,6 +75,9 @@ struct Shared {
     child: Mutex<Option<Child>>,
     settings: Mutex<PathBuf>,
     max_size: usize,
+    /// The page in the application's window (the number it gave itself), and
+    /// since when it has been closed, by its own word.
+    window: Arc<Mutex<(u64, Option<Instant>)>>,
     /// The cube robot, driven from this process (its solves need no worker:
     /// they take milliseconds, with the tables kept loaded here).
     robots: crate::robot::session::Session,
@@ -446,6 +449,25 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
             }
             respond_json(request, 200, settings)
         }
+        // The page in a window that is the application says when it is there
+        // and when it goes (`window::window_url`); `anycube app` ends with it.
+        (Method::Post, "/api/window/open" | "/api/window/closed") => {
+            let origin = format!("http://{}", host);
+            if request.headers().iter().any(|h| h.field.equiv("Origin") && h.value.as_str() != origin) {
+                return respond_json(request, 403, error("forbidden", "window requests must come from this app", false));
+            }
+            // Each loading of the page has a number of its own: the "closed" of
+            // a page that was loaded anew may come after the "open" of the new one.
+            let id = query(&url, "id").unwrap_or(0);
+            let mut window = shared.window.lock().unwrap();
+            if path.ends_with("open") {
+                *window = (id, None);
+            } else if window.0 == id {
+                window.1 = Some(Instant::now());
+            }
+            drop(window);
+            respond_json(request, 200, json!({"ok": true}))
+        }
         (Method::Get, "/api/health") => {
             let board = shared.board.lock().unwrap();
             respond_json(request, 200, json!({"status": "ok", "waiting": board.order.len(), "busy": board.running.is_some()}))
@@ -538,6 +560,16 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
 pub struct Running {
     pub url: String,
     pub port: u16,
+    window: Arc<Mutex<(u64, Option<Instant>)>>,
+}
+
+impl Running {
+    /// Whether the page in the application's window said it was closed at
+    /// least `grace` ago and has not been opened again since (a page that is
+    /// loaded anew says closed and then open).
+    pub fn window_closed(&self, grace: Duration) -> bool {
+        self.window.lock().unwrap().1.is_some_and(|at| at.elapsed() >= grace)
+    }
 }
 
 /// Starts the server on 127.0.0.1, on `port` or on any free port for 0, and
@@ -550,9 +582,11 @@ pub fn start(port: u16, max_size: usize) -> Result<Running, String> {
 pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Config) -> Result<Running, String> {
     let server = Server::http(("127.0.0.1", port)).map_err(|e| format!("cannot listen on 127.0.0.1:{}: {}", port, e))?;
     let port = server.server_addr().to_ip().map(|a| a.port()).ok_or("no port")?;
+    let window = Arc::new(Mutex::new((0, None)));
     let shared = Arc::new(Shared {
         board: Mutex::default(), changed: Condvar::new(), child: Mutex::new(None),
         settings: Mutex::new(super::data_dir().join("settings.json")), max_size,
+        window: window.clone(),
         robots: crate::robot::session::Session::new(robots),
     });
     // The 3x3x3's solver tables now, in the background, so that a robot's first solve finds
@@ -567,5 +601,5 @@ pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Con
             std::thread::spawn(move || handle(&shared, port, request));
         }
     });
-    Ok(Running { url: format!("http://127.0.0.1:{}/", port), port })
+    Ok(Running { url: format!("http://127.0.0.1:{}/", port), port, window })
 }

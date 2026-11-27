@@ -50,6 +50,14 @@ fn quoted(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// The bundle's launcher, for the program at `binary`.
+fn launcher_script(binary: &str) -> String {
+    format!(
+        "#!/bin/sh\n# Made by `anycube app --install`. Opens the interface in a window of its own.\nhere=$(cd \"$(dirname \"$0\")/../Resources\" && pwd)\nif [ \"$({bin} app --window-kind 2>/dev/null)\" = chromium ]; then\n  exec {bin} app\nfi\nexec /usr/bin/osascript -l JavaScript \"$here/window.js\" --serve {bin} \"$here/icon.png\"\n",
+        bin = quoted(binary)
+    )
+}
+
 fn add_macos(binary: &Path, bundle: &Path) -> io::Result<()> {
     let _ = fs::remove_dir_all(bundle);
     let (macos, resources) = (bundle.join("Contents/MacOS"), bundle.join("Contents/Resources"));
@@ -73,16 +81,13 @@ fn add_macos(binary: &Path, bundle: &Path) -> io::Result<()> {
     }
     fs::write(resources.join("icon.png"), png(512))?;
 
-    // The launcher: the system's script host becomes the application (the
-    // window is its own), and starts the server from the installed program.
+    // The launcher asks the installed program what the window is here (as
+    // `anycube app` itself decides: `window::choice`). A browser's window:
+    // the program serves, opens it and ends with it. The system's WebKit: the
+    // system's script host becomes the application (the window is its own)
+    // and starts the server from the installed program.
     let launcher = macos.join("anycube");
-    fs::write(
-        &launcher,
-        format!(
-            "#!/bin/sh\n# Made by `anycube app --install`. Opens the interface in a window of its own.\nhere=$(cd \"$(dirname \"$0\")/../Resources\" && pwd)\nexec /usr/bin/osascript -l JavaScript \"$here/window.js\" --serve {} \"$here/icon.png\"\n",
-            quoted(&binary.to_string_lossy())
-        ),
-    )?;
+    fs::write(&launcher, launcher_script(&binary.to_string_lossy()))?;
     executable(&launcher)?;
     fs::write(
         bundle.join("Contents/Info.plist"),
@@ -103,6 +108,7 @@ fn add_macos(binary: &Path, bundle: &Path) -> io::Result<()> {
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSArchitecturePriority</key><array><string>arm64</string><string>x86_64</string></array>
   <key>LSApplicationCategoryType</key><string>public.app-category.puzzle-games</string>
+  <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUsageDescription</key><string>anycube reads the colours of a cube you hold up to the camera. The picture stays on this computer.</string>
 </dict>
@@ -162,4 +168,19 @@ pub fn remove() -> io::Result<Vec<PathBuf>> {
         }
     }
     Ok(gone)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_launcher_opens_what_anycube_app_would() {
+        let script = launcher_script("/Users/h/it's here/anycube");
+        let bin = r"'/Users/h/it'\''s here/anycube'";
+        assert!(script.starts_with("#!/bin/sh\n"));
+        // A browser's window is the program's own to open; otherwise the WebKit window serves.
+        assert!(script.contains(&format!("if [ \"$({} app --window-kind 2>/dev/null)\" = chromium ]; then\n  exec {} app\nfi\n", bin, bin)));
+        assert!(script.ends_with(&format!("exec /usr/bin/osascript -l JavaScript \"$here/window.js\" --serve {} \"$here/icon.png\"\n", bin)));
+    }
 }
