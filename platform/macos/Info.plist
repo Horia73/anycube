@@ -16,6 +16,7 @@
   <key>LSApplicationCategoryType</key><string>public.app-category.puzzle-games</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSCameraUseContinuityCameraDeviceType</key><true/>
+  <key>NSCameraUseContinuityCameraDeviceTypeKey</key><true/>
   <key>NSCameraUsageDescription</key><string>anycube reads the colours of a cube you hold up to the camera. The picture stays on this computer.</string>
 </dict>
 </plist>

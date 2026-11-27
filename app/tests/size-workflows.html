@@ -44,7 +44,8 @@ try {
     ctx.putImageData(pixels, 0, 0);
   }, 20);
   navigator.mediaDevices.getUserMedia = async () => source.captureStream(30);
-  navigator.mediaDevices.enumerateDevices = async () => [];
+  let cameras = [];
+  navigator.mediaDevices.enumerateDevices = async () => cameras;
   const network = window.fetch;
   const requests = [];
   window.fetch = async (url, init) => {
@@ -59,6 +60,15 @@ try {
   const app = await mount($("app"));
   $("sizes").children[5].click();
   $("tab-camera").click();
+  cameras = ["FaceTime HD Camera", "Horia’s iPhone Desk View Camera", "Horia’s iPhone Camera"]
+    .map((label, i) => ({ kind: "videoinput", label, deviceId: String(i) }));
+  navigator.mediaDevices.dispatchEvent(new Event("devicechange"));
+  await until(() => $("camera-source").options.length === 3);
+  check($("camera-source").options[2].text === "Horia’s iPhone Camera", "rear camera in picker");
+  check(!$("camera-source").textContent.includes("Desk View"), "Desk View excluded");
+  cameras = [];
+  navigator.mediaDevices.dispatchEvent(new Event("devicechange"));
+  await until(() => $("camera-source").hidden);
   for (const n of [3,4,5]) {
     showFace(0);
     $("camera-start").click();

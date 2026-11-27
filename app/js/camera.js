@@ -73,15 +73,22 @@ const el = (tag, attrs = {}, children = []) => {
 
 const css = ([r, g, b]) => `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`;
 
+const deskView = label => /desk\s*view/i.test(label);
+const faceTime = label => /facetime/i.test(label);
+const iphone = label => /\biphone\b/i.test(label) && !/\bfront\b/i.test(label);
+const chooseCamera = () => new DOMException(
+  "The iPhone camera is unavailable. Connect it or select another camera.", "CameraChoiceError");
+
 /** The camera: a stream in a video element. */
 export class CameraFeed {
-  constructor(video) {
+  constructor(video, onDevices) {
     this.video = video;
+    this.onDevices = onDevices;
     this.stream = null;
     this.generation = 0;
+    this.discovery = 0;
     this.cameras = [];
     this.deviceId = undefined;
-    // Whether the camera looks at its user, and is best shown as a mirror.
     this.facesUser = false;
   }
 
@@ -89,46 +96,107 @@ export class CameraFeed {
     return !!this.stream;
   }
 
-  /** Opens a camera: the one looking away from the user if there is a choice. Throws what getUserMedia throws. */
-  async open(video = { facingMode: { ideal: "environment" } }) {
-    if (!navigator.mediaDevices?.getUserMedia) {
+  async refresh() {
+    const request = ++this.discovery;
+    const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
+    const inputs = (devices ?? []).filter(d => d.kind === "videoinput");
+    if (request === this.discovery) {
+      this.cameras = inputs.filter(d => !deskView(d.label));
+      this.onDevices?.(this.cameras);
+    }
+    return inputs;
+  }
+
+  async open(deviceId, { remembered = false } = {}) {
+    const media = navigator.mediaDevices;
+    if (!media?.getUserMedia) {
       const error = new Error("no camera access");
       error.name = window.isSecureContext ? "NotSupportedError" : "InsecureContextError";
       throw error;
     }
     this.close();
     const generation = this.generation;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { ...video, width: { ideal: 1280 }, height: { ideal: 720 } },
-    });
-    if (generation !== this.generation) {
-      stream.getTracks().forEach(track => track.stop());
-      throw new DOMException("Camera choice changed.", "AbortError");
+    const check = () => {
+      if (generation !== this.generation) throw new DOMException("Camera choice changed.", "AbortError");
+    };
+    const native = globalThis.anycubeNativeMac;
+    const preferred = inputs => {
+      const allowed = inputs.filter(d => d.deviceId && !deskView(d.label));
+      const saved = deviceId && allowed.find(d => d.deviceId === deviceId && (d.label || !remembered));
+      if (saved && !(remembered && native && faceTime(saved.label))) return saved;
+      const phone = allowed.find(d => iphone(d.label));
+      if (phone) return phone;
+      if (native || inputs.some(d => deskView(d.label))) {
+        return allowed.find(d => d.label && !(native && faceTime(d.label)));
+      }
+    };
+    let stream;
+    const acquire = async id => {
+      stream = await media.getUserMedia({ audio: false, video: {
+        ...(id ? { deviceId: { exact: id } } : { facingMode: { ideal: "environment" } }),
+        width: { ideal: 1280 }, height: { ideal: 720 },
+      } });
+      check();
+    };
+    try {
+      let inputs = media.enumerateDevices ? await this.refresh() : [];
+      check();
+      let selected = preferred(inputs);
+      if (deviceId && !remembered && selected?.deviceId !== deviceId) throw chooseCamera();
+      if (!selected && inputs.length && inputs.every(d => deskView(d.label) || (native && faceTime(d.label)))) {
+        throw chooseCamera();
+      }
+      // Permission may hide IDs and labels. Keep the initial stream off the
+      // video element until we can identify it and repeat the choice.
+      const initialId = selected?.deviceId;
+      await acquire(initialId);
+      inputs = await this.refresh();
+      check();
+      const track = () => stream.getVideoTracks()[0];
+      const settings = () => track()?.getSettings?.() ?? {};
+      selected = preferred(inputs);
+      if (deviceId && !remembered && selected?.deviceId !== deviceId) throw chooseCamera();
+      if (selected?.deviceId && selected.deviceId !== settings().deviceId &&
+          selected.deviceId !== initialId) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        await acquire(selected.deviceId);
+      }
+      const id = settings().deviceId;
+      if (id && selected?.deviceId && id !== selected.deviceId) throw chooseCamera();
+      const label = track()?.label || inputs.find(d => d.deviceId === id)?.label;
+      if (deskView(label) || (native && (!label || faceTime(label)) &&
+          !(deviceId && !remembered && faceTime(selected?.label)))) throw chooseCamera();
+      this.deviceId = id ?? selected?.deviceId;
+      this.facesUser = settings().facingMode ? settings().facingMode === "user" :
+        !iphone(label) && !/Android|iPhone|iPad/i.test(navigator.userAgent);
+      track()?.addEventListener?.("ended", () => {
+        if (this.stream !== stream) return;
+        this.close();
+        this.onEnded?.();
+      }, { once: true });
+      this.stream = stream;
+      this.video.srcObject = stream;
+      await this.video.play().catch(() => {});
+      check();
+    } catch (error) {
+      stream?.getTracks().forEach(t => t.stop());
+      throw error;
     }
-    this.stream = stream;
-    this.video.srcObject = stream;
-    await this.video.play().catch(() => {});
-    if (generation !== this.generation) throw new DOMException("Camera choice changed.", "AbortError");
-    const settings = stream.getVideoTracks()[0]?.getSettings?.() ?? {};
-    this.deviceId = settings.deviceId;
-    this.facesUser = settings.facingMode ? settings.facingMode === "user" : !/Android|iPhone|iPad/i.test(navigator.userAgent);
-    const devices = await navigator.mediaDevices.enumerateDevices().catch(() => []);
-    if (generation !== this.generation) throw new DOMException("Camera choice changed.", "AbortError");
-    this.cameras = devices.filter((d) => d.kind === "videoinput");
   }
 
   /** Switches to the next camera of the device. */
   async next() {
     if (this.cameras.length < 2) return;
     const at = this.cameras.findIndex((c) => c.deviceId === this.deviceId);
-    await this.open({ deviceId: { exact: this.cameras[(at + 1) % this.cameras.length].deviceId } });
+    await this.open(this.cameras[(at + 1) % this.cameras.length].deviceId);
   }
 
   close() {
     this.generation++;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
+    this.deviceId = undefined;
     this.video.srcObject = null;
   }
 }
@@ -201,7 +269,12 @@ export class CameraScanner {
 
     this.video = el("video", { playsinline: "", muted: "", autoplay: "" });
     this.video.muted = true;
-    this.feed = new CameraFeed(this.video);
+    this.feed = new CameraFeed(this.video, cameras => {
+      this.swap.hidden = cameras.length < 2;
+      hooks.ondevices?.(cameras);
+    });
+    this.feed.onEnded = () => this.stop();
+    navigator.mediaDevices?.addEventListener?.("devicechange", () => this.feed.refresh());
     this.grid = el("div", { class: "cam-grid", "aria-hidden": "true" });
     // What is found in the picture is drawn here, over it.
     this.over = el("canvas", { class: "cam-found", "aria-hidden": "true" });
@@ -245,7 +318,7 @@ export class CameraScanner {
   }
 
   /** Asks for the camera and begins with the first face. Throws what getUserMedia throws. */
-  async start() {
+  async start(deviceId) {
     clearInterval(this.timer);
     this.n = null;
     this.found = this.live = null;
@@ -254,7 +327,7 @@ export class CameraScanner {
     this.sources.fill(null);
     this.again = -1;
     this.jumped = false;
-    await this.feed.open();
+    await this.feed.open(deviceId);
     this.#opened();
     this.note.textContent = "Show one complete face to detect the cube size.";
     this.#layout();

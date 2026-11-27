@@ -190,6 +190,9 @@ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
     }
     self.address = url;
     WKWebViewConfiguration *config = [WKWebViewConfiguration new];
+    [config.userContentController addUserScript:[[WKUserScript alloc]
+        initWithSource:@"window.anycubeNativeMac = true"
+        injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
     config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
     self.webView = [[WKWebView alloc] initWithFrame:self.window.contentView.bounds configuration:config];
     self.webView.UIDelegate = self;

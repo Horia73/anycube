@@ -1117,7 +1117,21 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   const video = panel.querySelector("video");
   video.muted = true;
-  const feed = new CameraFeed(video);
+  const feed = new CameraFeed(video, updateCameras);
+  feed.onEnded = () => {
+    $("robot-camera-start").hidden = false;
+    updateCameras(feed.cameras);
+    say("Camera disconnected. Reconnect it or select another camera.", true);
+    note.dataset.source = "camera";
+    setButtons();
+  };
+  function updateCameras(found) {
+    const choices = found.filter(c => c.deviceId).map((c, k) => ({ value: c.deviceId, text: c.label || `Camera ${k + 1}` }));
+    cameras.set([{ value: "", text: "Automatic camera" }, ...choices], feed.deviceId ?? "");
+  }
+  navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+    if (connected && !controllerCamera()) void feed.refresh();
+  });
   let openingCamera = false;
   let previewing = false;
   const scratch = document.createElement("canvas");
@@ -1330,13 +1344,13 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   // ------------------------------------------------------------ camera
 
-  async function openCamera(deviceId = recall(CAMERA_CHOICE)) {
+  async function openCamera(choice) {
     if (openingCamera) return false;
     const session = robot;
     openingCamera = true;
     setButtons();
     try {
-      return await startCamera(deviceId, session);
+      return await startCamera(choice, session);
     } finally {
       if (robot === session) {
         openingCamera = false;
@@ -1345,27 +1359,20 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
   }
 
-  async function startCamera(deviceId, session) {
+  async function startCamera(choice, session) {
     const start = $("robot-camera-start");
     try {
-      try {
-        await feed.open(deviceId ? { deviceId: { exact: deviceId } } : undefined);
-      } catch (error) {
-        // The camera remembered is not there today (the phone is away): any other.
-        if (session !== robot || !deviceId || !["OverconstrainedError", "NotFoundError", "NotReadableError"].includes(error.name)) throw error;
-        await feed.open();
-      }
+      await feed.open(choice ?? recall(CAMERA_CHOICE), { remembered: choice === undefined });
     } catch (error) {
       if (session !== robot) return false;
       start.hidden = false;
-      say(error.name === "NotAllowedError" ? "The camera is not allowed for this page. Allow it, then start it." : "The camera could not be started.", true);
+      say(error.name === "NotAllowedError" ? "The camera is not allowed for this page. Allow it, then start it." : error.name === "CameraChoiceError" ? error.message : "The camera could not be started.", true);
       note.dataset.source = "camera";
       return false;
     }
     if (session !== robot) return false;
     start.hidden = true;
-    const found = feed.cameras.map((c, k) => ({ value: c.deviceId, text: c.label || `Camera ${k + 1}` }));
-    cameras.set(found.length ? found : [{ value: "", text: "Default camera" }], feed.deviceId ?? deviceId ?? "");
+    updateCameras(feed.cameras);
     if (note.dataset.source === "camera") say(HINT);
     showDetails();
     return true;
@@ -1373,7 +1380,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   cameras.on("change", async () => {
     const id = cameras.value;
-    if (await openCamera(id)) remember(CAMERA_CHOICE, feed.deviceId ?? id);
+    if (await openCamera(id)) remember(CAMERA_CHOICE, id);
   });
   $("robot-camera-start").addEventListener("click", () => openCamera());
 
@@ -1733,6 +1740,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     say(info.info?.camera === "state" ? "Read the cube state from the controller." : controllerCamera() ? "Scan the cube using photos from the controller." : HINT);
     void robot.follow();
     $("robot-camera-start").hidden = controllerCamera();
+    if (!controllerCamera()) void feed.refresh();
     setTimeout(() => robot === mine && warmUp(mine), 300);
   }
 

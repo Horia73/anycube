@@ -619,6 +619,7 @@ export async function mount(root, options = {}) {
 
   function setTab(tab, focus = false) {
     if (tab !== "camera") scanner.stop();
+    else void scanner.feed.refresh();
     setHelp(false);
     const from = state.tab;
     showTab(tab);
@@ -976,6 +977,14 @@ export async function mount(root, options = {}) {
       finishedScan = read.scan;
       $("paint-note").textContent = read.note;
     },
+    ondevices: cameras => {
+      const picker = $("camera-source");
+      const selected = picker.value;
+      const choices = cameras.filter(c => c.deviceId && c.label);
+      picker.replaceChildren(new Option("Automatic camera", ""), ...choices.map(c => new Option(c.label, c.deviceId)));
+      if (choices.some(c => c.deviceId === selected)) picker.value = selected;
+      picker.hidden = !choices.length;
+    },
     onstop: () => {
       // What was read of an unfinished scan is dropped; the painted cube is as it was.
       clearTimeout(guiding);
@@ -997,10 +1006,10 @@ export async function mount(root, options = {}) {
   $("camera-start").addEventListener("click", async () => {
     ++scrambling;
     try {
-      await scanner.start();
+      await scanner.start($("camera-source").value);
     } catch (error) {
       if (error.name === "AbortError") return;
-      state.detail = CAMERA_PROBLEMS[error.name] ?? "The camera could not be started. Paint the cube instead.";
+      state.detail = error.name === "CameraChoiceError" ? error.message : CAMERA_PROBLEMS[error.name] ?? "The camera could not be started. Paint the cube instead.";
       restStatus();
       return;
     }

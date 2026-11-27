@@ -144,6 +144,7 @@ export const APP_HTML = `
         <div id="camera-intro">
           <p class="note">Show one complete face so the camera can detect the cube size. Capture all six faces, then check the colours.</p>
           <p class="private"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V5z"/></svg><span>Camera images stay in your browser.<span id="camera-diagnostics" hidden> Completed scans send sticker colours and cube states to help diagnose scan errors.</span></span></p>
+          <select id="camera-source" aria-label="Camera source" hidden></select>
           <button type="button" class="button primary" id="camera-start">Start the camera</button>
         </div>
         <div id="camera-scan" class="cam-scan" hidden>
