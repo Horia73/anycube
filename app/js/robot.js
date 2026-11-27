@@ -16,9 +16,9 @@
 //                a robot is connected the page is as it always is.
 
 import { CameraFeed } from "./camera.js";
-import { cellColour, named, oppositeCentres, STICKERS } from "./colour.js";
+import { named, oppositeCentres, STICKERS } from "./colour.js";
 import { CubeModel, FACE_LETTERS } from "./cube-model.js";
-import { findFace } from "./detect.js";
+import { FACE_SCORE, findFace } from "./detect.js";
 import { Dropdown, place } from "./dropdown.js";
 import { arrange, assembleScan, reviewStickers } from "./scan-fit.js";
 
@@ -177,43 +177,39 @@ export function grabFrame(video, rotate, size, canvas) {
   return { width: size, height: size, data: rotateSquare(data, size, rotate) };
 }
 
-// ------------------------------------------------------------ the faces
-
-// When no face is found, the stickers are read from a grid this share of
-// the picture's shorter side, in the middle: where the robot holds the face.
-export const GRID_SHARE = 0.8;
-
-/** The n*n colours of a centred grid, the middle half of each cell (as anycube_scan.mjs). */
-export function gridCells(image, n, share = GRID_SHARE) {
-  const { width: W, height: H, data } = image;
-  const side = Math.min(W, H) * share;
-  const [x0, y0] = [(W - side) / 2, (H - side) / 2];
-  const step = side / n;
-  const cells = [];
-  for (let r = 0; r < n; r++) {
-    for (let c = 0; c < n; c++) {
-      const px = [];
-      for (let y = Math.round(y0 + (r + 0.25) * step); y < y0 + (r + 0.75) * step; y++) {
-        for (let x = Math.round(x0 + (c + 0.25) * step); x < x0 + (c + 0.75) * step; x++) {
-          const i = (y * W + x) * 4;
-          px.push(data[i], data[i + 1], data[i + 2], 255);
-        }
+// The server asks after its settle delay. Wait for the next presented frame
+// so the captured pixels come from the current hold.
+function grabFreshFrame(video, rotate, size, canvas) {
+  if (!video.requestVideoFrameCallback) return grabFrame(video, rotate, size, canvas);
+  return new Promise((resolve, reject) => {
+    const frame = video.requestVideoFrameCallback(() => {
+      clearTimeout(timeout);
+      try {
+        resolve(grabFrame(video, rotate, size, canvas));
+      } catch (error) {
+        reject(error);
       }
-      cells.push(cellColour(Uint8ClampedArray.from(px)));
-    }
-  }
-  return cells;
+    });
+    const timeout = setTimeout(() => {
+      video.cancelVideoFrameCallback(frame);
+      resolve(null);
+    }, 1000);
+  });
 }
 
-/** One picture to its n*n colours: the face found in it, else the grid. */
+// ------------------------------------------------------------ the faces
+
+/** Read the stickers from the face lattice fitted to this photo. */
 export function readFace(image, n) {
-  let found = null;
   try {
-    found = findFace(image, n);
+    const found = findFace(image, n);
+    if (found && found.score >= FACE_SCORE) {
+      return { cells: found.cells, source: { found: true, score: found.score } };
+    }
   } catch {
-    found = null;
+    // Treat unreadable images as a missed face.
   }
-  return found ? { cells: found.cells, source: { found: true, score: found.score } } : { cells: gridCells(image, n), source: { found: false } };
+  return { cells: null, source: { found: false } };
 }
 
 /**
@@ -636,6 +632,7 @@ export class RobotRun {
   /** Stops following (on disconnect). */
   unfollow() {
     this.polling = false;
+    this.run = null;
     this.abort?.abort();
   }
 
@@ -754,25 +751,27 @@ export class RobotRun {
     this.#hook("onerror", { code: error.code ?? "error", message: error.message ?? String(error), during: wasBusy });
   }
 
-  #photo(event) {
+  async #photo(event) {
     if (this.phase !== "scanning") return;
     const index = event.index;
     const face = FACE_LETTERS.indexOf(event.face);
     const rotate = quarterTurn(event.rotate);
-    if (face < 0 || rotate === null || !Number.isInteger(index)) {
+    if (face < 0 || rotate === null || !Number.isInteger(index) || index < 0 || index >= SIDES) {
       this.#fail({ code: "bad_photo", message: `The robot asked for a photo the page does not understand (face ${event.face}, rotate ${event.rotate}).` });
       void this.stop();
       return;
     }
+    const run = this.run;
     let image = null;
     const asked = this.now();
     // Every photo but the last has the robot's way to the next to be read in.
     const size = this.pace.photo(Number.isFinite(event.t_ms) ? event.t_ms : asked, index >= SIDES - 1, event.next_ms);
     try {
-      image = this.grab(rotate, size);
+      image = await this.grab(rotate, size);
     } catch {
       image = null;
     }
+    if (this.run !== run || this.phase !== "scanning") return;
     this.grabMs = Math.max(this.grabMs, this.now() - asked);
     if (!image) {
       // No picture is no photo: the robot is stopped rather than left to wait.
@@ -780,25 +779,28 @@ export class RobotRun {
       void this.stop();
       return;
     }
-    const run = this.run;
-    this.api.photoTaken(run, index).catch((error) => {
+    // Acknowledge the captured pixels before the detector can occupy the main thread.
+    try {
+      await this.api.photoTaken(run, index);
+    } catch (error) {
       if (this.run === run && this.busy) this.#fail(error);
-    });
+      return;
+    }
+    if (this.run !== run || this.phase !== "scanning") return;
     this.taken++;
     this.#hook("onphoto", index, face, image, event);
-    // Read while the robot goes on to the next face.
     this.later(() => {
-      if (this.run !== run) return;
+      if (this.run !== run || this.phase !== "scanning") return;
       const began = this.now();
       const { cells, source } = readFace(image, this.n);
       const took = this.now() - began;
       this.work += took;
       this.pace.took(image.width, took);
-      if (index >= 0 && index < SIDES) [this.sizes[index], this.readMs[index]] = [image.width, took];
-      if (!this.faces[face]) this.read++;
+      [this.sizes[index], this.readMs[index]] = [image.width, took];
+      if (!this.sources[face]) this.read++;
       this.faces[face] = cells;
       this.sources[face] = source;
-      this.#hook("onface", face, cells, source);
+      if (cells) this.#hook("onface", face, cells, source);
       this.#maybeAssemble();
     });
   }
@@ -806,12 +808,17 @@ export class RobotRun {
   #maybeAssemble() {
     if (this.result || this.read < SIDES) return;
     const began = this.now();
-    const result = assembleFaces(this.n, this.faces.flat());
+    const missed = [...FACE_LETTERS].filter((_, face) => !this.sources[face]?.found);
+    const result = missed.length
+      ? { ok: false, kind: "detection", state: null, note: `No cube face detected in the photos for ${missed.join(", ")}.` }
+      : assembleFaces(this.n, this.faces.flat());
     const ready = this.now();
     this.work += ready - began;
     result.readyAt = ready;
-    result.samples = this.faces.flat();
-    result.repeated = repeatedFaces(this.faces);
+    if (!missed.length) {
+      result.samples = this.faces.flat();
+      result.repeated = repeatedFaces(this.faces);
+    }
     result.sources = this.sources.slice();
     result.sizes = this.sizes.slice();
     result.read_ms = this.readMs.map((ms) => (ms === null ? null : Math.round(ms * 10) / 10));
@@ -959,7 +966,6 @@ const PANEL = `
   <div class="robot-body">
     <div class="robot-cam" id="robot-cam">
       <video playsinline muted autoplay aria-label="What the camera sees"></video>
-      <div class="robot-grid" aria-hidden="true"></div>
       <button type="button" class="button small" id="robot-camera-start" hidden>Start the camera</button>
     </div>
     <ol class="robot-shots" id="robot-shots" aria-label="Photos of this scan"></ol>
@@ -1332,12 +1338,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   });
   $("robot-camera-start").addEventListener("click", () => openCamera());
 
-  function drawGrid(n) {
-    const grid = panel.querySelector(".robot-grid");
-    grid.style.setProperty("--n", n);
-    grid.replaceChildren(...Array.from({ length: n * n }, () => el("i")));
-  }
-
   // ------------------------------------------------------------ shots
 
   function clearShots() {
@@ -1556,7 +1556,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     lastFace = -1;
     eta = null;
     clearShots();
-    drawGrid(n);
     say("");
     await robot.scan();
   });
@@ -1655,7 +1654,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       connected = { ...was, size: answer.size, info: answer.info ?? was.info };
       robot.n = answer.size;
       showWhere();
-      drawGrid(answer.size);
       clearShots();
       if (answer.size !== host.state.size) host.setSize(answer.size);
       say(HINT);
@@ -1683,11 +1681,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     if (Number.isInteger(info.size)) host.setSize(info.size);
     host.setMode(true);
     clearShots();
-    drawGrid(info.size ?? 3);
     const mine = (robot = new RobotRun({
       api,
       n: info.size ?? 3,
-      grab: (rotate, size) => grabFrame(video, rotate, size, scratch),
+      grab: (rotate, size) => grabFreshFrame(video, rotate, size, scratch),
       hooks,
       pace,
     }));

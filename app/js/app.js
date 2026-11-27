@@ -1583,6 +1583,10 @@ export async function mount(root, options = {}) {
       // camera's scan would be. Returns what to say about it.
       scanned(result, sources, lastFace) {
         view.setRaw(null);
+        if (result.kind === "detection") {
+          setValid("bad", result.note);
+          return { ok: false, note: result.note };
+        }
         const read = readScan(state.size, result.samples, sources, lastFace, { sorted: result.sorted, made: result.made });
         if (read.centreMismatch) {
           show();

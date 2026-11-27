@@ -2041,18 +2041,6 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   height: 100%;
   object-fit: cover;
 }
-.robot-grid {
-  position: absolute;
-  inset: 10%;
-  display: grid;
-  grid-template-columns: repeat(var(--n, 3), 1fr);
-  border: 1.5px solid rgba(255, 255, 255, 0.8);
-  border-radius: 5px;
-  pointer-events: none;
-}
-.robot-grid i {
-  border: 1px solid rgba(255, 255, 255, 0.35);
-}
 .robot-cam .button {
   position: relative;
   z-index: 1;

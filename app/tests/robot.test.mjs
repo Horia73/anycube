@@ -11,10 +11,10 @@ import { CameraFeed } from "../js/camera.js";
 import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 import {
-  assembleFaces, bindInfo, choosePort, Eta, frameSize, GRID_SHARE, gridCells, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
+  assembleFaces, bindInfo, choosePort, Eta, frameSize, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
   RobotWatch, robotChoices, rotateSquare, scanMeasures, squareCrop,
 } from "../js/robot.js";
-import { picture, quad, rng } from "./pictures.mjs";
+import { picture, quad } from "./pictures.mjs";
 import { readPng, shrink } from "./png.mjs";
 import { HOST, json, mockServer, PHOTOS } from "./robot-mock.mjs";
 
@@ -54,10 +54,10 @@ function cameraFrame(face, rotate, W = 320) {
 
 // The six faces of a cube (facelets 0..5 per sticker, URFDLB) as pictures
 // the robot's camera takes: each face square to the camera, filling most of it.
-function facePictures(n, facelets, side = 240) {
+function facePictures(n, facelets, side = 240, corners = quad(side / 2, side / 2, side * 0.72, 1.5, 0.02, 0.01)) {
   const nn = n * n;
   return [0, 1, 2, 3, 4, 5].map((f) =>
-    picture({ W: side, H: side, n, corners: quad(side / 2, side / 2, side * 0.72, 1.5, 0.02, 0.01), stickers: Array.from(facelets.slice(f * nn, (f + 1) * nn)), seed: 7 + f }),
+    picture({ W: side, H: side, n, corners, stickers: Array.from(facelets.slice(f * nn, (f + 1) * nn)), seed: 7 + f }),
   );
 }
 
@@ -109,36 +109,6 @@ test("a frame grabbed: the corner of the square comes round where a clockwise tu
   assert.equal(quarterTurn("270"), 270);
   assert.equal(quarterTurn(undefined), 0);
   assert.equal(quarterTurn(30), null);
-});
-
-test("gridCells reads a centred grid of 0.8 of the shorter side, as anycube_scan.mjs", () => {
-  assert.equal(GRID_SHARE, 0.8);
-  const n = 3;
-  const W = 300;
-  const H = 200;
-  const side = H * 0.8;
-  const step = side / n;
-  const data = new Uint8ClampedArray(W * H * 4);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const c = Math.floor((x - (W - side) / 2) / step);
-      const r = Math.floor((y - (H - side) / 2) / step);
-      const inside = c >= 0 && c < n && r >= 0 && r < n;
-      data.set(inside ? [r * 80 + 20, c * 80 + 20, 128, 255] : [0, 0, 0, 255], (y * W + x) * 4);
-    }
-  }
-  const cells = gridCells({ width: W, height: H, data }, n);
-  assert.equal(cells.length, 9);
-  // Each cell read in its own middle: its own colour, nothing of its neighbours'.
-  cells.forEach(([r, g, b], k) => {
-    assert.deepEqual([Math.round(r), Math.round(g), Math.round(b)], [Math.floor(k / n) * 80 + 20, (k % n) * 80 + 20, 128]);
-  });
-  // Nothing like a face in the picture: readFace falls back to the same grid.
-  const random = rng(5);
-  const mud = { width: W, height: H, data: new Uint8ClampedArray(W * H * 4).map((_, i) => (i % 4 === 3 ? 255 : 100 + random() * 30)) };
-  const read = readFace(mud, n);
-  assert.equal(read.source.found, false);
-  assert.deepEqual(read.cells, gridCells(mud, n));
 });
 
 // ------------------------------------------------------------ the faces
@@ -283,7 +253,7 @@ function follow(server, n, frames, { until = "done", ...more } = {}) {
     hooks: {
       onphase: (p) => {
         heard.push(["phase", p]);
-        if (p === "idle" && until === "idle") finish();
+        if (p === "idle") finish();
       },
       onscanstart: (e) => heard.push(["scan-start", e.steps]),
       onphoto: (index, face) => heard.push(["photo", index, face]),
@@ -308,7 +278,7 @@ function follow(server, n, frames, { until = "done", ...more } = {}) {
 test("a whole run against the mock: six photos, the cube read, solved in step with the robot", async (t) => {
   const n = 3;
   const { facelets, text, solution } = scrambled(n);
-  const pictures = facePictures(n, facelets);
+  const pictures = facePictures(n, facelets, 240, quad(144, 103, 140, 19, 0.18, 0.11));
   const server = mockServer({ moves: solution });
   // The camera: whatever face the robot is holding, as the camera sees it.
   let holding = 0;
@@ -365,6 +335,58 @@ test("the robot's own pictures through a whole scan: photos turned as robot.py t
   // The same cube as the pictures read as saved: each frame came round right.
   assert.equal(scanned.state, CUBESCAN_STATE);
   t.diagnostic(`scan-done to facelets: ${scanned.analysis_ms} ms; ${scanned.work_ms} ms of work for six faces`);
+});
+
+test("capture and acknowledgement precede analysis, and a missed face prevents solving", async () => {
+  const n = 3;
+  const pictures = facePictures(n, scrambled(n).facelets);
+  const pending = [];
+  const scans = [];
+  const acks = [];
+  let solves = 0;
+  let capture;
+  let acknowledge;
+  const robot = new RobotRun({
+    n,
+    api: {
+      scan: async () => ({ run: "scan" }),
+      photoTaken: (run, index) => {
+        acks.push([run, index]);
+        return new Promise((resolve) => { acknowledge = resolve; });
+      },
+      solve: async () => { solves++; },
+    },
+    grab: () => new Promise((resolve) => { capture = resolve; }),
+    later: (read) => pending.push(read),
+    hooks: { onscanned: (result) => scans.push(result) },
+  });
+  await robot.scan();
+
+  for (const [index, [face, rotate]] of PHOTOS.entries()) {
+    const photo = robot.take({ type: "photo", run: "scan", index, face, rotate });
+    assert.equal(acks.length, index);
+    assert.equal(pending.length, index);
+    capture(face === "R" ? { width: 240, height: 240, data: new Uint8ClampedArray(240 * 240 * 4) } : pictures["URFDLB".indexOf(face)]);
+    await Promise.resolve();
+    assert.deepEqual(acks.at(-1), ["scan", index]);
+    assert.equal(pending.length, index);
+    acknowledge();
+    await photo;
+  }
+
+  robot.take({ type: "scan-done", run: "scan" });
+  for (const read of pending.slice(0, -1)) read();
+  assert.deepEqual(scans, []);
+  pending.at(-1)();
+  assert.equal(scans.length, 1);
+  const [result] = scans;
+  assert.equal(result.ok, false);
+  assert.equal(result.kind, "detection");
+  assert.equal(result.state, null);
+  assert.match(result.note, /photos for R\./);
+  assert.equal(result.sources.filter((source) => source.found).length, 5);
+  assert.equal(solves, 0);
+  assert.equal(robot.phase, "idle");
 });
 
 test("a scan that makes no cube: said, and the robot is asked nothing more", async () => {
@@ -481,6 +503,7 @@ test("events that come before the scan's answer are kept for its run; others' ar
   robot.take({ seq: 3, type: "photo", run: "new", index: 0, face: "U", rotate: 0 });
   answer({ ok: true, run: "new" });
   await scanning;
+  await new Promise(setImmediate);
   robot.take({ seq: 4, type: "scan-start", run: "old", steps: 1 });
   assert.deepEqual(heard, ["new", 0]);
 });
