@@ -1,5 +1,5 @@
-// The robot extension's core (js/robot.js): the square cut out of a frame
-// and turned, the faces read, the time left, the server's API, and whole
+// The robot extension's core (js/robot.js): the frame turned,
+// the faces read, the time left, the server's API, and whole
 // runs against a mock of the server whose events are scripted the way the
 // robot behaves (robots-spec/API.md): it waits for each photo-taken.
 
@@ -12,7 +12,7 @@ import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
 import {
   assembleFaces, bindInfo, choosePort, Eta, frameSize, portName, quarterTurn, readCost, readFace, ReadPace, readSizes, repeatedFaces, RobotApi, RobotError, RobotRun,
-  RobotWatch, robotChoices, rotateSquare, scanMeasures, squareCrop,
+  RobotWatch, robotChoices, rotateSquare, scanMeasures,
 } from "../js/robot.js";
 import { picture, quad } from "./pictures.mjs";
 import { readPng, shrink } from "./png.mjs";
@@ -27,29 +27,20 @@ function numbered(W, H) {
   for (let i = 0; i < W * H; i++) data.set([(i + 1) & 255, (i + 1) >> 8, 0, 255], i * 4);
   return { width: W, height: H, data };
 }
-const pixel = (image, x, y) => new Uint32Array(image.data.buffer)[y * image.width + x] & 0xffffff;
-
-// The page's grab without a canvas: the centred square, made `size` pixels
-// a side at most, turned (grabFrame does the middle step with drawImage).
+// Square fixture for the controller/pace tests. Browser capture is exercised
+// separately using a video element and an encoded controller PNG.
 function grab(frame, rotate, size) {
-  const { sx, sy, side } = squareCrop(frame.width, frame.height);
+  const side = frame.width;
   size = Math.min(side, size);
-  const square = shrink(frame, sx, sy, side, size);
+  const square = shrink(frame, 0, 0, side, size);
   return { width: size, height: size, data: rotateSquare(square.data, size, rotate) };
 }
 
 // What the camera sees when the robot holds up a face that, turned
 // `rotate` clockwise, reads the way its facelets are written: the face's
-// picture turned back, in the middle of a wider frame.
-function cameraFrame(face, rotate, W = 320) {
-  const side = face.width;
-  const turned = rotateSquare(face.data, side, (360 - rotate) % 360);
-  const H = side;
-  const data = new Uint8ClampedArray(W * H * 4);
-  for (let i = 0; i < W * H; i++) data.set([60, 64, 70, 255], i * 4);
-  const x0 = Math.floor((W - side) / 2);
-  for (let y = 0; y < H; y++) data.set(turned.subarray(y * side * 4, (y + 1) * side * 4), (y * W + x0) * 4);
-  return { width: W, height: H, data };
+// picture turned back before the photo request.
+function cameraFrame(face, rotate) {
+  return { ...face, data: rotateSquare(face.data, face.width, (360 - rotate) % 360) };
 }
 
 // The six faces of a cube (facelets 0..5 per sticker, URFDLB) as pictures
@@ -62,14 +53,6 @@ function facePictures(n, facelets, side = 240, corners = quad(side / 2, side / 2
 }
 
 // ------------------------------------------------------------ geometry
-
-test("squareCrop: the centred square, rounded down as robot.py's integer division", () => {
-  assert.deepEqual(squareCrop(1280, 720), { sx: 280, sy: 0, side: 720 });
-  assert.deepEqual(squareCrop(1920, 1080), { sx: 420, sy: 0, side: 1080 });
-  assert.deepEqual(squareCrop(7, 4), { sx: 1, sy: 0, side: 4 });
-  assert.deepEqual(squareCrop(5, 8), { sx: 0, sy: 1, side: 5 });
-  assert.deepEqual(squareCrop(640, 640), { sx: 0, sy: 0, side: 640 });
-});
 
 test("rotateSquare: clockwise quarter turns as cv2.rotate does them", () => {
   // [a b; c d] with a=1, b=2, c=3, d=4.
@@ -91,21 +74,7 @@ test("rotateSquare: clockwise quarter turns as cv2.rotate does them", () => {
   assert.deepEqual(rotateSquare(rotateSquare(big.data, 9, 180), 9, 180), big.data);
 });
 
-test("a frame grabbed: the corner of the square comes round where a clockwise turn puts it", () => {
-  const frame = numbered(16, 9); // a 16:9 camera picture
-  const { sx, sy, side } = squareCrop(16, 9);
-  assert.deepEqual({ sx, sy, side }, { sx: 3, sy: 0, side: 9 });
-  const corner = pixel(frame, sx, sy); // top left of the square
-  const right = pixel(frame, sx + side - 1, sy); // its top right
-  const at = (r) => {
-    const g = grab(frame, r, 240);
-    return [pixel(g, 0, 0), pixel(g, side - 1, 0), pixel(g, side - 1, side - 1), pixel(g, 0, side - 1)];
-  };
-  assert.equal(at(0)[0], corner);
-  assert.equal(at(90)[1], corner); // top left to top right
-  assert.equal(at(180)[2], corner); // to bottom right
-  assert.equal(at(270)[3], corner); // to bottom left
-  assert.equal(at(90)[2], right); // top right to bottom right
+test("photo quarter turns", () => {
   assert.equal(quarterTurn("270"), 270);
   assert.equal(quarterTurn(undefined), 0);
   assert.equal(quarterTurn(30), null);
@@ -322,7 +291,7 @@ test("the robot's own pictures through a whole scan: photos turned as robot.py t
   let holding = 0;
   const frames = (rotate, size) => {
     const [face, turn] = PHOTOS[holding++];
-    return grab(cameraFrame(faces["URFDLB".indexOf(face)], turn, 1920), rotate, size);
+    return grab(cameraFrame(faces["URFDLB".indexOf(face)], turn), rotate, size);
   };
   const { robot, heard, over } = follow(server, 4, frames);
   await robot.follow();
@@ -589,7 +558,7 @@ test("a scan reads its photos as large as the robot's pace allows, and the last 
     const frames = (rotate, size) => {
       const [face, turn] = PHOTOS[holding++];
       asked.push(size);
-      return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn, 1280), rotate, size);
+      return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn), rotate, size);
     };
     // A photo is read right after it was grabbed: the size last asked for is the size read.
     const later = (read) => {
@@ -1034,7 +1003,7 @@ test("the details of a scan: faces found, the sizes and times of the reading", (
   });
   assert.deepEqual(rows, [
     ["Faces found", "5 of 6"],
-    ["Photos read at", "320 to 720 px a side"],
+    ["Photos read at", "320 to 720 px (equivalent square)"],
     ["Reading a face", "15 to 64 ms"],
     ["Reading in all", "138 ms"],
     ["Slowest photo grab", "17 ms"],

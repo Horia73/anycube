@@ -7,7 +7,7 @@
 //
 //   the core     no document needed (the tests run it under Node): the
 //                server's robot API, the run that follows its events, the
-//                square cut out of a frame and turned, the six faces read
+//                full frame resized and turned, the six faces read
 //                and put together the way MultiCuber's anycube_scan.mjs
 //                does, and the time left while the robot turns.
 //   mountRobot   the page's side: connecting, the camera, Scan and Stop,
@@ -23,12 +23,6 @@ import { Dropdown, place } from "./dropdown.js";
 import { arrange, assembleScan, reviewStickers } from "./scan-fit.js";
 
 // ------------------------------------------------------------- the frame
-
-/** The centred square of a w by h picture, as robot.py photo() cuts it. */
-export function squareCrop(w, h) {
-  const side = Math.min(w, h);
-  return { sx: Math.floor((w - side) / 2), sy: Math.floor((h - side) / 2), side };
-}
 
 /** 0, 90, 180 or 270, from whatever the server sent; null if it is not a quarter turn. */
 export function quarterTurn(rotate) {
@@ -61,7 +55,7 @@ export function rotateSquare(data, side, rotate) {
 }
 
 /**
- * The least a frame is read at, in pixels a side: what MultiCuber's bridge
+ * The least a frame is read at, in equivalent square pixels per side: what MultiCuber's bridge
  * gives anycube is 320 (480 from 6x6x6); at 240 a sticker of a 5x5x5 the
  * robot holds is still some 35 pixels across, and a face is read in about
  * 8 ms. The last face of a scan is read about this small, since the robot
@@ -69,8 +63,8 @@ export function rotateSquare(data, side, rotate) {
  */
 export const frameSize = (n) => (n >= 6 ? 360 : 240);
 
-// The sizes a frame may be read at. The top one is the square of the 1280
-// by 720 the camera is asked for, and where the robot's own pictures of a
+// Pixel budgets expressed as the side of a square of the same area.
+// The top one is where the robot's own pictures of a
 // 4x4x4 (MultiCuber/CubeScan, 1080 pixels) have every sticker of every face
 // found; between 320 and 560 a sticker or two of a face is filled in from
 // the lattice, above 720 only the time grows. A face is read in about 9,
@@ -159,9 +153,8 @@ export class ReadPace {
 }
 
 /**
- * The frame of the moment from a playing video: its centred square, made
- * `size` pixels a side (no larger than the camera gives it), turned
- * `rotate` degrees clockwise. Null while there is no frame. A few
+ * The full frame from a playing video, turned clockwise and scaled to
+ * a size² pixel budget. Null while there is no frame. A few
  * milliseconds: it is what stands between the robot's `photo` and the
  * page's answer.
  */
@@ -172,13 +165,19 @@ export function grabFrame(video, rotate, size, canvas) {
 }
 
 function readPixels(source, w, h, rotate, size, canvas) {
-  const { sx, sy, side } = squareCrop(w, h);
-  size = Math.min(side, size);
-  canvas.width = canvas.height = size;
+  const scale = Math.min(1, size / Math.sqrt(w * h));
+  const width = Math.max(1, Math.round(w * scale));
+  const height = Math.max(1, Math.round(h * scale));
+  const turn = quarterTurn(rotate);
+  if (turn === null) throw new Error(`not a quarter turn: ${rotate}`);
+  const swap = turn === 90 || turn === 270;
+  canvas.width = swap ? height : width;
+  canvas.height = swap ? width : height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(source, sx, sy, side, side, 0, 0, size, size);
-  const { data } = ctx.getImageData(0, 0, size, size);
-  return { width: size, height: size, data: rotateSquare(data, size, rotate) };
+  ctx.translate(canvas.width / 2, canvas.height / 2);
+  ctx.rotate(turn * Math.PI / 180);
+  ctx.drawImage(source, -width / 2, -height / 2, width, height);
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
 // Decode a controller camera frame before acknowledging its pixels.
@@ -582,7 +581,7 @@ const LOST = new Set(["disconnected", "not_connected", "connection_lost", "port_
  * A connected robot: the events of the server followed for as long as it
  * is connected, and one run at a time (scan, then solve).
  *
- * `grab(rotate, size)` takes the frame of the moment, `size` pixels a side
+ * `grab(rotate, size)` takes the frame of the moment with a `size²` pixel budget
  * (null if there is none), and must not wait for anything. How large each
  * photo is read is the `pace`'s to say (ReadPace). The hooks say what happens:
  *   onphase(phase)        "idle" | "starting" | "scanning" | "solving" | "done" | "failed"
@@ -818,8 +817,9 @@ export class RobotRun {
       const { cells, source } = readFace(image, this.n);
       const took = this.now() - began;
       this.work += took;
-      this.pace.took(image.width, took);
-      [this.sizes[index], this.readMs[index]] = [image.width, took];
+      const readSize = Math.round(Math.sqrt(image.width * image.height));
+      this.pace.took(readSize, took);
+      [this.sizes[index], this.readMs[index]] = [readSize, took];
       if (!this.sources[face]) this.read++;
       this.faces[face] = cells;
       this.sources[face] = source;
@@ -920,7 +920,7 @@ export function scanMeasures(result) {
   const sizes = (result.sizes ?? []).filter(Boolean);
   const times = (result.read_ms ?? []).filter((ms) => ms !== null).map(Math.round);
   const span = (list, unit) => (Math.min(...list) === Math.max(...list) ? `${list[0]} ${unit}` : `${Math.min(...list)} to ${Math.max(...list)} ${unit}`);
-  if (sizes.length) rows.push(["Photos read at", `${span(sizes, "px")} a side`]);
+  if (sizes.length) rows.push(["Photos read at", `${span(sizes, "px")} (equivalent square)`]);
   if (times.length) rows.push(["Reading a face", span(times, "ms")]);
   if (Number.isFinite(result.work_ms)) rows.push(["Reading in all", duration(result.work_ms)]);
   if (Number.isFinite(result.grab_ms)) rows.push(["Slowest photo grab", duration(result.grab_ms)]);
@@ -1101,7 +1101,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   const feed = new CameraFeed(video);
   let openingCamera = false;
   const scratch = document.createElement("canvas");
-  const thumb = document.createElement("canvas");
   // The details open right under the "i", as wide as the panel, and stay in
   // the window: what does not fit there scrolls.
   const placeInfo = () => {
@@ -1377,12 +1376,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const li = $("robot-shots").children[face];
     if (!li) return;
     const canvas = li.querySelector("canvas");
-    thumb.width = image.width;
-    thumb.height = image.height;
-    thumb.getContext("2d").putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
-    canvas.getContext("2d").drawImage(thumb, 0, 0, canvas.width, canvas.height);
+    canvas.width = image.width;
+    canvas.height = image.height;
+    canvas.getContext("2d").putImageData(image, 0, 0);
     li.classList.add("taken");
-    li.title = `${FACE_LETTERS[face]}: as the page read it, ${image.width} pixels a side`;
+    li.title = `${FACE_LETTERS[face]}: as the page read it, ${image.width} × ${image.height} px`;
   }
 
   // ------------------------------------------------------------ status

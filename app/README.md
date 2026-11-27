@@ -176,9 +176,7 @@ The panel, from the top:
   it shows them, a click, a tap or Enter pins them or lets them go, Escape
   or a click elsewhere closes them. None of these numbers is anywhere else
   on the page.
-- The camera as the robot's photos take it (the middle square, not
-  mirrored, with the grid of 0.8 of its side) and the six photos of the
-  last scan.
+- The full camera view and the six oriented photos from the last scan.
 
 Over Scan & solve is the robot's line: what to do next, or what is wrong
 and needs doing (the camera not allowed, the server not answering), always
@@ -187,15 +185,13 @@ Without a robot, or without a server that drives robots, nothing of this
 is on the page.
 
 Scan starts the robot and follows its events (`/api/robot/events`, long
-polls). At each `photo` the page grabs the frame of the moment, cuts out
-its centred square, turns it as the event says, and answers `photo-taken`
-at once. Which face a photo is and how it is turned, only its event says
+polls). At each `photo` the page captures the full video frame or decodes
+the controller PNG, turns it as the event says, and answers `photo-taken`. Which face a photo is and how it is turned, only its event says
 (`face`, `rotate`): the server plans the scan, and the order of the faces
 differs with where the robot stands. The time left of the scan is its
 plan's, counted down. The face is read afterwards, while the robot moves on:
-`detect.js`, or a centred grid of 0.8 of the side when no face is found,
-then `colour.js` and `scan-fit.js`, as MultiCuber's `anycube_scan.mjs`
-does. The six faces fill in on the cube as they are read. A scan that
+`detect.js` samples the detected sticker lattice. A missed face fails the
+scan. When all six faces are found, `colour.js` and `scan-fit.js` assemble them. The six faces fill in on the cube as they are read. A scan that
 makes no cube is shown as the camera's would be, and nothing more is asked
 of the robot. Otherwise the cube goes to `/api/robot/solve` with
 `analysis_ms`, the time from `scan-done` to the facelets. The cube on
@@ -206,9 +202,9 @@ the "i").
 
 How large a photo is read (`ReadPace`): the robot takes about a second
 from photo to photo, and that time goes to a larger picture. The sizes
-are 240, 320, 360, 400, 480, 560, 640 and 720 pixels a side (from 360 for
-a 6x6x6 and up; 720 is the square of the 1280 by 720 the camera is asked
-for). Each photo is read at the largest size that takes no more than half
+are 240, 320, 360, 400, 480, 560, 640 and 720 (from 360 for a 6x6x6 and
+up). Each size sets a pixel budget of that size squared. Resizing preserves
+the aspect ratio. Each photo is read at the largest size that takes no more than half
 the time to the next photo: what a size costs is measured on every
 reading (the machine's rate, a slower reading counting at once; the cost
 of a size goes as its side to the power 1.5), and the time to the next

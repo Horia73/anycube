@@ -1,0 +1,91 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Robot full-frame capture regression</title>
+<pre id="result">Running…</pre>
+<script type="module">
+// Serve app/ on localhost and open tests/robot-full-frame.html in Chromium.
+import { grabFrame, ReadPace, RobotRun } from "../js/robot.js";
+import { COLOURS, picture, quad } from "./pictures.mjs";
+
+const stickers = [0, 1, 2, 3, 4, 5, 1, 2, 0];
+const orders = {
+  0:   [0,1,2,3,4,5,6,7,8],
+  90:  [6,3,0,7,4,1,8,5,2],
+  180: [8,7,6,5,4,3,2,1,0],
+  270: [2,5,8,1,4,7,0,3,6],
+};
+
+async function check(source, rotate, blank) {
+  const video = document.createElement("video");
+  const tall = source === "PNG";
+  const [W, H] = tall ? [360, 640] : [640, 360];
+  // The old crop excluded the first 140 columns/rows. The entire skewed
+  // face, including the cube body, fits inside that strip.
+  const corners = tall ? quad(205, 69, 106, -6, .09, .08) : quad(69, 205, 106, 6, .09, .08);
+  const frame = picture({ W, H, n: 3, corners: blank ? null : corners, stickers, noise: 0 });
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  canvas.getContext("2d").putImageData(new ImageData(frame.data, W, H), 0, 0);
+  const event = { type: "photo", run: "scan", face: "B", index: 2, rotate };
+  if (tall) event.png = canvas.toDataURL("image/png").split(",")[1];
+  else {
+    video.muted = true;
+    video.srcObject = canvas.captureStream();
+    const presented = new Promise(resolve => video.requestVideoFrameCallback(resolve));
+    await video.play();
+    await presented;
+  }
+  try {
+    const scratch = document.createElement("canvas");
+    let captured;
+    const robot = new RobotRun({
+      n: 3,
+      pace: new ReadPace(3, { first: 360 }),
+      hooks: { onphoto: (_index, _face, image) => { captured = image; } },
+      api: { scan: async () => ({ run: "scan" }), photoTaken: async () => {} },
+      grab: (turn, size) => grabFrame(video, turn, size, scratch),
+      later: read => read(),
+    });
+    await robot.scan();
+    await robot.take(event);
+    // 640 × 360 scales to 480 × 270 at the 360² budget.
+    const portrait = rotate % 180 === 0 ? tall : !tall;
+    if (captured.width !== (portrait ? 270 : 480) || captured.height !== (portrait ? 480 : 270)) {
+      throw Error(`unexpected captured dimensions ${captured.width} × ${captured.height}`);
+    }
+    const face = 5; // B in URFDLB, independent of photo index
+    if (robot.sources[face]?.found !== !blank) throw Error("unexpected detection");
+    const cells = robot.faces[face];
+    if (blank) {
+      if (cells !== null) throw Error("expected a miss without substitute colours");
+    } else {
+      if (cells.length !== 9) throw Error("incomplete face");
+      for (const [i, original] of orders[rotate].entries()) {
+        const rgb = COLOURS[stickers[original]];
+        if (cells[i].some((v, k) => Math.abs(v - rgb[k]) > 6)) {
+          throw Error(`cell ${i}: got ${cells[i]}, expected ${rgb}`);
+        }
+      }
+    }
+  } finally {
+    video.srcObject?.getTracks().forEach(track => track.stop());
+  }
+}
+
+const result = document.querySelector("#result");
+try {
+  for (const source of ["video", "PNG"]) {
+    for (const rotate of [0, 90, 180, 270]) {
+      result.textContent = `${source} at ${rotate} degrees`;
+      await check(source, rotate, false);
+    }
+    result.textContent = `${source} blank frame`;
+    await check(source, 90, true);
+  }
+  result.textContent = "PASS: 8 oriented colour reads and 2 misses";
+} catch (error) {
+  result.textContent = `FAIL: ${result.textContent}: ${error.stack}`;
+  throw error;
+}
+</script>
