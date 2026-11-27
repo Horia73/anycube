@@ -243,6 +243,9 @@ robot is connected for it. `anycube app --robot-sim` offers a simulated robot
 (port `sim`) that answers like the firmware and takes as long. The API is in
 `src/app/robots.rs`; the code in `src/robot/`.
 
+Building your own robot? The [custom robot guide](docs/custom-robots.md) covers
+controller-supplied photos, app-camera scans, logical solutions, and a hardware-free emulator.
+
 The lift decides how much the rotator turns: at its lowest raised position
 (level 1) the top face alone, one more layer for each level above, the whole
 cube at the top level; with the lift down the cube rests in the flipper,

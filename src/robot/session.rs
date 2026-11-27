@@ -13,7 +13,7 @@
 
 use super::detect::{Detector, Known};
 use super::fastest::{self, Options};
-use super::{drivers, ConnectOptions, Progress, Robot, RobotError, StopFlag};
+use super::{drivers, solution_link, ConnectOptions, PhotoSpec, Progress, Robot, RobotError, StopFlag};
 use crate::api::{check, Input};
 use serde_json::{json, Map, Value};
 use std::collections::{HashSet, VecDeque};
@@ -72,6 +72,7 @@ struct Run {
     id: String,
     started: Instant,
     scan_ms: Option<f64>,
+    solve_requested: bool,
 }
 
 #[derive(Default)]
@@ -85,6 +86,7 @@ struct State {
     /// Counts the times the robot was taken: whose turn `busy` stands for.
     turn: u64,
     acks: HashSet<(String, usize)>,
+    pending_frame: Option<usize>,
     count: u64,
     /// Counts the connections: a watcher of an earlier one stops.
     generation: u64,
@@ -194,12 +196,17 @@ impl Session {
     pub fn list(&self, probe: bool) -> Value {
         let sim = self.inner.config.sim_scale.is_some();
         let views = self.inner.detector.ports(probe);
+        let solution_port = solution_link::endpoint();
         let drivers: Vec<Value> = drivers()
             .iter()
+            .filter(|d| d.id() != solution_link::ID || solution_port.is_some())
             .map(|d| {
                 let mut ports: Vec<&str> = views.iter().filter(|v| v.claims.contains(&d.id())).map(|v| v.id.path.as_str()).collect();
                 if sim && d.id() == "multicuber" {
                     ports.insert(0, super::multicuber::SIM_PORT);
+                }
+                if d.id() == solution_link::ID {
+                    ports.extend(solution_port.as_deref());
                 }
                 json!({"id": d.id(), "name": d.name(), "sizes": d.sizes(), "ports": ports})
             })
@@ -207,6 +214,9 @@ impl Session {
         let mut ports: Vec<Value> = Vec::new();
         if sim {
             ports.push(json!({"path": super::multicuber::SIM_PORT, "driver": "multicuber", "busy": false}));
+        }
+        if let Some(path) = solution_port {
+            ports.push(json!({"path": path, "driver": solution_link::ID, "busy": false, "manual": true}));
         }
         for v in &views {
             let mut p = Map::new();
@@ -242,6 +252,10 @@ impl Session {
         let port = match body["port"].as_str().filter(|p| !p.is_empty()) {
             Some(p) => p.to_string(),
             None if self.inner.config.sim_scale.is_some() && driver.id() == "multicuber" => sim.to_string(),
+            None if driver.id() == solution_link::ID => match solution_link::endpoint() {
+                Some(port) => port,
+                None => return err("no_port", "set ANYCUBE_SOLUTION_LINK_CONTROLLER first"),
+            },
             // The port known to carry this robot, else the first that may.
             None => {
                 let views = detector.ports(false);
@@ -270,6 +284,10 @@ impl Session {
             }
         };
         let (size, info) = (robot.size(), robot.info());
+        if driver.id() == solution_link::ID && size > self.inner.config.max_size {
+            detector.reserve(None);
+            return err("bad_size", "controller cube size exceeds this app’s solver limit");
+        }
         detector.identified(&port, driver.id(), info.clone());
         let connected = json!({"driver": driver.id(), "port": port, "size": size, "info": info});
         let present = robot.presence();
@@ -278,6 +296,9 @@ impl Session {
         let generation = {
             let mut s = self.inner.state.lock().unwrap();
             s.camera = camera;
+            if driver.id() == solution_link::ID {
+                self.inner.stop.clear();
+            }
             s.connected = Some(connected);
             s.generation += 1;
             s.lost = None;
@@ -375,6 +396,16 @@ impl Session {
 
     /// A run failed: the error goes to the page; if the robot is gone, the connection goes too.
     fn failed(&self, run: &str, e: RobotError, robot: &mut Option<Box<dyn Robot>>) {
+        if self.inner.stop.is_set() {
+            if let Some(robot) = robot.as_mut().filter(|r| r.driver_id() == solution_link::ID) {
+                robot.emergency_stop();
+            }
+        }
+        if robot.as_deref().is_some_and(Robot::connection_closed) && e.code != "link" {
+            self.emit("error", Some(run), json!({"code": e.code, "message": e.message}));
+            self.drop_connection(robot, None, &e.message);
+            return;
+        }
         let lost = self.inner.state.lock().unwrap().lost.clone();
         let gone = lost.or_else(|| match e.code {
             // The port itself failed.
@@ -428,16 +459,28 @@ impl Session {
             return Err(err("busy", "the robot is running"));
         }
         let continuing = keep_scan && id.is_some() && s.run.as_ref().map(|r| r.id.as_str()) == id;
+        let logical = s.connected.as_ref().is_some_and(|c| c["driver"] == solution_link::ID);
+        if logical && self.inner.stop.is_set() {
+            return Err(err("stopped", "reconnect the controller before starting again"));
+        }
+        if keep_scan && logical {
+            if !continuing || !s.run.as_ref().is_some_and(|r| r.scan_ms.is_some() && !r.solve_requested) {
+                return Err(err("bad_run", "scan again before solving with this controller"));
+            }
+            s.run.as_mut().unwrap().solve_requested = true;
+        }
         if !continuing {
             s.count += 1;
             let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
             let id = id.map(str::to_string).unwrap_or_else(|| format!("r{:x}{:02x}", stamp, s.count % 256));
-            s.run = Some(Run { id, started: Instant::now(), scan_ms: None });
+            s.run = Some(Run { id, started: Instant::now(), scan_ms: None, solve_requested: false });
         }
         s.busy = true;
         s.turn += 1;
         s.acks.clear();
-        self.inner.stop.clear();
+        if !logical {
+            self.inner.stop.clear();
+        }
         Ok((s.run.as_ref().unwrap().id.clone(), s.turn))
     }
 
@@ -496,7 +539,8 @@ impl Session {
         let t0 = Instant::now();
         robot.sync()?;
         let plan = robot.plan_scan();
-        self.emit("scan-start", Some(run), json!({"steps": plan.ops.len(), "eta_ms": plan.eta_ms}));
+        let eta = (robot.driver_id() != solution_link::ID).then_some(plan.eta_ms);
+        self.emit("scan-start", Some(run), json!({"steps": plan.ops.len(), "eta_ms": eta}));
         let ops = plan.ops.clone();
         robot.execute(&plan, &self.inner.stop, &mut |p| self.progress(run, &ops, p))?;
         let scan_ms = (t0.elapsed().as_secs_f64() * 1000.0).round();
@@ -520,43 +564,66 @@ impl Session {
                 self.emit("op", Some(run), json!({"i": i, "cmd": ops[i].cmd, "arg": ops[i].arg, "actual_ms": actual_ms}));
                 Ok(())
             }
-            Progress::Photo { i, photo } => {
-                let settle = self.inner.config.photo_settle;
-                if !settle.is_zero() {
-                    std::thread::sleep(settle);
-                }
-                // The robot's time to the next picture (to the end of the scan after the last).
-                let rest = &ops[(i + 1).min(ops.len())..];
-                let next = rest.iter().position(|o| o.photo.is_some());
-                let moving: f64 = rest[..next.map_or(rest.len(), |k| k + 1)].iter().map(|o| o.est_ms).sum();
-                let next_ms = (moving + if next.is_some() { settle.as_secs_f64() * 1000.0 } else { 0.0 }).round();
-                let mut body = json!({"index": photo.index, "face": photo.face.to_string(), "rotate": photo.rotate, "next_ms": next_ms});
-                // A simulated robot shows what its camera would: a page is tried against it with no cube.
-                let camera = self.inner.state.lock().unwrap().camera.clone();
-                if let Some(seen) = camera {
-                    body["sim"] = json!(seen());
-                }
-                self.emit("photo", Some(run), body);
-                let deadline = Instant::now() + PHOTO_ACK;
-                let mut s = self.inner.state.lock().unwrap();
-                loop {
-                    if s.acks.contains(&(run.to_string(), photo.index)) {
-                        return Ok(());
-                    }
-                    if self.inner.stop.is_set() {
-                        return Err(RobotError::new("stopped", "stopped"));
-                    }
-                    let left = deadline.saturating_duration_since(Instant::now());
-                    if left.is_zero() {
-                        return Err(RobotError::new(
-                            "photo_timeout",
-                            format!("photo {} was not taken within {} s", photo.index, PHOTO_ACK.as_secs()),
-                        ));
-                    }
-                    s = self.inner.changed.wait_timeout(s, left.min(Duration::from_millis(20))).unwrap().0;
-                }
+            Progress::Photo { i, photo } => self.capture(run, ops, i, photo, None, false),
+            Progress::Frame { i, photo, png } => self.capture(run, ops, i, photo, png, true),
+            Progress::MoveDone { i, actual_ms } => {
+                self.emit("move", Some(run), json!({"move": ops[i].mv, "est_ms": ops[i].est_ms, "completed": true}));
+                self.progress(run, ops, Progress::Done { i, actual_ms })
             }
         }
+    }
+
+    fn capture(&self, run: &str, ops: &[super::PlannedOp], i: usize, photo: PhotoSpec, png: Option<String>, controller: bool) -> Result<(), RobotError> {
+        let settle = self.inner.config.photo_settle;
+        if !settle.is_zero() && png.is_none() {
+            std::thread::sleep(settle);
+        }
+        if self.inner.stop.is_set() {
+            return Err(RobotError::new("stopped", "stopped"));
+        }
+        let rest = &ops[(i + 1).min(ops.len())..];
+        let next = rest.iter().position(|o| o.photo.is_some());
+        let moving: f64 = rest[..next.map_or(rest.len(), |k| k + 1)].iter().map(|o| o.est_ms).sum();
+        let next_ms = (moving + if next.is_some() { settle.as_secs_f64() * 1000.0 } else { 0.0 }).round();
+        let next_ms = (!controller).then_some(next_ms);
+        let mut body = json!({"index": photo.index, "face": photo.face.to_string(), "rotate": photo.rotate, "next_ms": next_ms});
+        let has_png = png.is_some();
+        if let Some(data) = png {
+            body["png"] = json!(data);
+        }
+        let camera = self.inner.state.lock().unwrap().camera.clone();
+        if let Some(seen) = camera {
+            body["sim"] = json!(seen());
+        }
+        let deadline = Instant::now() + PHOTO_ACK;
+        let mut s = self.inner.state.lock().unwrap();
+        if controller {
+            s.pending_frame = Some(photo.index);
+        }
+        self.emit_locked(&mut s, "photo", Some(run), body);
+        let seq = s.seq;
+        let result = loop {
+            if self.inner.stop.is_set() {
+                break Err(RobotError::new("stopped", "stopped"));
+            }
+            if s.acks.contains(&(run.to_string(), photo.index)) {
+                break Ok(());
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break Err(RobotError::new("photo_timeout", format!("photo {} was not taken within {} s", photo.index, PHOTO_ACK.as_secs())));
+            }
+            s = self.inner.changed.wait_timeout(s, left.min(Duration::from_millis(20))).unwrap().0;
+        };
+        s.pending_frame = None;
+        // The waiting browser has copied the image. Do not accumulate image bytes
+        // in the session's event history.
+        if has_png {
+            if let Some(event) = s.events.iter_mut().rev().find(|e| e["seq"] == seq) {
+                event.as_object_mut().unwrap().remove("png");
+            }
+        }
+        result
     }
 
     pub fn photo_taken(&self, body: &Value) -> Value {
@@ -566,6 +633,11 @@ impl Session {
         let mut s = self.inner.state.lock().unwrap();
         if s.run.as_ref().map(|r| r.id.as_str()) != Some(run) {
             return err("bad_run", "no such run");
+        }
+        if s.connected.as_ref().is_some_and(|c| c["driver"] == solution_link::ID)
+            && (self.inner.stop.is_set() || s.pending_frame.map(|i| i as u64) != Some(index))
+        {
+            return err("bad_photo", "no matching controller frame is waiting for ACK");
         }
         s.acks.insert((run.to_string(), index as usize));
         self.inner.changed.notify_all();
@@ -624,14 +696,22 @@ impl Session {
     }
 
     fn solve_on(&self, run: &str, turn: u64, robot: &mut dyn Robot, cube: &crate::api::Checked, analysis_ms: f64, waited_ms: f64) -> Result<(), RobotError> {
+        let stopped = || RobotError::new("stopped", "stopped");
+        if self.inner.stop.is_set() {
+            return Err(stopped());
+        }
         robot.sync()?;
+        let logical = robot.controller_planned();
         let choice = {
             let cost = robot.estimator();
-            fastest::choose(cube, &*cost, &self.inner.config.search).map_err(|e| RobotError::new(e.code, e.message))?
+            let opts = &self.inner.config.search;
+            if logical { fastest::normal(cube, &*cost, opts.mode) } else { fastest::choose(cube, &*cost, opts) }
+                .map_err(|e| RobotError::new(e.code, e.message))?
         };
         if self.inner.stop.is_set() {
-            return Err(RobotError::new("stopped", "stopped"));
+            return Err(stopped());
         }
+        robot.check_solution(&choice.moves)?;
         let plan = robot.plan_solution(&choice.moves);
         // All the time from the solve's arrival to the plan, a wait for the tables included.
         let compute_ms = ((waited_ms + choice.compute_ms) * 10.0).round() / 10.0;
@@ -653,7 +733,7 @@ impl Session {
                     "compute_ms": (choice.plain.compute_ms * 10.0).round() / 10.0,
                 },
                 "est_ms": choice.est_ms.round(),
-                "metric": "robot-ms",
+                "metric": if logical { "logical-moves" } else { "robot-ms" },
                 "planner": robot.planner_name(),
             }),
         );
@@ -677,9 +757,10 @@ impl Session {
 
     /// Emergency stop: motors off at once; the run ends with `error` `stopped`.
     pub fn stop(&self) -> Value {
-        self.inner.stop.stop();
         let (busy, run) = {
             let s = self.inner.state.lock().unwrap();
+            self.inner.stop.stop();
+            self.inner.changed.notify_all();
             (s.busy, s.run.as_ref().map(|r| r.id.clone()))
         };
         if !busy {

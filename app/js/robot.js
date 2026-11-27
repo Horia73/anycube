@@ -168,13 +168,32 @@ export class ReadPace {
 export function grabFrame(video, rotate, size, canvas) {
   const [w, h] = [video.videoWidth, video.videoHeight];
   if (!w || !h || video.readyState < 2) return null;
+  return readPixels(video, w, h, rotate, size, canvas);
+}
+
+function readPixels(source, w, h, rotate, size, canvas) {
   const { sx, sy, side } = squareCrop(w, h);
   size = Math.min(side, size);
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
-  ctx.drawImage(video, sx, sy, side, side, 0, 0, size, size);
+  ctx.drawImage(source, sx, sy, side, side, 0, 0, size, size);
   const { data } = ctx.getImageData(0, 0, size, size);
   return { width: size, height: size, data: rotateSquare(data, size, rotate) };
+}
+
+// Decode a controller camera frame before acknowledging its pixels.
+async function readPng(png, rotate, size) {
+  const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+  const header = new DataView(bytes.buffer);
+  if (bytes.length < 33 || header.getUint32(0) !== 0x89504e47 || header.getUint32(4) !== 0x0d0a1a0a
+      || header.getUint32(8) !== 13 || header.getUint32(12) !== 0x49484452) throw new Error("Expected a PNG frame");
+  if (header.getUint32(16) > 2048 || header.getUint32(20) > 2048) throw new Error("Controller frame is too large");
+  const image = await createImageBitmap(new Blob([bytes], { type: "image/png" }), { imageOrientation: "none" });
+  try {
+    return readPixels(image, image.width, image.height, rotate, size, document.createElement("canvas"));
+  } finally {
+    image.close();
+  }
 }
 
 // The server asks after its settle delay. Wait for the next presented frame
@@ -487,7 +506,7 @@ export class RobotWatch {
     const robot = choosePort(answer, this.memory.last, (driver, port) => {
       const key = pair(driver, port);
       const wait = Math.max(this.failed.get(key)?.until ?? 0, this.failed.get(pair(driver, ANY))?.until ?? 0);
-      return this.held.has(key) || this.held.has(pair(driver, ANY)) || wait > now;
+      return answer.ports?.some((p) => p.path === port && p.manual) || this.held.has(key) || this.held.has(pair(driver, ANY)) || wait > now;
     });
     if (!robot) return "nothing";
     this.#hook("onconnecting", robot);
@@ -767,7 +786,7 @@ export class RobotRun {
     // Every photo but the last has the robot's way to the next to be read in.
     const size = this.pace.photo(Number.isFinite(event.t_ms) ? event.t_ms : asked, index >= SIDES - 1, event.next_ms);
     try {
-      image = await this.grab(rotate, size);
+      image = typeof event.png === "string" ? await readPng(event.png, rotate, size) : await this.grab(rotate, size);
     } catch {
       image = null;
     }
@@ -775,7 +794,7 @@ export class RobotRun {
     this.grabMs = Math.max(this.grabMs, this.now() - asked);
     if (!image) {
       // No picture is no photo: the robot is stopped rather than left to wait.
-      this.#fail({ code: "no_frame", message: "The camera gave no picture. Check that it is on and pointing at the cube." });
+      this.#fail({ code: "no_frame", message: typeof event.png === "string" ? "The controller PNG could not be decoded." : "The camera gave no picture. Check that it is on and pointing at the cube." });
       void this.stop();
       return;
     }
@@ -1101,6 +1120,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   let listed = ""; // the robots and ports the dialog shows
   let asked = false; // the server has answered about its robots
   let connected = null; // {driver, port, size, info}
+  const controllerCamera = () => connected?.info?.camera === "robot";
   let connecting = null; // {driver, port} while it is being connected
   let trouble = ""; // why the robot found did not connect
   let robot = null;
@@ -1133,7 +1153,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const paths = [...new Set([...[...ports.values()].filter((p) => p.driver === id).map((p) => p.path), ...portsOf(id)])];
     const about = (path) => {
       const p = ports.get(path);
-      return p?.busy ? "in use" : p?.driver === id ? "recognised" : p && "driver" in p && !p.driver ? "no answer" : "";
+      return p?.busy ? "in use" : p?.manual ? "local executable" : p?.driver === id ? "recognised" : p && "driver" in p && !p.driver ? "no answer" : "";
     };
     const options = [
       { value: "", text: paths.length ? "The first one found" : "None found: try anyway" },
@@ -1382,7 +1402,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
               ? ["Solving", "busy"]
               : openingCamera
                 ? ["Starting camera…", "busy"]
-                : !feed.running
+                : !feed.running && !controllerCamera()
                   ? ["No camera", "warn"]
                   : ["Ready", "ok"];
     $("robot-state").textContent = word;
@@ -1398,7 +1418,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     scanButton.disabled = !robot || sizing || switching || openingCamera;
     scanButton.title = busy ? "Stop the robot at once: its motors are switched off" : scanButton.disabled ? reason : "The robot shows the camera the six faces, then solves the cube";
     devices.disabled = busy || sizing || switching;
-    cameras.disabled = !!reason;
+    $("robot-camera-label").textContent = controllerCamera() ? "Controller camera" : "Camera";
+    $("robot-camera-box").hidden = controllerCamera();
+    $("robot-cam").hidden = controllerCamera();
+    cameras.disabled = !!reason || controllerCamera();
     $("robot-camera-start").disabled = openingCamera;
     // Why a picker does not open is said where the pointer is.
     for (const dropdown of [devices, cameras]) dropdown.title = dropdown.disabled ? reason : "";
@@ -1465,19 +1488,24 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       following = host.plan(plan.moves ?? []);
       eta = new Eta(plan, performance.now());
       const left = el("b");
+      const logical = plan.metric === "logical-moves";
+      const count = plan.moves?.length ?? 0;
+      const hasEstimate = !logical || plan.eta_ms > 0;
       const more = following ? "" : "The page could not follow these moves on its cube.";
       planned = [
         ["Moves", String(plan.moves?.length ?? 0)],
         ["Planned in", duration(plan.compute_ms)],
-        ...(plan.candidates ? [["Solutions compared", String(plan.candidates)]] : []),
-        ["Expected", duration(plan.eta_ms)],
+        ...(!logical && plan.candidates ? [["Solutions compared", String(plan.candidates)]] : []),
+        ...(hasEstimate ? [["Expected", duration(plan.eta_ms)]] : []),
       ];
       showDetails();
       const tick = () => {
-        left.textContent = duration(eta.left(performance.now()));
+        const completed = logical ? `${eta.last + 1}/${count} moves complete` : "";
+        const time = hasEstimate ? `${duration(eta.left(performance.now()))} left` : "";
+        left.textContent = [completed, time].filter(Boolean).join(" · ");
       };
       tick();
-      host.say("busy", ["The robot is solving · ", left, " left"], more);
+      host.say("busy", ["The robot is solving · ", left], more);
       stopTicker();
       ticker = setInterval(tick, 100);
     },
@@ -1493,7 +1521,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       const times = el("dl", { class: "robot-times" }, [
         ["Scan", t.scan_ms, "The robot showing the camera the six faces."],
         ["Analysis", t.analysis_ms, "From the end of the scan to the cube being read."],
-        ["Compute", t.compute_ms, "Finding the robot's fastest solution."],
+        ["Compute", t.compute_ms, "Finding the solution."],
         ["Execution", t.exec_ms, "The robot turning the cube."],
         ["Total", t.total_ms, "From Scan to solved."],
       ].map(([label, ms, title]) => el("div", { title }, [el("dt", { text: label }), el("dd", { text: duration(ms) })])));
@@ -1509,9 +1537,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       // The server's own "Stopped: …" is not said twice.
       const after = message.trim().replace(/^stopped\b[\s:.]*/i, "");
       const text = stopped
-        ? [el("b", { text: "Stopped. " }), after ? after[0].toUpperCase() + after.slice(1) : "The motors are off."]
+        ? [el("b", { text: "Stopped. " }), after ? after[0].toUpperCase() + after.slice(1) : connected?.driver === "solution-link" ? "Reconnect the controller to scan again." : "The motors are off."]
         : [el("b", { text: "The robot stopped. " }), message];
-      host.say("bad", text, stopped ? "Put the robot back in its rest position before the next scan." : "", null, true);
+      host.say("bad", text, stopped && connected?.driver === "multicuber" ? "Put the robot back in its rest position before the next scan." : "", null, true);
       if (!stopped) {
         logged = `${message} (${error.code})`;
         showDetails();
@@ -1546,7 +1574,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       return;
     }
     const session = robot;
-    if (!feed.running && !(await openCamera())) return;
+    if (!controllerCamera() && !feed.running && !(await openCamera())) return;
     if (robot !== session) return;
     closeInfo();
     const n = connected.size;
@@ -1589,7 +1617,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
         ["Cube", Number.isInteger(connected.size) ? host.name(connected.size) : "–"],
         ...(firmware ? [["Firmware", String(firmware)]] : []),
       ]],
-      ["Camera", [["Picture", video.videoWidth ? `${video.videoWidth} × ${video.videoHeight}` : "not started"]]],
+      ["Camera", [["Picture", controllerCamera() ? "Controller PNG" : video.videoWidth ? `${video.videoWidth} × ${video.videoHeight}` : "not started"]]],
       ["Last scan", measures],
       ["Last solve", planned],
     ];
@@ -1641,6 +1669,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   async function resize(n) {
     const was = connected;
     const sizes = drivers.find((d) => d.id === was.driver)?.sizes;
+    if (was.driver === "solution-link") {
+      host.setSize(was.size);
+      say(`The controller is set for ${host.name(was.size)}. Change the size on the controller and reconnect.`, true);
+      return;
+    }
     if (sizes?.length && !sizes.includes(n)) {
       say(`${driverName(was.driver)} does not take a ${host.name(n)}: it stays at ${host.name(was.size)}.`, true);
       return;
@@ -1690,9 +1723,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }));
     linked = true;
     setButtons();
-    say(HINT);
+    say(controllerCamera() ? "Scan the cube using photos from the controller." : HINT);
     void robot.follow();
-    await openCamera();
+    if (!controllerCamera()) await openCamera();
     setTimeout(() => robot === mine && warmUp(mine), 300);
   }
 
@@ -1754,8 +1787,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   function lost(why = "") {
     if (!connected) return;
     const name = driverName(connected.driver);
+    const auto = memory.auto && connected.driver !== "solution-link";
     leave();
-    host.say("bad", [el("b", { text: `${name} is no longer connected. ` }), memory.auto ? "It connects again by itself when it is plugged in." : "Connect it again with Robot."], why);
+    host.say("bad", [el("b", { text: `${name} is no longer connected. ` }), auto ? "It connects again by itself when it is plugged in." : "Connect it again with Robot."], why);
     gone = true;
     watch.start();
   }

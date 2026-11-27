@@ -114,6 +114,17 @@ impl Choice {
 /// The robot's time (ms) for a sequence of moves.
 pub type Cost<'a> = dyn Fn(&[Turn]) -> f64 + 'a;
 
+/// The regular solver's answer, with an optional estimate supplied for display.
+pub fn normal(cube: &Checked, cost: &Cost, mode: Mode) -> Result<Choice, ApiError> {
+    let start = Instant::now();
+    let solved = solve(cube, mode)?;
+    let moves: Vec<_> = solved.moves.into_iter().map(Turn::from_index).collect();
+    let est_ms = cost(&moves);
+    let compute_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let plain = Plain { moves: moves.clone(), est_ms, complete: solved.optimal, compute_ms };
+    Ok(Choice { moves, est_ms, plain, candidates: 1, solutions: 1, compute_ms })
+}
+
 /// The 24 ways to hold a cube, as whole-cube quarter turns (0 = x, 1 = y,
 /// 2 = z) in the sense of `Geometry::turned`; the first is none.
 pub fn orientations() -> Vec<Vec<usize>> {

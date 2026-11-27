@@ -22,6 +22,7 @@ pub mod fastest;
 pub mod multicuber;
 pub mod physical;
 pub mod session;
+pub mod solution_link;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -206,9 +207,13 @@ pub enum Progress {
     Started { i: usize },
     /// Command `i` is done; it took `actual_ms`.
     Done { i: usize, actual_ms: f64 },
+    /// The controller completed logical move i.
+    MoveDone { i: usize, actual_ms: f64 },
     /// Command `i` was followed by a picture: the call returns once it is taken
     /// (an error stops the run).
     Photo { i: usize, photo: PhotoSpec },
+    /// A controller-labelled frame, optionally carrying the controller camera PNG.
+    Frame { i: usize, photo: PhotoSpec, png: Option<String> },
 }
 
 /// Set from anywhere to stop a run as soon as possible.
@@ -244,6 +249,14 @@ pub trait Robot: Send {
     }
     /// The commands of a solution, from where the robot is now.
     fn plan_solution(&self, moves: &[Turn]) -> Plan;
+    /// Validate a solution against this controller's capabilities before execution.
+    fn check_solution(&self, _moves: &[Turn]) -> Result<(), RobotError> {
+        Ok(())
+    }
+    /// Use the normal solver when the controller owns the motion plan.
+    fn controller_planned(&self) -> bool {
+        false
+    }
     /// The robot time (ms) of a solution from where the robot is now, quickly: candidates are compared by it.
     /// It stands on its own: it may be used while the robot does something else.
     fn estimator(&self) -> Box<dyn Fn(&[Turn]) -> f64 + Send>;
@@ -254,6 +267,9 @@ pub trait Robot: Send {
     /// Says, when asked, whether the robot is still plugged in (asked from another thread while it runs).
     fn presence(&self) -> Arc<dyn Fn() -> bool + Send + Sync> {
         Arc::new(|| true)
+    }
+    fn connection_closed(&self) -> bool {
+        false
     }
     /// Runs a plan. `progress` is called as the commands go; an error from it stops the run.
     fn execute(&mut self, plan: &Plan, stop: &StopFlag, progress: &mut dyn FnMut(Progress) -> Result<(), RobotError>) -> Result<(), RobotError>;
@@ -279,5 +295,5 @@ pub trait Robot: Send {
 
 /// The robots anycube knows.
 pub fn drivers() -> Vec<Box<dyn Driver>> {
-    vec![Box::new(multicuber::MultiCuberDriver)]
+    vec![Box::new(multicuber::MultiCuberDriver), Box::new(solution_link::SolutionDriver)]
 }
