@@ -14,6 +14,30 @@ leaves settings, calibration, and solver tables in their existing data
 directories. A bundle without a configured published channel shows an in-app
 message and stays on its current build.
 
+## Install the CLI and native app
+
+The manually dispatched GitHub Actions release build uploads CLI archives as
+workflow artifacts. On macOS the tarball contains the `anycube` executable.
+On a Mac, extract the archive for your architecture from a build that includes
+the native launcher, or build this checkout with `cargo build --release --locked`.
+Run the extracted executable as `./anycube app --install` (for a local build,
+`target/release/anycube app --install`), then open `~/Applications/anycube.app`.
+
+Maintainers can also distribute the CLI and assembled app together. On the
+build Mac, run the following after installing the matching release build:
+
+```sh
+scripts/package-macos-archive.sh target/release/anycube "$HOME/Applications/anycube.app" arm64 dist
+```
+
+Use `x86_64` for Intel. The helper checks the plist, bundle signature and
+binary architectures, then writes `dist/anycube-macos-<arch>-with-app.tar.gz`.
+Recipients can extract it and copy `anycube.app` into `~/Applications`.
+
+A signed in-app update becomes available only when a maintainer signs,
+notarizes, and publishes a compatible updater asset as described under
+Release inputs. [Manual archive helper](../scripts/package-macos-archive.sh)
+
 ## Native launcher integration
 
 - Use a self-contained, writable `anycube.app` with bundle ID
