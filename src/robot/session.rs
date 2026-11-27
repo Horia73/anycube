@@ -196,7 +196,9 @@ impl Session {
     /// background (each once: opening a port restarts an Arduino).
     pub fn list(&self, probe: bool) -> Value {
         let sim = self.inner.config.sim_scale.is_some();
-        let views = self.inner.detector.ports(probe && solution_link::serial_endpoint().is_none());
+        let selected_serial = solution_link::serial_endpoint();
+        let mut views = self.inner.detector.ports(probe && selected_serial.is_none());
+        views.retain(|view| Some(view.id.path.as_str()) != selected_serial.as_deref());
         let solution_port = solution_link::endpoint();
         let drivers: Vec<Value> = drivers()
             .iter()
@@ -217,7 +219,7 @@ impl Session {
             ports.push(json!({"path": super::multicuber::SIM_PORT, "driver": "multicuber", "busy": false}));
         }
         if let Some(path) = solution_port {
-            ports.push(json!({"path": path, "driver": solution_link::ID, "busy": false, "manual": true}));
+            ports.push(json!({"path": path, "driver": solution_link::ID, "busy": false, "manual": true, "serial": selected_serial.is_some()}));
         }
         for v in &views {
             let mut p = Map::new();
@@ -298,7 +300,7 @@ impl Session {
         let generation = {
             let mut s = self.inner.state.lock().unwrap();
             s.camera = camera;
-            if driver.id() == solution_link::ID {
+            if active_driver == solution_link::ID {
                 self.inner.stop.clear();
             }
             s.connected = Some(connected);

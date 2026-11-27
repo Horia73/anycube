@@ -14,7 +14,7 @@ If building from source, replace `anycube app` with `cargo run --release -- app`
 
 For a controller using the app camera, advertise `app` instead of `png` and present each stable face to a camera selected in AnyCube. The emulator's `--camera app --frames-dir /tmp/robot-frames` writes synthetic frames for a test camera feed. Selecting this mode alone does not create a webcam.
 
-If a proprietary controller already has a different wire protocol, build a local bridge exposing Solution Link or implement a Rust `Driver` and `Robot` under `src/robot/` and register it in `drivers()` in `src/robot/mod.rs`. The bridge needs no changes to AnyCube. A native driver needs a custom build and its own connection, protocol, and capability handling. It can use the normal solver with `Robot::controller_planned` and wrap the logical turns directly for execution, as the reference adapter does. MultiCuber remains a separate driver with its existing firmware protocol and optimized host-side planner.
+If a proprietary controller already has a different wire protocol, build a local bridge exposing Solution Link or implement a Rust `Driver` and `Robot` under `src/robot/` and register it in `drivers()` in `src/robot/mod.rs`. The bridge needs no changes to AnyCube. A native driver needs a custom build and its own connection, protocol, and capability handling. It can use the normal solver with `Robot::controller_planned` and wrap the logical turns directly for execution, as the reference adapter does. MultiCuber 2.2 uses its existing firmware protocol and host-side planner. The Timer1 build of 2.3 negotiates controller-side planning.
 
 ## Solution Link v1
 
@@ -75,7 +75,7 @@ After a successful scan and validation, a solve can run once for that scan. For 
 
 Moves are clockwise quarter turns of `URFDLB` viewed from outside the named face, with `'` for counterclockwise and `2` for half turns. On larger cubes `Rw` turns two adjacent layers from the R face and `3Rw` turns three. Suffixes also apply to wide moves. V1 carries no slices or whole-cube rotations. The handshake permits sizes 2–50 within the app's solver limit and widths from 1 to size minus 1. AnyCube checks the complete normal solution against the advertised width and half-turn support before it sends `SOLVE`. It reports an unsupported move if the sequence exceeds those capabilities. It does not search for a restricted-notation alternative. The emulator and session regression cover 3×3×3. Wider tokens are covered at the adapter level. Production use on other sizes depends on your controller, camera setup and available AnyCube solver tables.
 
-Every host command is short and staging is stop-and-wait, so the host never floods a receiver with a long algorithm line. The wire cap is 4,096 moves. A constrained controller should enforce its own smaller batch limit at `SOLVE` and may store compact parsed moves. For a Mega using a local serial bridge, preserve backpressure and forward STOP and link loss promptly. Stream image chunks from the camera or bridge instead of allocating a whole PNG in a small MCU. A serial bridge and Mega operation have not been tested.
+Every host command is short and staging is stop-and-wait, so the host never floods a receiver with a long algorithm line. The wire cap is 4,096 moves. A constrained controller should enforce its own smaller batch limit at `SOLVE` and may store compact parsed moves. For a Mega using a local serial bridge, preserve backpressure and forward STOP and link loss promptly. Stream image chunks from the camera or bridge instead of allocating a whole PNG in a small MCU.
 
 ### Stop and connection loss
 
@@ -89,13 +89,13 @@ On Linux with Python 3, Node.js 22+, Rust, and AnyCube's 3×3×3 tables, run `ca
 
 ### Direct USB
 
-Set `ANYCUBE_SOLUTION_LINK_SERIAL` to the selected serial device and select
+The MultiCuber picker negotiates the firmware version when it connects. To pin a port explicitly, set `ANYCUBE_SOLUTION_LINK_SERIAL` to the selected serial device and select
 its Solution Link entry. This takes precedence over the subprocess adapter.
 With this setting discovery does not probe devices. The port opens at 115200
 8N1. MultiCuber identification uses the legacy HELLO first. Version 2.2
 uses the legacy driver. Version 2.3 receives HELLO 1 and independent KEEP
-records every 200 ms. During a face hold, a failed or timed-out capture
-requests RESTORE and waits for OK and DONE. Stop and active disconnect send
+records every 200 ms. During a face hold, an explicitly failed capture
+requests RESTORE and waits for OK and DONE. A silent capture timeout, Stop and active disconnect send
 STOP. Idle disconnect ends the lease with BYE. A physically unplugged Mega
 can only detect host loss when its firmware lease expires.
 

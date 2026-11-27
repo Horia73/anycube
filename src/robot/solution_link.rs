@@ -8,7 +8,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
-use super::multicuber::{self, link::{Link, SerialTransport}};
+use super::multicuber;
 use std::time::{Duration, Instant};
 
 pub const ID: &str = "solution-link";
@@ -48,26 +48,15 @@ impl Driver for SolutionDriver {
             if std::env::var("ANYCUBE_SOLUTION_LINK_PROTOCOL").as_deref() == Ok("native") {
                 return Ok(Box::new(SolutionLink::handshake(Wire::serial(device, false)?, port, size)?));
             }
-            let clone = device.try_clone().map_err(|e| RobotError::new("port", e.to_string()))?;
-            let mut legacy = Link::new(Box::new(SerialTransport::from_port(clone)));
-            legacy.wait_banner(Duration::from_secs(2));
-            let hello = legacy.handshake(2, 1)?;
-            let fw = hello.get("fw").map(String::as_str).unwrap_or("");
-            if fw.starts_with("2.2.") {
-                let timing = opts.settings_dir.as_ref().map(|d| d.join("robot-multicuber-timing.json"));
-                return Ok(Box::new(multicuber::MultiCuber::start(legacy, port.into(), size, timing, None, Duration::ZERO)?));
-            }
-            if !fw.starts_with("2.3.") { return Err(protocol("unsupported MultiCuber firmware")); }
-            if let Some(n) = size {
-                if !multicuber::SIZES.contains(&n) { return Err(protocol("unsupported MultiCuber size")); }
-                legacy.command(&format!("SIZE {n}"), REPLY_TIMEOUT)?;
-            }
-            drop(legacy);
-            return Ok(Box::new(SolutionLink::handshake(Wire::serial(device, true)?, port, size)?));
+            return multicuber::connect_serial(device, port, size, opts, false);
         }
         let robot = SolutionLink::handshake(Wire::spawn(port)?, port, size)?;
         Ok(Box::new(robot))
     }
+}
+
+pub(super) fn connect_mega(device: Box<dyn serialport::SerialPort>, port: &str, size: Option<usize>) -> Result<Box<dyn Robot>, RobotError> {
+    Ok(Box::new(SolutionLink::handshake(Wire::serial(device, true)?, port, size)?))
 }
 
 fn protocol(message: impl Into<String>) -> RobotError { RobotError::new("protocol", message) }
@@ -307,7 +296,7 @@ impl SolutionLink {
             let rotate = rotate.parse::<u16>().ok().filter(|r| [0, 90, 180, 270].contains(r)).ok_or_else(|| protocol("invalid frame rotation"))?;
             let png = if self.png { Some(self.image(stop)?) } else { None };
             if let Err(error) = progress(Progress::Frame { i, photo: PhotoSpec { index: i, face: FACES[f] as char, rotate }, png }) {
-                if self.link.mega_lease && matches!(error.code, "photo_timeout" | "no_frame") {
+                if self.link.mega_lease && error.code == "no_frame" {
                     self.link.send("RESTORE", stop)?;
                     self.link.expect("OK", stop, REPLY_TIMEOUT)?;
                     self.link.expect("DONE", stop, MOTION_TIMEOUT)?;

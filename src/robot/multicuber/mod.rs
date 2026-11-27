@@ -66,7 +66,7 @@ const HOLD_PROBED: Duration = Duration::from_secs(8);
 /// second time, so the connect that follows takes this one over.
 struct Probed {
     port: String,
-    link: Link,
+    device: Box<dyn serialport::SerialPort>,
     at: Instant,
 }
 
@@ -100,12 +100,14 @@ impl Driver for MultiCuberDriver {
             return Probe::Robot(json!({"fw": "2.2.0-sim", "proto": PROTOCOL.to_string()}));
         }
         let Ok(transport) = SerialTransport::open(port, BAUD) else { return Probe::Busy };
-        let mut link = Link::new(Box::new(transport));
+        let device = transport.into_port();
+        let Ok(reader) = device.try_clone() else { return Probe::Busy };
+        let mut link = Link::new(Box::new(SerialTransport::from_port(reader)));
         link.wait_banner(BOOT_WAIT);
         match link.handshake(2, PROTOCOL) {
             Ok(hello) => {
                 let at = Instant::now();
-                *PROBED.lock().unwrap() = Some(Probed { port: port.to_string(), link, at });
+                *PROBED.lock().unwrap() = Some(Probed { port: port.to_string(), device, at });
                 // Nobody connected: let the port go.
                 std::thread::spawn(move || {
                     std::thread::sleep(HOLD_PROBED);
@@ -138,15 +140,33 @@ impl Driver for MultiCuberDriver {
             if held.as_ref().is_some_and(|p| p.port == port) { held.take() } else { None }
         };
         if let Some(p) = probed.filter(|p| p.at.elapsed() < HOLD_PROBED) {
-            match MultiCuber::start(p.link, port.to_string(), size, timing_path.clone(), None, Duration::ZERO) {
-                Ok(r) => return Ok(boxed(r)),
-                Err(e) if !matches!(e.code, "no_answer" | "timeout" | "link" | "protocol") => return Err(e),
-                Err(_) => {} // the port is closed again by now: once more from the start
+            return connect_serial(p.device, port, size, opts, true);
+        }
+        connect_serial(SerialTransport::open(port, BAUD)?.into_port(), port, size, opts, false)
+    }
+}
+
+pub(super) fn connect_serial(device: Box<dyn serialport::SerialPort>, port: &str, size: Option<usize>, opts: &ConnectOptions, awake: bool) -> Result<Box<dyn Robot>, RobotError> {
+    if size.is_some_and(|n| !SIZES.contains(&n)) {
+        return Err(RobotError::new("bad_size", "MultiCuber requires size 3, 4 or 5"));
+    }
+    let reader = device.try_clone().map_err(|e| RobotError::new("port", e.to_string()))?;
+    let mut legacy = Link::new(Box::new(SerialTransport::from_port(reader)));
+    if !awake { legacy.wait_banner(BOOT_WAIT); }
+    let hello = legacy.handshake(5, PROTOCOL)?;
+    if hello.get("fw").is_some_and(|version| version.starts_with("2.3."))
+        && hello.get("backend").is_some_and(|name| name != "STEPPERDRIVER")
+    {
+        if let Some(n) = size {
+            if hello.get("size").and_then(|s| s.parse().ok()) != Some(n) {
+                legacy.command(&format!("SIZE {n}"), Duration::from_secs(3))?;
             }
         }
-        let link = Link::new(Box::new(SerialTransport::open(port, BAUD)?));
-        MultiCuber::start(link, port.to_string(), size, timing_path, None, BOOT_WAIT).map(boxed)
+        drop(legacy);
+        return super::solution_link::connect_mega(device, port, size);
     }
+    let timing = opts.settings_dir.as_ref().map(|d| d.join("robot-multicuber-timing.json"));
+    Ok(Box::new(MultiCuber::start(legacy, port.into(), size, timing, None, Duration::ZERO)?))
 }
 
 /// Whether a serial port is (still) there.

@@ -1157,7 +1157,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const paths = [...new Set([...[...ports.values()].filter((p) => p.driver === id).map((p) => p.path), ...portsOf(id)])];
     const about = (path) => {
       const p = ports.get(path);
-      return p?.busy ? "in use" : p?.manual ? "local executable" : p?.driver === id ? "recognised" : p && "driver" in p && !p.driver ? "no answer" : "";
+      return p?.busy ? "in use" : p?.serial ? "USB serial" : p?.manual ? "local executable" : p?.driver === id ? "recognised" : p && "driver" in p && !p.driver ? "no answer" : "";
     };
     const options = [
       { value: "", text: paths.length ? "The first one found" : "None found: try anyway" },

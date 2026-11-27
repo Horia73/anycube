@@ -20,10 +20,13 @@ pub struct SerialTransport {
 }
 
 impl SerialTransport {
+    pub fn into_port(self) -> Box<dyn serialport::SerialPort> { self.port }
+
     pub fn from_port(port: Box<dyn serialport::SerialPort>) -> Self { Self { port } }
 
     pub fn open(path: &str, baud: u32) -> Result<SerialTransport, RobotError> {
         let port = serialport::new(path, baud)
+            .dtr_on_open(false)
             .timeout(Duration::from_millis(20))
             .open()
             .map_err(|e| RobotError::new("port", format!("cannot open {}: {}", path, e)))?;
