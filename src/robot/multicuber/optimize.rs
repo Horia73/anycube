@@ -475,6 +475,12 @@ impl Space {
         p.join(main);
     }
 
+    /// Return from a known scan hold to the original lift, flipper and cube orientation.
+    pub(super) fn return_to_start(&self, p: &mut Planner, start: RobotState) {
+        let from = self.state(p.lift, p.flip_up, self.find(&p.frame));
+        self.emit(p, from, self.start(start));
+    }
+
     /// The quickest commands to where the robot can be switched off: lift down, flipper up.
     pub fn park(&self, p: &mut Planner) {
         p.start_run();

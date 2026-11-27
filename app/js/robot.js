@@ -332,6 +332,7 @@ export class RobotApi {
   disconnect() { return this.#request("POST", "/api/robot/disconnect", {}); }
   scan() { return this.#request("POST", "/api/robot/scan", {}); }
   photoTaken(run, index, failed = false) { return this.#request("POST", "/api/robot/photo-taken", failed ? { run, index, failed } : { run, index }); }
+  rejectScan(run) { return this.#request("POST", "/api/robot/reject-scan", { run }); }
   solve(run, size, facelets, analysisMs) {
     return this.#request("POST", "/api/robot/solve", { run, size, facelets, analysis_ms: analysisMs });
   }
@@ -795,10 +796,14 @@ export class RobotRun {
     if (this.run !== run || this.phase !== "scanning") return;
     this.grabMs = Math.max(this.grabMs, this.now() - asked);
     if (!image) {
-      // No picture is no photo: the robot is stopped rather than left to wait.
+      // The server reports the terminal error when the return motion finishes.
+      // Keep Stop available during that motion.
+      if (this.restoreCapture) {
+        await this.api.photoTaken(run, index, true).catch(() => this.stop());
+        return;
+      }
       this.#fail({ code: "no_frame", message: typeof event.png === "string" ? "The controller PNG could not be decoded." : "The camera gave no picture. Check that it is on and pointing at the cube." });
-      if (this.restoreCapture) await this.api.photoTaken(run, index, true).catch(() => this.stop());
-      else void this.stop();
+      void this.stop();
       return;
     }
     // Acknowledge the captured pixels before the detector can occupy the main thread.
@@ -860,7 +865,14 @@ export class RobotRun {
     result.scan_ms = this.scanMs;
     this.#hook("onscanned", result);
     if (!result.ok) {
-      // Nothing more is asked of the robot: the cube can be scanned again.
+      if (this.restoreAfterScan) {
+        const run = this.run;
+        return this.api.rejectScan(run).then(() => {
+          if (this.run === run && this.phase === "scanning") this.#setPhase("idle");
+        }).catch(error => {
+          if (this.run === run && this.busy) this.#fail(error);
+        });
+      }
       this.#setPhase("idle");
       return;
     }
@@ -1724,6 +1736,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       hooks,
       pace,
     }));
+    mine.restoreAfterScan = info.info?.restore_after_scan === true;
     mine.restoreCapture = info.info?.restore === true;
     linked = true;
     setButtons();

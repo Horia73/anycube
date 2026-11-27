@@ -73,6 +73,8 @@ struct Run {
     started: Instant,
     scan_ms: Option<f64>,
     solve_requested: bool,
+    return_plan: Option<super::Plan>,
+    rejected: bool,
 }
 
 #[derive(Default)]
@@ -469,11 +471,17 @@ impl Session {
             }
             s.run.as_mut().unwrap().solve_requested = true;
         }
-        if !continuing {
+        if continuing {
+            let run = s.run.as_mut().unwrap();
+            if run.rejected {
+                return Err(err("bad_run", "scan again after a rejected cube"));
+            }
+            run.return_plan = None;
+        } else {
             s.count += 1;
             let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
             let id = id.map(str::to_string).unwrap_or_else(|| format!("r{:x}{:02x}", stamp, s.count % 256));
-            s.run = Some(Run { id, started: Instant::now(), scan_ms: None, solve_requested: false });
+            s.run = Some(Run { id, started: Instant::now(), scan_ms: None, solve_requested: false, return_plan: None, rejected: false });
         }
         s.busy = true;
         s.turn += 1;
@@ -539,6 +547,7 @@ impl Session {
         let t0 = Instant::now();
         robot.sync()?;
         let plan = robot.plan_scan();
+        let return_plan = robot.scan_return_plan(&plan);
         let eta = (robot.driver_id() != solution_link::ID).then_some(plan.eta_ms);
         self.emit("scan-start", Some(run), json!({"steps": plan.ops.len(), "eta_ms": eta}));
         let ops = plan.ops.clone();
@@ -546,6 +555,7 @@ impl Session {
         let scan_ms = (t0.elapsed().as_secs_f64() * 1000.0).round();
         if let Some(r) = self.inner.state.lock().unwrap().run.as_mut().filter(|r| r.id == run) {
             r.scan_ms = Some(scan_ms);
+            r.return_plan = return_plan;
         }
         self.emit_last(turn, "scan-done", run, json!({"scan_ms": scan_ms}));
         Ok(())
@@ -601,17 +611,15 @@ impl Session {
         }
         let deadline = Instant::now() + PHOTO_ACK;
         let mut s = self.inner.state.lock().unwrap();
-        if controller {
-            s.pending_frame = Some(photo.index);
-            s.capture_failed = false;
-        }
+        s.pending_frame = Some(photo.index);
+        s.capture_failed = false;
         self.emit_locked(&mut s, "photo", Some(run), body);
         let seq = s.seq;
         let result = loop {
             if self.inner.stop.is_set() {
                 break Err(RobotError::new("stopped", "stopped"));
             }
-            if controller && s.capture_failed { break Err(RobotError::new("no_frame", "capture failed")); }
+            if s.capture_failed { break Err(RobotError::new("no_frame", "capture failed")); }
             if s.acks.contains(&(run.to_string(), photo.index)) {
                 break Ok(());
             }
@@ -640,14 +648,49 @@ impl Session {
         if s.run.as_ref().map(|r| r.id.as_str()) != Some(run) {
             return err("bad_run", "no such run");
         }
-        if s.connected.as_ref().is_some_and(|c| c["driver"] == solution_link::ID)
-            && (self.inner.stop.is_set() || s.pending_frame.map(|i| i as u64) != Some(index))
-        {
-            return err("bad_photo", "no matching controller frame is waiting for ACK");
+        if self.inner.stop.is_set() || s.pending_frame.map(|i| i as u64) != Some(index) {
+            return err("bad_photo", "no matching frame is waiting for ACK");
         }
         if body["failed"] == true { s.capture_failed = true; } else { s.acks.insert((run.to_string(), index as usize)); }
         self.inner.changed.notify_all();
         json!({"ok": true})
+    }
+
+    pub fn reject_scan(&self, body: &Value) -> Value {
+        match self.restore_rejected_scan(body["run"].as_str()) {
+            Ok(true) => json!({"ok": true}),
+            Ok(false) => err("bad_run", "no matching scan to return"),
+            Err(e) => from_robot(e),
+        }
+    }
+
+    /// Claim a completed scan's return path once, before subsequent motion.
+    /// Stop remains effective while the driver executes it.
+    fn restore_rejected_scan(&self, id: Option<&str>) -> Result<bool, RobotError> {
+        let Some(id) = id else { return Ok(false) };
+        let (plan, turn) = {
+            let mut s = self.inner.state.lock().unwrap();
+            if s.busy || self.inner.stop.is_set() {
+                return Ok(false);
+            }
+            let Some(run) = s.run.as_mut().filter(|r| r.id == id) else { return Ok(false) };
+            let Some(plan) = run.return_plan.take() else { return Ok(false) };
+            run.rejected = true;
+            s.busy = true;
+            s.turn += 1;
+            (plan, s.turn)
+        };
+        let mut guard = self.inner.robot.lock().unwrap();
+        let result = match guard.as_mut() {
+            Some(robot) => robot.execute(&plan, &self.inner.stop, &mut |_| Ok(())),
+            None => Err(RobotError::new("not_connected", "no robot is connected")),
+        };
+        if let Err(e) = &result {
+            self.failed(id, e.clone(), &mut guard);
+        }
+        drop(guard);
+        self.end(turn);
+        result.map(|()| true)
     }
 
     pub fn solve(&self, body: &Value) -> Value {
@@ -662,7 +705,12 @@ impl Session {
         }
         let cube = match check(size, Input::Facelets(facelets), self.inner.config.max_size) {
             Ok(c) => c,
-            Err(e) => return err(e.code, e.message),
+            Err(e) => {
+                if let Err(failure) = self.restore_rejected_scan(body["run"].as_str()) {
+                    return from_robot(failure);
+                }
+                return err(e.code, e.message);
+            }
         };
         let analysis_ms = body["analysis_ms"].as_f64().unwrap_or(0.0);
         let (id, turn) = match self.begin(body["run"].as_str(), true) {

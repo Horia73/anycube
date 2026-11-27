@@ -192,6 +192,52 @@ fn scan_and_solve_on_the_simulated_robot() {
 }
 
 #[test]
+fn rejected_scan_restores_exact_pose_on_firmware_22() {
+    let s = session(0.01, 0);
+    let connected = s.connect(&json!({"driver": "multicuber", "port": "sim"}));
+    assert_eq!(connected["info"]["fw"], "2.2.0-sim");
+    assert_eq!(connected["info"]["restore"], true);
+    assert_eq!(connected["info"]["restore_after_scan"], true);
+    let sim = s.with_robot(|r| r.as_any().downcast_ref::<MultiCuber>().unwrap().sim().unwrap().clone()).unwrap();
+    // Begin away from the parked position so simply parking cannot pass.
+    {
+        let mut state = sim.state.0.lock().unwrap();
+        state.cube.lift = anycube::robot::multicuber::planner::Lift::Level(3);
+        state.cube.flip_up = false;
+    }
+    let pose = || {
+        let state = sim.state.0.lock().unwrap();
+        (state.cube.facelets.clone(), state.cube.lift, state.cube.flip_up, state.enabled)
+    };
+    let before = pose();
+    let timeout = Duration::from_secs(8);
+    let mut since = 0;
+    let run = s.scan()["run"].clone();
+    for index in 0..3 {
+        let photo = read_until(&s, &mut since, &["photo"], false, timeout).pop().unwrap();
+        assert_eq!(photo["index"], index);
+        if index == 2 { assert_ne!(pose().0, before.0); }
+        assert_eq!(s.photo_taken(&json!({"run": run, "index": index, "failed": index == 2}))["ok"], true);
+    }
+    let error = read_until(&s, &mut since, &["error"], false, timeout).pop().unwrap();
+    assert!(s.wait_idle(timeout));
+    assert_eq!(pose(), before, "failed photo");
+    assert_eq!(error["code"], "scan_restored");
+
+    let run = s.scan()["run"].clone();
+    read_until(&s, &mut since, &["scan-done"], true, timeout);
+    assert_ne!(pose(), before);
+    assert_eq!(s.reject_scan(&json!({"run": "stale"}))["error"]["code"], "bad_run");
+    let invalid = s.solve(&json!({"run": run, "facelets": "U".repeat(54)}));
+    assert_eq!(invalid["ok"], false);
+    assert!(s.wait_idle(timeout));
+    assert_eq!(pose(), before, "invalid cube");
+    assert_eq!(s.reject_scan(&json!({"run": run}))["error"]["code"], "bad_run");
+    assert!(sim.violations().is_empty());
+    assert_eq!(sim.overflows(), 0);
+}
+
+#[test]
 fn a_stop_ends_the_run_and_switches_the_motors_off() {
     let s = session(0.2, 0);
     assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);

@@ -192,8 +192,8 @@ differs with where the robot stands. The time left of the scan is its
 plan's, counted down. The face is read afterwards, while the robot moves on:
 `detect.js` samples the detected sticker lattice. A missed face fails the
 scan. When all six faces are found, `colour.js` and `scan-fit.js` assemble them. The six faces fill in on the cube as they are read. A scan that
-makes no cube is shown as the camera's would be, and nothing more is asked
-of the robot. Otherwise the cube goes to `/api/robot/solve` with
+makes no cube is shown as the camera's would be. MultiCuber 2.2 returns
+the cube to its starting pose after a rejected scan. Otherwise the cube goes to `/api/robot/solve` with
 `analysis_ms`, the time from `scan-done` to the facelets. The cube on
 screen turns each move as the robot starts it, over its estimated time;
 the time left is the plan's, corrected by the ops as they finish; at the

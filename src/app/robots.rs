@@ -7,6 +7,7 @@
 //! POST /api/robot/disconnect                {}
 //! POST /api/robot/scan                      {}                                   -> {"ok": true, "run": "..."}
 //! POST /api/robot/photo-taken               {"run": "...", "index": 0..5}
+//! POST /api/robot/reject-scan               {"run": "..."}                         return a rejected host-planned scan
 //! POST /api/robot/solve                     {"run": "...", "size": 3, "facelets": "...", "analysis_ms": 412}
 //! POST /api/robot/stop                      {}
 //! GET  /api/robot/events?since=<seq>&wait=<s>
@@ -50,6 +51,7 @@ pub fn route(session: &Session, method: &str, path: &str, url: &str, body: &str,
                 "/api/robot/disconnect" => session.disconnect(),
                 "/api/robot/scan" => session.scan(),
                 "/api/robot/photo-taken" => session.photo_taken(&body),
+                "/api/robot/reject-scan" => session.reject_scan(&body),
                 "/api/robot/solve" => session.solve(&body),
                 "/api/robot/stop" => session.stop(),
                 _ => return err(404, "not_found", "no such endpoint"),

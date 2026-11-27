@@ -313,6 +313,8 @@ test("capture and acknowledgement precede analysis, and a missed face prevents s
   const scans = [];
   const acks = [];
   let solves = 0;
+  let finishReturn;
+  const rejected = [];
   let capture;
   let acknowledge;
   const robot = new RobotRun({
@@ -324,11 +326,16 @@ test("capture and acknowledgement precede analysis, and a missed face prevents s
         return new Promise((resolve) => { acknowledge = resolve; });
       },
       solve: async () => { solves++; },
+      rejectScan: (run) => {
+        rejected.push(run);
+        return new Promise(resolve => { finishReturn = resolve; });
+      },
     },
     grab: () => new Promise((resolve) => { capture = resolve; }),
     later: (read) => pending.push(read),
     hooks: { onscanned: (result) => scans.push(result) },
   });
+  robot.restoreAfterScan = true;
   await robot.scan();
 
   for (const [index, [face, rotate]] of PHOTOS.entries()) {
@@ -355,7 +362,27 @@ test("capture and acknowledgement precede analysis, and a missed face prevents s
   assert.match(result.note, /photos for R\./);
   assert.equal(result.sources.filter((source) => source.found).length, 5);
   assert.equal(solves, 0);
+  assert.deepEqual(rejected, ["scan"]);
+  assert.equal(robot.phase, "scanning");
+  finishReturn();
+  await Promise.resolve();
   assert.equal(robot.phase, "idle");
+});
+
+test("a failed camera hold keeps Stop available until the host reports recovery", async () => {
+  const acks = [];
+  const robot = new RobotRun({
+    api: { scan: async () => ({ run: "scan" }), photoTaken: async (...args) => acks.push(args) },
+    grab: () => null,
+    n: 3,
+  });
+  robot.restoreCapture = true;
+  await robot.scan();
+  await robot.take({ type: "photo", run: "scan", face: "F", index: 2, rotate: 90 });
+  assert.deepEqual(acks, [["scan", 2, true]]);
+  assert.equal(robot.busy, true);
+  robot.take({ type: "error", run: "scan", code: "scan_restored", message: "capture failed" });
+  assert.equal(robot.phase, "failed");
 });
 
 test("a scan that makes no cube: said, and the robot is asked nothing more", async () => {

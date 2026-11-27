@@ -289,6 +289,24 @@ impl MultiCuber {
         Planner::new(self.n).with_timing(&self.timing).from_state(self.state)
     }
 
+    // Only acknowledged scan operations are replayed. Scan rotations always
+    // move the whole cube. The planner tracks its orientation as well as the axes.
+    fn scan_return(&self, completed: &[PlannedOp]) -> (RobotState, Plan) {
+        let mut p = self.builder();
+        for op in completed {
+            match op_of(op, p.lift).cmd {
+                Cmd::Lift(to) => p.lift_to(to),
+                Cmd::Flip { up, normal } => p.flip(up, normal),
+                Cmd::Rot(turns) => p.rot(turns, true, None),
+                _ => {}
+            }
+        }
+        let hold = p.state();
+        p.ops.clear();
+        self.space.return_to_start(&mut p, self.state);
+        (hold, self.planned(p.ops))
+    }
+
     /// The planner's commands for a solution (without ENABLE/DISABLE).
     pub fn solution_ops(&self, moves: &[Turn]) -> Vec<Op> {
         let mut p = self.builder();
@@ -361,7 +379,10 @@ impl Robot for MultiCuber {
     }
 
     fn info(&self) -> Value {
-        json!(self.hello)
+        let mut info = json!(self.hello);
+        info["restore"] = json!(true);
+        info["restore_after_scan"] = json!(true);
+        info
     }
 
     fn sync(&mut self) -> Result<(), RobotError> {
@@ -385,6 +406,10 @@ impl Robot for MultiCuber {
 
     fn plan_scan(&self) -> Plan {
         self.planned(self.scan_ops())
+    }
+
+    fn scan_return_plan(&self, plan: &Plan) -> Option<Plan> {
+        Some(self.scan_return(&plan.ops).1)
     }
 
     fn plan_solution(&self, moves: &[Turn]) -> Plan {
@@ -508,6 +533,13 @@ impl Robot for MultiCuber {
                         None => Ok(()),
                     });
                     if let Err(e) = result {
+                        if e.code == "no_frame" && ops[done].photo.is_some() && !stop.is_set() {
+                            // No later command can be in flight across a photo barrier.
+                            let (hold, recovery) = self.scan_return(&ops[..=done]);
+                            self.state = hold;
+                            self.execute(&recovery, stop, &mut |_| Ok(()))?;
+                            return Err(RobotError::new("scan_restored", "The camera gave no picture. The robot returned the cube to its starting pose."));
+                        }
                         self.abort();
                         return Err(e);
                     }

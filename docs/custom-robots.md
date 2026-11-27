@@ -93,7 +93,10 @@ The MultiCuber picker negotiates the firmware version when it connects. To pin a
 its Solution Link entry. This takes precedence over the subprocess adapter.
 With this setting discovery does not probe devices. The port opens at 115200
 8N1. MultiCuber identification uses the legacy HELLO first. Version 2.2
-uses the legacy driver. Version 2.3 receives HELLO 1 and independent KEEP
+uses the legacy driver. On an explicit failed capture it computes a return path
+from the acknowledged hold to the pre-scan cube orientation, lift and flipper.
+After the sixth photo the host retains the return path until the page accepts
+or rejects the scan. A rejected scan runs that path with Stop available. Version 2.3 receives HELLO 1 and independent KEEP
 records every 200 ms. During a face hold, an explicitly failed capture
 requests RESTORE and waits for OK and DONE. A silent capture timeout, Stop and active disconnect send
 STOP. Idle disconnect ends the lease with BYE. A physically unplugged Mega

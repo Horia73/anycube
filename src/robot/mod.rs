@@ -244,6 +244,8 @@ pub trait Robot: Send {
     fn sync(&mut self) -> Result<(), RobotError>;
     /// The commands of a scan, from where the robot is now; the pictures are on them.
     fn plan_scan(&self) -> Plan;
+    /// A host-planned return from the completed scan, computed before the first motion.
+    fn scan_return_plan(&self, _plan: &Plan) -> Option<Plan> { None }
     /// The pictures of a scan from where the robot is now, in order.
     fn scan_photos(&self) -> Vec<PhotoSpec> {
         self.plan_scan().ops.iter().filter_map(|o| o.photo).collect()
