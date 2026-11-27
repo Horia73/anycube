@@ -47,9 +47,14 @@ between 0.25× and 24×.
   API (`src/app/server.rs` lists it). One search runs at a time, in a child
   process that keeps each size's tables loaded; Cancel stops that process,
   which is the only way to stop a search.
-- **The window** is a Chromium-family browser (Chrome, Edge, Brave,
-  Chromium) started as an application window, if one is installed, with a
-  profile of its own under the application data (`window-profile`). The
+- **The window** is a Chromium-family browser started as an application
+  window, if one is installed, with a profile of its own under the
+  application data (`window-profile`). On macOS they are tried in this
+  order: Brave, Edge, Chromium, Google Chrome. Chrome is last because on
+  macOS it does not list a Continuity Camera (an iPhone) among the cameras:
+  seen with Chrome 158 and an iPhone 15 Pro, where Chrome gave only the
+  Mac's own camera and Brave gave both; Edge is reported to do as Brave
+  does. `ANYCUBE_BROWSER` overrides the order. The
   camera is allowed there for the page's own address before the browser
   starts (the profile's own record of "Allow", for `http://127.0.0.1:<port>`
   and nothing else), so the page is not asked at every start. The page

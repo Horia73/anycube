@@ -1,8 +1,8 @@
 //! The interface in a window of its own, not as a tab among the tabs of a
 //! browser.
 //!
-//! - A Chromium-family browser, if one is installed (Chrome, Edge, Brave,
-//!   Chromium), started as an application window with a profile of its own
+//! - A Chromium-family browser, if one is installed (Brave, Edge, Chromium,
+//!   Chrome), started as an application window with a profile of its own
 //!   under anycube's data. On macOS too: there the camera (an iPhone as a
 //!   Continuity Camera, say) works in such a window and not in the system's
 //!   WebKit view, which this program can only drive through `osascript`,
@@ -49,12 +49,21 @@ pub fn tidy() {
 }
 
 /// The browsers that can show a page as an application window, where macOS
-/// keeps them, in the order they are tried.
+/// keeps them, in the order they are tried: one that lists a Continuity
+/// Camera (an iPhone) among the cameras before one that does not.
+///
+/// Google Chrome is last because it does not list it: seen on macOS with
+/// Chrome 158 and an iPhone 15 Pro, in an application window with a profile
+/// of its own, `navigator.mediaDevices.enumerateDevices()` gave only the
+/// "FaceTime HD Camera" (and the iPhone's microphone, but not its camera),
+/// where Brave gave both cameras and `getUserMedia` worked. Edge is reported
+/// to do as Brave does (not seen here); Chromium was not tried, and stands
+/// before Chrome since the limit is known of Chrome.
 const MAC_BROWSERS: [&str; 4] = [
-    "Google Chrome.app/Contents/MacOS/Google Chrome",
-    "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "Brave Browser.app/Contents/MacOS/Brave Browser",
+    "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "Chromium.app/Contents/MacOS/Chromium",
+    "Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
 
 /// The first of `MAC_BROWSERS` that `is_file` finds, in /Applications or in
@@ -302,17 +311,22 @@ mod tests {
     }
 
     #[test]
-    fn a_browser_before_the_webkit_window_and_chrome_before_the_others() {
+    fn a_browser_before_the_webkit_window_and_chrome_after_the_others() {
         let home = Path::new("/Users/h");
         const CHROME: &str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
         const EDGE: &str = "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge";
         const BRAVE: &str = "/Users/h/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+        const CHROMIUM: &str = "/Applications/Chromium.app/Contents/MacOS/Chromium";
         let found = |home: Option<&Path>, installed: &[&str]| mac_browser(home, |p| installed.iter().any(|i| p == Path::new(i)));
         let chrome = CHROME;
-        assert_eq!(found(Some(home), &[BRAVE, EDGE, CHROME]), Some(PathBuf::from(CHROME)));
-        assert_eq!(found(Some(home), &[BRAVE, EDGE]), Some(PathBuf::from(EDGE)));
-        assert_eq!(found(Some(home), &[BRAVE]), Some(PathBuf::from(BRAVE)));
+        // Those that list a Continuity Camera first: Brave, Edge, Chromium, and Chrome last.
+        assert_eq!(found(Some(home), &[CHROME, CHROMIUM, EDGE, BRAVE]), Some(PathBuf::from(BRAVE)));
+        assert_eq!(found(Some(home), &[CHROME, CHROMIUM, EDGE]), Some(PathBuf::from(EDGE)));
+        assert_eq!(found(Some(home), &[CHROME, CHROMIUM]), Some(PathBuf::from(CHROMIUM)));
+        assert_eq!(found(Some(home), &[CHROME]), Some(PathBuf::from(CHROME)));
+        // The user's own Applications is looked in only when the home is known.
         assert_eq!(found(None, &[BRAVE]), None);
+        assert_eq!(found(None, &[BRAVE, CHROME]), Some(PathBuf::from(CHROME)));
         assert_eq!(found(Some(home), &[]), None);
         // With a browser: its window, on any system. Without: WebKit on macOS, a tab elsewhere.
         assert_eq!(kind_for(Some(PathBuf::from(chrome)), true), Kind::Chromium(PathBuf::from(chrome)));
