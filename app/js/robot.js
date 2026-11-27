@@ -19,6 +19,7 @@ import { CameraFeed } from "./camera.js";
 import { cellColour, named, oppositeCentres, STICKERS } from "./colour.js";
 import { CubeModel, FACE_LETTERS } from "./cube-model.js";
 import { findFace } from "./detect.js";
+import { Dropdown, place } from "./dropdown.js";
 import { arrange, assembleScan, reviewStickers } from "./scan-fit.js";
 
 // ------------------------------------------------------------- the frame
@@ -858,8 +859,9 @@ const ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="8" wi
  * even if the server no longer lists it. Each is `{path, driver, state,
  * text, current}`: `driver` is the robot the port would be connected as
  * (none: it cannot be picked), `state` what stands in the way or is still
- * open ("busy", "not a robot", "checking"), `text` what the picker shows,
- * as "MultiCuber · cu.usbmodem21301" or "Simulated MultiCuber".
+ * open ("busy", "not a robot", "checking"), `name` what the picker shows,
+ * as "MultiCuber · cu.usbmodem21301" or "Simulated MultiCuber", and `text`
+ * the name and the state in one line.
  */
 export function robotChoices(answer, active = null, last = null) {
   const drivers = Array.isArray(answer?.drivers) ? answer.drivers.filter((d) => d && typeof d.id === "string") : [];
@@ -874,7 +876,7 @@ export function robotChoices(answer, active = null, last = null) {
     const state = current ? "" : p?.busy ? "busy" : p && p.driver === null ? "not a robot" : p && !("driver" in p) ? "checking" : "";
     const label = drivers.find((d) => d.id === driver)?.name ?? driver;
     const name = path === "sim" && label ? `Simulated ${label}` : [label, portName(path)].filter(Boolean).join(" · ") || "Robot";
-    return { path, driver, state, current, text: [name, state].filter(Boolean).join(" · ") };
+    return { path, driver, state, current, name, text: [name, state].filter(Boolean).join(" · ") };
   });
 }
 
@@ -899,15 +901,17 @@ export function scanMeasures(result) {
 /**
  * The "i" and what it opens: shown while a mouse is over either, and
  * pinned or let go by a click, a tap or the keyboard; Escape, and a click
- * or the focus going anywhere else, close it. Returns what closes it.
+ * or the focus going anywhere else, close it. `onshow` is called when it
+ * is opened (to lay it out). Returns what closes it.
  */
-export function bindInfo(button, details, doc) {
+export function bindInfo(button, details, doc, onshow = () => {}) {
   let pinned = false;
   const area = button.parentElement;
   function show(open) {
     details.hidden = !open;
     button.setAttribute("aria-expanded", String(open));
     if (!open) pinned = false;
+    else onshow();
   }
   area.addEventListener("pointerenter", (e) => {
     if (e.pointerType === "mouse") show(true);
@@ -936,29 +940,22 @@ export function bindInfo(button, details, doc) {
   return () => show(false);
 }
 
-// Each picker is the browser's own select, with its keyboard and its list,
-// laid unseen over the chosen name: a select shows its name on one line and
-// cuts it, the name under it wraps and is whole.
+// Each picker is a dropdown of the page's own (dropdown.js): the name chosen
+// and the names in its list wrap and are whole, as wide as the panel.
 const PANEL = `
   <div class="robot-row">
-    <label for="robot-device">Robot</label>
+    <span class="robot-label" id="robot-device-label">Robot</span>
     <span class="robot-state" id="robot-state" role="status"></span>
   </div>
-  <div class="robot-choice">
-    <span aria-hidden="true" id="robot-device-name"></span>
-    <select id="robot-device"></select>
-  </div>
+  <div id="robot-device-box"></div>
   <div class="robot-row">
-    <label for="robot-camera">Camera</label>
+    <span class="robot-label" id="robot-camera-label">Camera</span>
     <div class="robot-info">
       <button type="button" id="robot-info" aria-label="Robot and scan details" aria-controls="robot-details" aria-expanded="false">i</button>
       <section id="robot-details" aria-label="Robot and scan details" hidden></section>
     </div>
   </div>
-  <div class="robot-choice">
-    <span aria-hidden="true" id="robot-camera-name">Default camera</span>
-    <select id="robot-camera"><option>Default camera</option></select>
-  </div>
+  <div id="robot-camera-box"></div>
   <div class="robot-body">
     <div class="robot-cam" id="robot-cam">
       <video playsinline muted autoplay aria-label="What the camera sees"></video>
@@ -971,8 +968,8 @@ const PANEL = `
 const DIALOG = `
   <h2 id="robot-title">Robot</h2>
   <div class="robot-fields">
-    <label>Robot <select id="robot-driver"></select></label>
-    <label>Port <select id="robot-port"></select></label>
+    <div class="robot-field"><span class="robot-label" id="robot-driver-label">Robot</span><div id="robot-driver-box"></div></div>
+    <div class="robot-field"><span class="robot-label" id="robot-port-label">Port</span><div id="robot-port-box"></div></div>
     <label class="robot-auto"><input type="checkbox" id="robot-auto"> Connect by itself when the robot is plugged in</label>
   </div>
   <p id="robot-dialog-status" role="status"></p>
@@ -983,6 +980,8 @@ const DIALOG = `
   </form>`;
 
 const SCAN = "Scan & solve";
+// The robot picker's last choice, which is no port (a port's own value begins "port:").
+const NONE = "none";
 const HINT = "Put a cube in the robot, then press Scan & solve.";
 
 /** Milliseconds as people read them: 840 ms, 12.4 s, 1:05. */
@@ -1056,13 +1055,34 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   const note = el("p", { class: "robot-note", id: "robot-note", role: "status", "aria-live": "polite" });
   $("valid").before(note);
 
+  // The four dropdowns: the robot and the camera in the panel, the driver and the port in the dialog.
+  const picker = (id, options = []) => {
+    const dropdown = new Dropdown($(`${id}-box`), { id, labelledby: `${id}-label`, options });
+    // The words over a dropdown bring the keyboard to it, as a label does.
+    $(`${id}-label`).addEventListener("click", () => dropdown.button.focus());
+    return dropdown;
+  };
+  const devices = picker("robot-device");
+  const cameras = picker("robot-camera", [{ value: "", text: "Default camera" }]);
+  const driverPick = picker("robot-driver");
+  const portPick = picker("robot-port");
+
   const video = panel.querySelector("video");
   video.muted = true;
   const feed = new CameraFeed(video);
   let openingCamera = false;
   const scratch = document.createElement("canvas");
   const thumb = document.createElement("canvas");
-  const closeInfo = bindInfo($("robot-info"), $("robot-details"), document);
+  // The details open right under the "i", as wide as the panel, and stay in
+  // the window: what does not fit there scrolls.
+  const placeInfo = () => {
+    if (!$("robot-details").hidden) place($("robot-details"), $("robot-info"), panel, 0);
+  };
+  const closeInfo = bindInfo($("robot-info"), $("robot-details"), document, placeInfo);
+  window.addEventListener("resize", placeInfo);
+  document.addEventListener("scroll", (e) => {
+    if (e.target !== $("robot-details")) placeInfo();
+  }, true);
   // The robot's line: a hint in a few words, or (`warn`) something that needs doing. Always whole.
   const say = (text, warn = false) => {
     delete note.dataset.source;
@@ -1103,19 +1123,19 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   // The ports of the robot chosen and those the server knows to be it, each with what is known of it.
   function fillPorts(prefer = "") {
-    const id = $("robot-driver").value;
+    const id = driverPick.value;
     const paths = [...new Set([...[...ports.values()].filter((p) => p.driver === id).map((p) => p.path), ...portsOf(id)])];
     const about = (path) => {
       const p = ports.get(path);
-      return p?.busy ? " (in use)" : p?.driver === id ? " (recognised)" : p && "driver" in p && !p.driver ? " (no answer)" : "";
+      return p?.busy ? "in use" : p?.driver === id ? "recognised" : p && "driver" in p && !p.driver ? "no answer" : "";
     };
-    $("robot-port").replaceChildren(
-      el("option", { value: "", text: paths.length ? "The first one found" : "None found: try anyway" }),
-      ...paths.map((path) => el("option", { value: path, text: `${portName(path)}${about(path)}` })),
-    );
+    const options = [
+      { value: "", text: paths.length ? "The first one found" : "None found: try anyway" },
+      ...paths.map((path) => ({ value: path, text: portName(path), note: about(path) })),
+    ];
     const free = paths.filter((path) => !ports.get(path)?.busy);
     const choice = [prefer, memory.last?.driver === id ? memory.last.port : "", free.find((path) => ports.get(path)?.driver === id), free[0], paths[0]].find((path) => path && paths.includes(path));
-    $("robot-port").value = choice ?? "";
+    portPick.set(options, choice ?? "");
   }
 
   // What the server found, in the dialog: only when it has changed, and what was chosen stays chosen.
@@ -1132,18 +1152,17 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     if (now === listed) return;
     if (listed) trouble = ""; // something was plugged in or out since
     listed = now;
-    const was = [$("robot-driver").value, $("robot-port").value];
-    $("robot-driver").replaceChildren(...drivers.map((d) => el("option", { value: d.id, text: `${d.name ?? d.id}${d.sizes?.length ? ` (${d.sizes.map(host.name).join(", ")})` : ""}` })));
+    const was = [driverPick.value, portPick.value];
     const found = choosePort(answer, memory.last);
     const choice = [was[0], found?.driver, memory.last?.driver].find((id) => id && drivers.some((d) => d.id === id));
-    if (choice) $("robot-driver").value = choice;
-    fillPorts(was[1] || (found?.driver === $("robot-driver").value ? found.port : ""));
+    driverPick.set(drivers.map((d) => ({ value: d.id, text: `${d.name ?? d.id}${d.sizes?.length ? ` (${d.sizes.map(host.name).join(", ")})` : ""}` })), choice ?? "");
+    fillPorts(was[1] || (found?.driver === driverPick.value ? found.port : ""));
   }
 
   function showDialog(said = "") {
     const on = !!connected;
     const busy = !!connecting;
-    $("robot-driver").disabled = $("robot-port").disabled = on || busy || !drivers.length;
+    driverPick.disabled = portPick.disabled = on || busy || !drivers.length;
     $("robot-refresh").hidden = on;
     $("robot-auto").checked = memory.auto;
     const connect = $("robot-connect");
@@ -1152,8 +1171,8 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     connect.disabled = switching || sizing || (on ? !!robot?.busy : busy || !drivers.length);
     connect.title = connect.disabled ? locked() || (busy ? "Connecting to the robot…" : "This server has no robot drivers.") : "";
     if (on) {
-      $("robot-driver").replaceChildren(el("option", { text: driverName(connected.driver) }));
-      $("robot-port").replaceChildren(el("option", { text: portName(connected.port) || "–" }));
+      driverPick.set([{ value: "", text: driverName(connected.driver) }]);
+      portPick.set([{ value: "", text: portName(connected.port) || "–" }]);
     }
     const watching = memory.auto && !on;
     $("robot-dialog-status").textContent =
@@ -1216,7 +1235,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     showDialog();
     if (!connected) void watch.look();
   });
-  $("robot-driver").addEventListener("change", () => fillPorts());
+  driverPick.on("change", () => fillPorts());
   $("robot-refresh").addEventListener("click", () => watch.look());
   $("robot-auto").addEventListener("change", (e) => {
     memory.auto = e.target.checked;
@@ -1231,8 +1250,8 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       return;
     }
     if (connecting) return;
-    const driver = $("robot-driver").value;
-    const port = $("robot-port").value || undefined;
+    const driver = driverPick.value;
+    const port = portPick.value || undefined;
     await connectManually(driver, port);
   });
 
@@ -1300,20 +1319,15 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
     if (session !== robot) return false;
     start.hidden = true;
-    const select = $("robot-camera");
-    select.replaceChildren(...feed.cameras.map((c, k) => el("option", { value: c.deviceId, text: c.label || `Camera ${k + 1}` })));
-    select.value = feed.deviceId ?? deviceId ?? "";
-    if (select.selectedIndex < 0) select.selectedIndex = 0;
-    if (!select.options.length) select.add(new Option("Default camera", ""));
-    showChosen(select);
+    const found = feed.cameras.map((c, k) => ({ value: c.deviceId, text: c.label || `Camera ${k + 1}` }));
+    cameras.set(found.length ? found : [{ value: "", text: "Default camera" }], feed.deviceId ?? deviceId ?? "");
     if (note.dataset.source === "camera") say(HINT);
     showDetails();
     return true;
   }
 
-  $("robot-camera").addEventListener("change", async (e) => {
-    const id = e.target.value;
-    showChosen(e.target);
+  cameras.on("change", async () => {
+    const id = cameras.value;
     if (await openCamera(id)) remember(CAMERA_CHOICE, feed.deviceId ?? id);
   });
   $("robot-camera-start").addEventListener("click", () => openCamera());
@@ -1383,11 +1397,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     scanButton.classList.toggle("danger", busy);
     scanButton.disabled = !robot || sizing || switching || openingCamera;
     scanButton.title = busy ? "Stop the robot at once: its motors are switched off" : scanButton.disabled ? reason : "The robot shows the camera the six faces, then solves the cube";
-    $("robot-device").disabled = busy || sizing || switching;
-    $("robot-camera").disabled = !!reason;
+    devices.disabled = busy || sizing || switching;
+    cameras.disabled = !!reason;
     $("robot-camera-start").disabled = openingCamera;
-    // Why a picker does not open is said where the pointer is, and to a screen reader.
-    for (const id of ["robot-device", "robot-camera"]) $(id).title = $(id).disabled ? reason : "";
+    // Why a picker does not open is said where the pointer is.
+    for (const dropdown of [devices, cameras]) dropdown.title = dropdown.disabled ? reason : "";
     showState();
     if (dialog.open) showDialog();
   }
@@ -1549,25 +1563,19 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   // ------------------------------------------------------------ connected
 
-  // The name of what a picker has chosen, whole, under the select itself.
-  function showChosen(select) {
-    $(`${select.id}-name`).textContent = select.selectedOptions[0]?.textContent ?? "";
-  }
-
   // The robot's picker: the robot held, the other ports with what is known of them, and none.
   function showWhere() {
-    const select = $("robot-device");
     const choices = robotChoices({ drivers, ports: [...ports.values()] }, connected, memory.last);
-    select.replaceChildren(
-      ...choices.map((choice) => {
-        const option = new Option(choice.text, choice.path, choice.current, choice.current);
-        option.disabled = !choice.current && (!choice.driver || choice.state === "busy");
-        option.dataset.driver = choice.driver ?? "";
-        return option;
-      }),
-      Object.assign(new Option("None / disconnect", ""), { id: "robot-none" }),
-    );
-    showChosen(select);
+    // A port that is no robot or is in use is listed with why, and cannot be chosen.
+    const options = choices.map((choice) => ({
+      value: `port:${choice.path}`,
+      text: choice.name,
+      note: choice.state,
+      disabled: !choice.current && (!choice.driver || choice.state === "busy"),
+      driver: choice.driver ?? "",
+      port: choice.path,
+    }));
+    devices.set([...options, { value: NONE, text: "None / disconnect", none: true }], options[choices.findIndex((c) => c.current)]?.value ?? NONE);
     showDetails();
   }
 
@@ -1593,6 +1601,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       ...(measures.length ? [] : [el("p", { text: "How the photos were read and the solution was found is listed here after a scan." })]),
       ...(logged ? [el("h3", { text: "Last message" }), el("p", { text: logged })] : []),
     );
+    placeInfo();
   }
 
   // The ports are asked for when the picker is come to (the server is not
@@ -1608,16 +1617,14 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       // The picker keeps what it had; a server that is away says so on its own line.
     }
   }
-  const devices = $("robot-device");
-  devices.addEventListener("focus", refreshDevices);
-  devices.addEventListener("pointerenter", refreshDevices);
-  devices.addEventListener("change", async () => {
+  devices.button.addEventListener("focus", refreshDevices);
+  devices.root.addEventListener("pointerenter", refreshDevices);
+  devices.on("change", async () => {
     if (switching || robot?.busy || sizing) return showWhere();
-    const chosen = devices.selectedOptions[0];
-    const none = chosen?.id === "robot-none";
-    const [driver, port] = [chosen?.dataset.driver, devices.value];
+    const chosen = devices.selected;
+    const none = !!chosen?.none;
+    const [driver, port] = [chosen?.driver, chosen?.port];
     if (!none && (!driver || (port || "") === (connected?.port ?? ""))) return showWhere();
-    showChosen(devices);
     switching = true;
     setButtons();
     try {

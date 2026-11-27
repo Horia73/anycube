@@ -1757,7 +1757,7 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 .robot-row:not(:first-child) {
   margin-top: 4px;
 }
-.robot-row label {
+.robot-label {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--ink-2);
@@ -1797,10 +1797,16 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
     animation: none !important;
   }
 }
-/* A picker: the name chosen, on as many lines as it needs, and the
-   browser's own select over it, unseen, for the mouse and the keyboard. */
-.robot-choice {
+/* A dropdown of the page's own (js/dropdown.js): a button with the name
+   chosen, on as many lines as it needs, and a list as wide as the button
+   that opens under it, or over it where there is no room under. */
+.dropdown {
   position: relative;
+  min-width: 0;
+}
+.dropdown-button {
+  position: relative;
+  width: 100%;
   min-height: 36px;
   display: flex;
   align-items: center;
@@ -1809,14 +1815,19 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   padding: 6px 34px 6px 10px;
   background: var(--bg);
   color: var(--ink);
+  font: inherit;
   font-size: 0.88rem;
   line-height: 1.35;
+  text-align: left;
   overflow-wrap: anywhere;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
-.robot-choice:hover:not(:has(select:disabled)) {
+.dropdown-button:hover:not(:disabled),
+.dropdown.open .dropdown-button {
   border-color: var(--ink-3);
 }
-.robot-choice::after {
+.dropdown-button::after {
   content: "";
   position: absolute;
   right: 14px;
@@ -1826,30 +1837,106 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   border: solid var(--ink-2);
   border-width: 0 1.5px 1.5px 0;
   transform: rotate(45deg);
+  transition: transform 0.12s;
   pointer-events: none;
 }
-.robot-choice select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  font: inherit;
-  cursor: pointer;
+.dropdown.open .dropdown-button::after {
+  top: calc(50% - 2px);
+  transform: rotate(225deg);
 }
-.robot-choice:has(select:focus-visible) {
+.dropdown-button:focus-visible {
   outline: 2px solid var(--b);
   outline-offset: 2px;
 }
-.robot-choice:has(select:disabled) {
+.dropdown-button:disabled {
   color: var(--ink-3);
   background: var(--bg-2);
+  cursor: not-allowed;
 }
-.robot-choice:has(select:disabled)::after {
+.dropdown-button:disabled::after {
   opacity: 0.4;
 }
-.robot-choice select:disabled {
+.dropdown-value {
+  min-width: 0;
+}
+/* The list: fixed in the window (the script says where), so that nothing it is in cuts it. */
+.dropdown-list {
+  position: fixed;
+  z-index: 40;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+.dropdown-list[hidden] {
+  display: none;
+}
+.dropdown-list li {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 34px;
+  padding: 7px 10px 7px 30px;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dropdown-list li.active {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+/* The option chosen has a tick before it. */
+.dropdown-list li[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 11px;
+  top: 12px;
+  width: 9px;
+  height: 5px;
+  border: solid var(--ink);
+  border-width: 0 0 1.75px 1.75px;
+  transform: rotate(-45deg);
+}
+.dropdown-text {
+  flex: 1;
+  min-width: 0;
+}
+/* Why an option is as it is: "busy", "not a robot", "checking". */
+.dropdown-note {
+  flex: none;
+  max-width: 50%;
+  padding: 1px 7px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.dropdown-list li[aria-disabled="true"] {
   cursor: not-allowed;
+}
+.dropdown-list li[aria-disabled="true"] .dropdown-text {
+  color: var(--ink-3);
+}
+@media (pointer: coarse) {
+  .dropdown-list li {
+    min-height: 42px;
+    padding-block: 10px;
+  }
+  .dropdown-list li[aria-selected="true"]::before {
+    top: 16px;
+  }
 }
 /* The "i" beside Camera, and the details it opens over what is under it. */
 .robot-info {
@@ -1875,15 +1962,14 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   border-color: var(--ink);
   color: var(--panel);
 }
-/* It begins right under the "i", so that a mouse gets from one to the other. */
+/* It begins right under the "i", so that a mouse gets from one to the other,
+   as wide as the panel and fixed in the window (the script says where, as it
+   does for a dropdown's list): whatever does not fit in the window scrolls. */
 #robot-details {
-  position: absolute;
-  left: 0;
-  right: 0;
-  margin-top: 24px;
-  z-index: 6;
-  max-height: min(70vh, 460px);
+  position: fixed;
+  z-index: 30;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px 12px 12px;
   border: 1px solid var(--line-2);
   border-radius: 12px;
@@ -1896,14 +1982,6 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 }
 #robot-details[hidden] {
   display: none;
-}
-#robot-details::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: -8px;
-  height: 8px;
 }
 #robot-details h3 {
   margin: 10px 0 3px;
@@ -2027,17 +2105,6 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   font: 600 0.68rem/1.4 var(--mono);
   color: var(--ink-2);
 }
-.robot-fields select {
-  width: 100%;
-  min-height: 32px;
-  padding: 4px 8px;
-  border: 1px solid var(--line-2);
-  border-radius: 9px;
-  background: var(--bg);
-  color: var(--ink);
-  font: inherit;
-  font-size: 0.82rem;
-}
 /* The robot's line, over Scan & solve: whole, on as many lines as it needs. */
 .robot-mode .robot-note:not(:empty) {
   display: block;
@@ -2079,7 +2146,8 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   gap: 10px;
   margin: 16px 0 6px;
 }
-.robot-fields label {
+.robot-fields label,
+.robot-field {
   display: grid;
   gap: 4px;
   font-size: 0.86rem;

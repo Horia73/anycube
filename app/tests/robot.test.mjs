@@ -548,6 +548,17 @@ test("a scan reads its photos as large as the robot's pace allows, and the last 
   const n = 3;
   const { facelets, text } = scrambled(n);
   const pictures = facePictures(n, facelets, 720);
+  // How long reading takes is not this machine's to say here: the run is given
+  // a clock on which reading a face takes exactly what its size costs (72 ms
+  // for the largest, as in the test of ReadPace above) and nothing else any time.
+  const cost = (size) => (72 / readCost(720)) * readCost(size);
+  let clock = 0;
+  let reading = null;
+  const now = () => {
+    // Within a reading the clock is asked before it and after it, and the second answer is later by the cost.
+    if (reading && reading.asked++ === 1) clock += cost(reading.size);
+    return clock;
+  };
   const scan = async (script, pace) => {
     const server = mockServer({ moves: [], ...script });
     let holding = 0;
@@ -557,7 +568,19 @@ test("a scan reads its photos as large as the robot's pace allows, and the last 
       asked.push(size);
       return grab(cameraFrame(pictures["URFDLB".indexOf(face)], turn, 1280), rotate, size);
     };
-    const { robot, heard, over } = follow(server, n, frames, { until: "idle", pace });
+    // A photo is read right after it was grabbed: the size last asked for is the size read.
+    const later = (read) => {
+      const size = asked.at(-1);
+      setTimeout(() => {
+        reading = { size, asked: 0 };
+        try {
+          read();
+        } finally {
+          reading = null;
+        }
+      }, 0);
+    };
+    const { robot, heard, over } = follow(server, n, frames, { until: "idle", pace, now, later });
     await robot.follow();
     await robot.scan();
     await Promise.race([over, new Promise((resolve) => setTimeout(resolve, 20_000))]);
@@ -566,8 +589,8 @@ test("a scan reads its photos as large as the robot's pace allows, and the last 
     assert.equal(scanned.state, text, scanned.note);
     // Each photo was read at the size it was grabbed at, and its time kept.
     assert.deepEqual(scanned.sizes, asked);
-    assert.ok(scanned.read_ms.every((ms) => ms >= 0));
-    t.diagnostic(`sizes ${scanned.sizes.join(" ")}; ms a face ${scanned.read_ms.map(Math.round).join(" ")}; ${scanned.analysis_ms} ms from scan-done to the cube`);
+    assert.deepEqual(scanned.read_ms, asked.map((size) => Math.round(cost(size) * 10) / 10));
+    t.diagnostic(`sizes ${scanned.sizes.join(" ")}; ms a face ${scanned.read_ms.map(Math.round).join(" ")}`);
     return scanned;
   };
   // A robot that says it takes a minute from photo to photo: the first photo
@@ -576,14 +599,16 @@ test("a scan reads its photos as large as the robot's pace allows, and the last 
   assert.deepEqual((await scan({ nextMs: 60_000 }, pace)).sizes, [480, 720, 720, 720, 720, 720]);
   // What was learnt is kept: the next scan is at the largest from its first photo.
   assert.deepEqual((await scan({ nextMs: 60_000 }, pace)).sizes, [720, 720, 720, 720, 720, 720]);
-  // A robot that says it leaves no time at all: the least size, and for the last photo what 25 ms allow.
-  const none = (await scan({ nextMs: 0 }, pace)).sizes;
-  assert.deepEqual(none.slice(0, 5), [240, 240, 240, 240, 240]);
-  assert.ok(none[5] >= 240 && none[5] < 720, `the last photo at ${none[5]}`);
-  // The mock as it is, a robot far quicker than any: no photo larger than the first, the last no larger than 25 ms allow.
-  const hurried = await scan({}, new ReadPace(n));
-  assert.equal(hurried.sizes[0], 480);
-  assert.ok(hurried.sizes[5] <= 480, `the last photo at ${hurried.sizes[5]}`);
+  // A robot that says it leaves no time at all: the least size, and for the
+  // last photo what 25 ms allow (320: at this rate 360 would take 25.5 ms).
+  assert.ok(cost(320) <= 25 && cost(360) > 25);
+  assert.deepEqual((await scan({ nextMs: 0 }, pace)).sizes, [240, 240, 240, 240, 240, 320]);
+  // A robot that says nothing of its time, on a machine of which nothing is
+  // known: the first photo in the middle, the last at what 25 ms allow. (The
+  // photos between go by the time the mock really took from one to the next.)
+  const hurried = (await scan({}, new ReadPace(n))).sizes;
+  assert.equal(hurried[0], 480);
+  assert.equal(hurried[5], 320);
 });
 
 // ---------------------------------------------------------- plug and play

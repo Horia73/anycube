@@ -1450,7 +1450,7 @@ export async function mount(root, options = {}) {
   document.addEventListener("keydown", (e) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     const t = e.target;
-    if (t.isContentEditable || t.closest?.("dialog, textarea, input, select, [role=tab]")) return;
+    if (t.isContentEditable || t.closest?.("dialog, textarea, input, select, [role=tab], [role=combobox], [role=listbox]")) return;
     if (e.key === " " && scanner.running) {
       if (t !== scanner.capture && t.closest?.("button, [role=button]")) return;
       if (!e.repeat) scanner.capture.click();
