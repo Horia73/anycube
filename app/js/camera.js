@@ -23,6 +23,7 @@
 // picture (README, "Not done") would keep the feed and the detector and
 // put a session that follows moves in the place of the six steps.
 
+import { hasNativeCamera, nativeId, nativeInputs, NativeCameraStream } from "./native-camera.js";
 import { cellColour, guess, learn, similarReading } from "./colour.js";
 import { detectCubeSize, findFace, FACE_SCORE } from "./detect.js";
 
@@ -98,8 +99,14 @@ export class CameraFeed {
 
   async refresh() {
     const request = ++this.discovery;
-    const devices = await navigator.mediaDevices?.enumerateDevices?.().catch(() => []);
+    const [devices, phones] = await Promise.all([
+      navigator.mediaDevices?.enumerateDevices?.().catch(() => []),
+      nativeInputs().catch(() => []),
+    ]);
     const inputs = (devices ?? []).filter(d => d.kind === "videoinput");
+    for (const phone of phones) {
+      if (!inputs.some(d => !nativeId(d.deviceId) && d.label === phone.label)) inputs.push(phone);
+    }
     if (request === this.discovery) {
       this.cameras = inputs.filter(d => !deskView(d.label));
       this.onDevices?.(this.cameras);
@@ -109,7 +116,7 @@ export class CameraFeed {
 
   async open(deviceId, { remembered = false } = {}) {
     const media = navigator.mediaDevices;
-    if (!media?.getUserMedia) {
+    if (!media?.getUserMedia && !hasNativeCamera()) {
       const error = new Error("no camera access");
       error.name = window.isSecureContext ? "NotSupportedError" : "InsecureContextError";
       throw error;
@@ -124,7 +131,7 @@ export class CameraFeed {
       const allowed = inputs.filter(d => d.deviceId && !deskView(d.label));
       const saved = deviceId && allowed.find(d => d.deviceId === deviceId && (d.label || !remembered));
       if (saved && !(remembered && native && faceTime(saved.label))) return saved;
-      const phone = allowed.find(d => iphone(d.label));
+      const phone = allowed.find(d => iphone(d.label) || nativeId(d.deviceId));
       if (phone) return phone;
       if (native || inputs.some(d => deskView(d.label))) {
         return allowed.find(d => d.label && !(native && faceTime(d.label)));
@@ -138,10 +145,40 @@ export class CameraFeed {
       } });
       check();
     };
+    const openNative = async id => {
+      const source = new NativeCameraStream(() => {
+        if (this.nativeSource !== source) return;
+        this.close();
+        this.onEnded?.();
+      });
+      this.nativeSource = source;
+      try {
+        const capture = await source.start(id);
+        check();
+        this.stream = capture;
+        this.video.srcObject = capture;
+        this.deviceId = source.deviceId;
+        this.facesUser = false;
+        await this.video.play();
+        check();
+      } catch (error) {
+        source.close();
+        check();
+        this.nativeSource = null;
+        this.stream = null;
+        this.deviceId = undefined;
+        this.video.srcObject = null;
+        if (/permission denied/i.test(error.message)) throw new DOMException(error.message, "NotAllowedError");
+        throw new DOMException(error.message || "Could not start the iPhone camera.", "CameraChoiceError");
+      }
+    };
+    let selected;
     try {
-      let inputs = media.enumerateDevices ? await this.refresh() : [];
+      let inputs = media?.enumerateDevices || hasNativeCamera() ? await this.refresh() : [];
       check();
-      let selected = preferred(inputs);
+      selected = preferred(inputs);
+      if (nativeId(selected?.deviceId) && (!deviceId || remembered || deviceId === selected.deviceId))
+        return openNative(selected.deviceId);
       if (deviceId && !remembered && selected?.deviceId !== deviceId) throw chooseCamera();
       if (!selected && inputs.length && inputs.every(d => deskView(d.label) || (native && faceTime(d.label)))) {
         throw chooseCamera();
@@ -156,6 +193,11 @@ export class CameraFeed {
       const settings = () => track()?.getSettings?.() ?? {};
       selected = preferred(inputs);
       if (deviceId && !remembered && selected?.deviceId !== deviceId) throw chooseCamera();
+      if (nativeId(selected?.deviceId)) {
+        stream.getTracks().forEach(t => t.stop());
+        stream = null;
+        return openNative(selected.deviceId);
+      }
       if (selected?.deviceId && selected.deviceId !== settings().deviceId &&
           selected.deviceId !== initialId) {
         stream.getTracks().forEach(t => t.stop());
@@ -181,6 +223,14 @@ export class CameraFeed {
       check();
     } catch (error) {
       stream?.getTracks().forEach(t => t.stop());
+      check();
+      // Some WKWebViews expose neither the external iPhone nor a usable
+      // track before permission. Let AVFoundation discover it after consent.
+      if (hasNativeCamera() && error.name !== "NotAllowedError" &&
+          ((!selected && (!deviceId || remembered)) || (iphone(selected?.label) &&
+            (!deviceId || remembered || deviceId === selected.deviceId)))) {
+        return openNative();
+      }
       throw error;
     }
   }
@@ -194,6 +244,8 @@ export class CameraFeed {
 
   close() {
     this.generation++;
+    this.nativeSource?.close();
+    this.nativeSource = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.deviceId = undefined;
@@ -275,6 +327,7 @@ export class CameraScanner {
     });
     this.feed.onEnded = () => this.stop();
     navigator.mediaDevices?.addEventListener?.("devicechange", () => this.feed.refresh());
+    globalThis.addEventListener?.("anycube-cameras-changed", () => this.feed.refresh());
     this.grid = el("div", { class: "cam-grid", "aria-hidden": "true" });
     // What is found in the picture is drawn here, over it.
     this.over = el("canvas", { class: "cam-found", "aria-hidden": "true" });

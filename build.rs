@@ -2,6 +2,8 @@ use std::{env, path::PathBuf, process::Command};
 
 fn main() {
     println!("cargo:rerun-if-changed=platform/macos/host.m");
+    println!("cargo:rerun-if-changed=platform/macos/NativeCamera.m");
+    println!("cargo:rerun-if-changed=platform/macos/NativeCamera.h");
     println!("cargo:rerun-if-env-changed=ANYCUBE_MACOS_CC");
     println!("cargo:rerun-if-env-changed=SDKROOT");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("macos")
@@ -19,7 +21,9 @@ fn main() {
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("anycube-host");
     let status = Command::new(env::var_os("ANYCUBE_MACOS_CC").unwrap_or_else(|| "clang".into()))
         .args(["-arch", arch, "-mmacosx-version-min=12.0", "-fobjc-arc", "-Wall", "-Wextra"])
-        .args(["-framework", "Cocoa", "-framework", "WebKit", "platform/macos/host.m", "-o"])
+        .args(["-framework", "Cocoa", "-framework", "WebKit", "-framework", "AVFoundation",
+            "-framework", "CoreMedia", "-framework", "CoreVideo", "-framework", "CoreImage",
+            "-framework", "CoreGraphics", "platform/macos/host.m", "platform/macos/NativeCamera.m", "-o"])
         .arg(output)
         .status()
         .expect("Could not run clang with a macOS SDK");

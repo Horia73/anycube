@@ -24,6 +24,7 @@ pub const ASSETS: &[Asset] = &[
     asset!("favicon.svg", "image/svg+xml"),
     Asset { path: "js/app.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/app.js")) },
     Asset { path: "js/camera.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/camera.js")) },
+    Asset { path: "js/native-camera.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/native-camera.js")) },
     Asset { path: "js/colour.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/colour.js")) },
     Asset { path: "js/cube-model.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/cube-model.js")) },
     Asset { path: "js/cube-view.js", mime: JS, bytes: include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/app/js/cube-view.js")) },

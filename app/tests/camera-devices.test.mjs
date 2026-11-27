@@ -78,3 +78,47 @@ test("ordinary web cameras retain the browser facing-mode default and explicit s
   await feed.open("usb");
   assert.deepEqual(requests, ["environment", "usb"]);
 });
+
+test("closing a pending native start releases its token and rejects a late grant", async t => {
+  const { feed, requests, previews } = setup(t, [mac, desk]);
+  const messages = [];
+  let grant, started;
+  const pending = new Promise(resolve => { started = resolve; });
+  const external = { id: "external-phone", label: phone.label };
+  globalThis.webkit = { messageHandlers: { anycubeCamera: { async postMessage(message) {
+    messages.push(message);
+    if (message.op === "list") return [external];
+    if (message.op === "start") {
+      started();
+      return new Promise(resolve => { grant = () => resolve(external); });
+    }
+    assert.equal(message.op, "stop");
+  } } } };
+  t.after(() => { delete globalThis.webkit; });
+  const open = feed.open("desk", { remembered: true });
+  await pending;
+  feed.close();
+  grant();
+  await assert.rejects(open, { name: "AbortError" });
+  assert.deepEqual(messages.map(m => m.op), ["list", "start", "stop"]);
+  assert.equal(messages[1].id, external.id);
+  assert.equal(messages[1].token, messages[2].token);
+  assert.deepEqual(requests, []);
+  assert.deepEqual(previews, []);
+});
+
+test("denied native permission leaves both camera paths stopped", async t => {
+  const { feed, requests, previews } = setup(t, [mac, desk]);
+  const ops = [];
+  globalThis.webkit = { messageHandlers: { anycubeCamera: { async postMessage({ op }) {
+    ops.push(op);
+    if (op === "list") return [{ id: "external-phone", label: phone.label }];
+    if (op === "start") throw new Error("Camera permission denied");
+  } } } };
+  t.after(() => { delete globalThis.webkit; });
+  await assert.rejects(feed.open(), { name: "NotAllowedError" });
+  assert.deepEqual(ops, ["list", "start", "stop"]);
+  assert.deepEqual(requests, []);
+  assert.deepEqual(previews, []);
+  assert.equal(feed.running, false);
+});

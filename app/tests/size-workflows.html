@@ -69,12 +69,37 @@ try {
   cameras = [];
   navigator.mediaDevices.dispatchEvent(new Event("devicechange"));
   await until(() => $("camera-source").hidden);
+  let nativeSession = null;
+  const native = new URLSearchParams(location.search).has("native");
+  if (native) {
+    cameras = ["FaceTime HD Camera", "Horia’s iPhone Desk View Camera"]
+      .map((label, i) => ({ kind: "videoinput", label, deviceId: String(i) }));
+    window.anycubeNativeMac = true;
+    const phone = { id: "external-phone", label: "Horia’s iPhone Camera" };
+    window.webkit = { messageHandlers: { anycubeCamera: { async postMessage({ op, token, id }) {
+      if (op === "list") return [phone];
+      if (op === "start") {
+        check(id === phone.id && !nativeSession, "unexpected capture start");
+        nativeSession = token;
+        return phone;
+      }
+      check(token === nativeSession, "stale bridge request");
+      if (op === "stop") { nativeSession = null; return true; }
+      check(op === "frame", "unknown bridge request");
+      return source.toDataURL("image/jpeg", 0.94).split(",")[1];
+    } } } };
+    navigator.mediaDevices.getUserMedia = () => { throw Error("unexpected WebKit capture"); };
+    window.dispatchEvent(new Event("anycube-cameras-changed"));
+    await until(() => $("camera-source").options.length === 3);
+    check(!nativeSession, "discovery started capture");
+  }
   for (const n of [3,4,5]) {
     showFace(0);
     $("camera-start").click();
     await until(() => app.scanner.running && app.scanner.capture.disabled);
     showFace(n, SCAN_STEPS[0].face);
     await until(() => app.state.size === n && !app.scanner.capture.disabled);
+    check(app.scanner.video.videoWidth === 480 && app.scanner.video.videoHeight === 240, "full frame dimensions");
     app.scanner.capture.click();
     check(app.scanner.step === 1 && app.state.scan.filter(Boolean).length === n*n, "first face");
     showFace(n === 3 ? 4 : 3);
@@ -85,6 +110,7 @@ try {
       await until(() => app.scanner.found?.cells[0].every((v, i) => Math.abs(v - COLOURS[face][i]) < 12));
       app.scanner.capture.click();
     }
+    check(!nativeSession, "camera not released");
     check(!app.scanner.running && app.state.scan === null, "scan completed");
     check(app.state.painted.get(n).facelets.length === 6*n*n, "completed cube size");
     $("tab-camera").click();
@@ -123,6 +149,7 @@ try {
   mock.unplug();
   await until(() => !$("app").classList.contains("robot-mode"));
   check(app.state.size === 7, "manual size restored on disconnect");
+  check(!nativeSession, "robot camera not released");
   result.textContent = "PASS";
 } catch (error) { result.textContent = error.stack; }
 </script>

@@ -197,7 +197,12 @@ async function readPng(png, rotate, size) {
 
 // The server asks after its settle delay. Wait for the next presented frame
 // so the captured pixels come from the current hold.
-function grabFreshFrame(video, rotate, size, canvas) {
+async function grabFreshFrame(feed, rotate, size, canvas) {
+  if (feed.nativeSource) {
+    const source = await feed.nativeSource.freshFrame();
+    return source ? readPixels(source, source.width, source.height, rotate, size, canvas) : null;
+  }
+  const video = feed.video;
   if (!video.requestVideoFrameCallback) return grabFrame(video, rotate, size, canvas);
   return new Promise((resolve, reject) => {
     const frame = video.requestVideoFrameCallback(() => {
@@ -1129,9 +1134,11 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const choices = found.filter(c => c.deviceId).map((c, k) => ({ value: c.deviceId, text: c.label || `Camera ${k + 1}` }));
     cameras.set([{ value: "", text: "Automatic camera" }, ...choices], feed.deviceId ?? "");
   }
-  navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  const refreshCameras = () => {
     if (connected && !controllerCamera()) void feed.refresh();
-  });
+  };
+  navigator.mediaDevices?.addEventListener?.("devicechange", refreshCameras);
+  globalThis.addEventListener?.("anycube-cameras-changed", refreshCameras);
   let openingCamera = false;
   let previewing = false;
   const scratch = document.createElement("canvas");
@@ -1609,7 +1616,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       previewing = true;
       setButtons();
       try {
-        const frame = await grabFreshFrame(video, 0, 432, scratch);
+        const frame = await grabFreshFrame(feed, 0, 432, scratch);
         if (robot !== session || switching || generation !== feed.generation) return;
         result = frame && detectCubeSize(frame);
       } catch {
@@ -1729,7 +1736,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const mine = (robot = new RobotRun({
       api,
       n: info.size,
-      grab: (rotate, size) => grabFreshFrame(video, rotate, size, scratch),
+      grab: (rotate, size) => grabFreshFrame(feed, rotate, size, scratch),
       hooks,
       pace,
     }));

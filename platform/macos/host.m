@@ -1,12 +1,15 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <AVFoundation/AVFoundation.h>
+#import "NativeCamera.h"
 
-@interface AnycubeHost : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate>
+@interface AnycubeHost : NSObject <NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandlerWithReply>
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSTask *server;
 @property(nonatomic, strong) NSURL *address;
 @property(nonatomic) BOOL stopping;
+@property(nonatomic, strong) NativeCamera *camera;
 @end
 
 @implementation AnycubeHost
@@ -89,6 +92,34 @@ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
     decision(allowed ? WKPermissionDecisionPrompt : WKPermissionDecisionDeny);
 }
 
+- (void)userContentController:(WKUserContentController *)controller didReceiveScriptMessage:(WKScriptMessage *)message
+                 replyHandler:(void (^)(id, NSString *))reply {
+    WKFrameInfo *frame = message.frameInfo;
+    WKSecurityOrigin *origin = frame.securityOrigin;
+    if (self.stopping || controller != self.webView.configuration.userContentController ||
+        message.webView != self.webView || !frame.isMainFrame || ![self allowsURL:frame.request.URL] ||
+        ![self allowsURL:self.webView.URL] || ![self matches:origin.protocol host:origin.host port:origin.port] ||
+        ![message.body isKindOfClass:NSDictionary.class]) {
+        reply(nil, @"Camera bridge unavailable");
+        return;
+    }
+    [self.camera handle:message.body reply:reply];
+}
+
+- (void)cameraDevicesChanged:(NSNotification *)notification {
+    (void)notification;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (!self.stopping && [self allowsURL:self.webView.URL])
+            [self.webView evaluateJavaScript:@"window.dispatchEvent(new Event('anycube-cameras-changed'))" completionHandler:nil];
+    });
+}
+
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
+    (void)webView;
+    (void)navigation;
+    [self.camera reset];
+}
+
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation
       withError:(NSError *)error {
     (void)webView;
@@ -97,6 +128,7 @@ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
 }
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
+    [self.camera reset];
     [webView loadRequest:[NSURLRequest requestWithURL:self.address]];
 }
 
@@ -193,6 +225,11 @@ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
     [config.userContentController addUserScript:[[WKUserScript alloc]
         initWithSource:@"window.anycubeNativeMac = true"
         injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    self.camera = [NativeCamera new];
+    [config.userContentController addScriptMessageHandlerWithReply:self contentWorld:WKContentWorld.pageWorld name:@"anycubeCamera"];
+    for (NSString *name in @[AVCaptureDeviceWasConnectedNotification, AVCaptureDeviceWasDisconnectedNotification])
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(cameraDevicesChanged:) name:name object:nil];
+    config.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeAudio;
     config.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
     self.webView = [[WKWebView alloc] initWithFrame:self.window.contentView.bounds configuration:config];
     self.webView.UIDelegate = self;
@@ -216,6 +253,8 @@ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
 - (void)applicationWillTerminate:(NSNotification *)notification {
     (void)notification;
     self.stopping = YES;
+    [self.camera shutdown];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
     // The parent watcher allows an active update to finish before exiting.
 }
 
