@@ -156,7 +156,7 @@ export function invertHomography(h) {
 // Returns, for every pixel, the pixel that stands for its patch, and for
 // those pixels the patch's size; the patches that could be stickers, with
 // their middles; and the smoothed picture.
-function patches(image, n) {
+function patches(image, n = null) {
   const { width: W, height: H, data } = image;
   const N = W * H;
   // Smoothed over three by three, which takes most of a camera's noise out
@@ -251,8 +251,8 @@ function patches(image, n) {
   // A sticker's patch, from a face a fifth of the picture's shorter side
   // across to one that fills it.
   const shorter = Math.min(W, H);
-  const least = Math.max(12, ((0.15 * shorter) / n - BAND) ** 2);
-  const most = (shorter / n) ** 2;
+  const least = Math.max(12, ((0.15 * shorter) / (n ?? 7) - BAND) ** 2);
+  const most = (shorter / (n ?? 2)) ** 2;
   const slot = new Int32Array(N).fill(-1);
   let count = 0;
   for (let i = 0; i < N; i++) {
@@ -338,26 +338,32 @@ function grow(stickers, a, ux, uy, n) {
   let on = [];
   // Outwards a little at a time: a step measured between two neighbours is
   // not exact enough to be trusted far away.
-  const reaches = n > 3 ? [1, 2, n - 1, n - 1, n - 1] : [1, n - 1, n - 1, n - 1];
-  const half = Math.ceil((n * n) / 2);
+  const reaches = n === null ? [1, 2, 4, 8, 8] : n > 3 ? [1, 2, n - 1, n - 1, n - 1] : [1, n - 1, n - 1, n - 1];
+  const half = n === null ? 3 : Math.ceil((n * n) / 2);
+  const similar = (c) => stickers[c.k].side >= 0.78 * o.side && stickers[c.k].side <= 1.28 * o.side;
   for (let pass = 0; pass < reaches.length; pass++) {
     on = settle(h, stickers, o.side, reaches[pass]);
+    if (n === null) {
+      if (pass >= 2) on = on.filter((c) => c.off <= 0.2 && similar(c));
+      on = connectedToSeed(on);
+    }
     // Three to fit a lattice to at all; and once all of it is in reach, half a face.
-    if (on.length < 3 || (reaches[pass] === n - 1 && on.length < half)) return null;
+    if (on.length < 3 || (n !== null && reaches[pass] === n - 1 && on.length < half)) return null;
     const from = on.map((c) => [c.i, c.j]);
     const to = on.map((c) => [stickers[c.k].x, stickers[c.k].y]);
     const next = model(from, to, pass >= 2, n);
     if (!next) return null;
     h = next;
   }
-  on = settle(h, stickers, o.side, n - 1);
+  on = settle(h, stickers, o.side, reaches[reaches.length - 1]);
+  if (n === null) on = connectedToSeed(on.filter((c) => c.off <= EXACT && similar(c)));
   return on.length >= half ? { h, on } : null;
 }
 
 // The lattice through these stickers. Perspective only once there is
 // enough to hold it down: six stickers, or the four of a 2x2x2's face.
 function model(from, to, projective, n) {
-  const enough = from.length >= 6 || (n === 2 && from.length === 4);
+  const enough = from.length >= 6 || ((n === 2 || n === null) && from.length === 4);
   return (projective && enough && solveHomography(from, to)) || solveAffine(from, to);
 }
 
@@ -439,7 +445,7 @@ function hasStickerCross(light, a, b, required) {
 // only what a face would show counted: stickers right on their places,
 // all of a size, filling most of a step, on steps that are about square.
 // Returns the lattice, the window and its score, or null.
-function rate(fit, w, cut, image, n) {
+function rate(fit, w, cut, image, n, requireBorder = false) {
   const { parent, size, stickers } = cut;
   const { width: W, height: H } = image;
   const { a, b } = w;
@@ -477,9 +483,12 @@ function rate(fit, w, cut, image, n) {
   ].map(([i, j]) => warpPoint(h, i, j));
   const edges = q.map(([x, y], k) => [q[(k + 1) % 4][0] - x, q[(k + 1) % 4][1] - y]);
   const lengths = edges.map(([x, y]) => Math.hypot(x, y));
+  // When inferring the size, leave visible space around the boundary.
+  // A frame cropped exactly on two seams can otherwise look complete.
+  const inset = (requireBorder ? 0.15 : -0.15) * side;
   for (let k = 0; k < 4; k++) {
     const [x, y] = q[k];
-    if (!(x >= -side * 0.15 && y >= -side * 0.15 && x <= W - 1 + side * 0.15 && y <= H - 1 + side * 0.15)) return null;
+    if (!(x >= inset && y >= inset && x <= W - 1 - inset && y <= H - 1 - inset)) return null;
     if (lengths[k] < 0.67 * lengths[(k + 2) % 4] || lengths[k] < 0.6 * lengths[(k + 1) % 4]) return null;
     const next = edges[(k + 1) % 4];
     if (Math.abs(edges[k][0] * next[0] + edges[k][1] * next[1]) > 0.5 * lengths[k] * lengths[(k + 1) % 4]) return null;
@@ -590,6 +599,23 @@ function rate(fit, w, cut, image, n) {
   return { h, a, b, score, mean: off / inside.length };
 }
 
+function neighbours(stickers, s0) {
+  const s = stickers[s0];
+  // A step of the lattice: from this sticker to one of the nearest three of its size.
+  const near = [];
+  for (let s1 = 0; s1 < stickers.length; s1++) {
+    if (s1 === s0) continue;
+    const t = stickers[s1];
+    if (t.side < s.side * 0.75 || t.side > s.side * 1.33) continue;
+    const d = Math.hypot(t.x - s.x, t.y - s.y);
+    const mean = (s.side + t.side) / 2;
+    if (d < mean * 0.9 || d > mean * 2.2) continue;
+    near.push({ s1, d });
+  }
+  near.sort((p, q) => p.d - q.d);
+  return near.slice(0, 3).map(({ s1 }) => stickers[s1]);
+}
+
 // ---------------------------------------------------------------- face
 
 /**
@@ -605,7 +631,7 @@ function rate(fit, w, cut, image, n) {
  *   lattice where a sticker was seen).
  */
 export function findFace(image, n) {
-  const { width: W, height: H, data } = image;
+  const { width: W, height: H } = image;
   if (!W || !H || n < 2) return null;
   const cut = patches(image, n);
   const { stickers } = cut;
@@ -615,20 +641,7 @@ export function findFace(image, n) {
   const tried = new Set();
   search: for (let s0 = 0; s0 < stickers.length; s0++) {
     const s = stickers[s0];
-    // A step of the lattice: from this sticker to one of the nearest three of its size.
-    const near = [];
-    for (let s1 = 0; s1 < stickers.length; s1++) {
-      if (s1 === s0) continue;
-      const t = stickers[s1];
-      if (t.side < s.side * 0.75 || t.side > s.side * 1.33) continue;
-      const d = Math.hypot(t.x - s.x, t.y - s.y);
-      const mean = (s.side + t.side) / 2;
-      if (d < mean * 0.9 || d > mean * 2.2) continue;
-      near.push({ s1, d });
-    }
-    near.sort((p, q) => p.d - q.d);
-    for (const { s1 } of near.slice(0, 3)) {
-      const t = stickers[s1];
+    for (const t of neighbours(stickers, s0)) {
       const fit = grow(stickers, s0, t.x - s.x, t.y - s.y, n);
       if (!fit) continue;
       // The same stickers found again say nothing new.
@@ -651,6 +664,11 @@ export function findFace(image, n) {
     }
   }
   if (!best) return null;
+  return sampleFace(image, n, best);
+}
+
+function sampleFace(image, n, best) {
+  const { width: W, height: H, data } = image;
   const { h, a, b } = best;
 
   // The lattice says nothing of which way is up: rows run down the picture
@@ -700,4 +718,73 @@ export function findFace(image, n) {
     }
   }
   return { corners, cells, score: Math.min(1, best.score) };
+}
+
+// Measure the connected lattice through the seed. Counting its full extent
+// keeps a perfect 3 by 3 window inside a 4 by 4 from voting for size 3.
+function connectedToSeed(on) {
+  const positions = new Map(on.map((c) => [c.i * 64 + c.j, c]));
+  if (!positions.has(0)) return [];
+  const pending = [positions.get(0)];
+  positions.delete(0);
+  for (const { i, j } of pending) {
+    const key = i * 64 + j;
+    for (const step of [-64, 64, -1, 1]) {
+      const next = positions.get(key + step);
+      if (next) {
+        pending.push(next);
+        positions.delete(key + step);
+      }
+    }
+  }
+  return pending;
+}
+
+function gridExtent(on) {
+  if (!on.length) return null;
+  const columns = on.map((c) => c.i);
+  const rows = on.map((c) => c.j);
+  const left = Math.min(...columns);
+  const top = Math.min(...rows);
+  const n = Math.max(...columns) - left + 1;
+  if (n !== Math.max(...rows) - top + 1 || n < 2 || n > 7 || on.length < 0.8 * n * n) return null;
+  return { a: left, b: top, n };
+}
+
+/**
+ * Infer N from one full RGBA frame, preserving its aspect ratio. Returns
+ * { status: "detected", n, confidence, face } where face has the findFace
+ * shape. Confidence measures sticker coverage, not a calibrated probability.
+ * On "ambiguous" (competing sizes) or "not-found", n and face are null.
+ */
+export function detectCubeSize(image) {
+  const unknown = { status: "not-found", n: null, confidence: 0, face: null };
+  if (!image.width || !image.height) return unknown;
+  const cut = patches(image);
+  const best = new Map();
+  for (let index = 0; index < cut.stickers.length; index++) {
+    const seed = cut.stickers[index];
+    for (const other of neighbours(cut.stickers, index)) {
+      const fit = grow(cut.stickers, index, other.x - seed.x, other.y - seed.y, null);
+      if (!fit) continue;
+      const extent = gridExtent(fit.on);
+      if (!extent) continue;
+      const { n, a, b } = extent;
+      const rated = rate(fit, extent, cut, image, n, true);
+      if (!rated || rated.score < 0.85) continue;
+      // Recheck the immediate exterior after refinement, including isolated
+      // stickers that failed to connect during growth.
+      const exterior = settle(rated.h, cut.stickers, seed.side, 9).filter(({ i, j, off }) =>
+        off <= EXACT && i >= a - 1 && i <= a + n && j >= b - 1 && j <= b + n &&
+        (i === a - 1 || i === a + n || j === b - 1 || j === b + n));
+      // A lone aligned background patch is possible in clutter.
+      if (exterior.length >= 2) continue;
+      if (!best.has(n) || rated.score > best.get(n).score) best.set(n, rated);
+    }
+  }
+  if (!best.size) return unknown;
+  if (best.size > 1) return { ...unknown, status: "ambiguous" };
+  const [[n, rated]] = best;
+  const face = sampleFace(image, n, rated);
+  return { status: "detected", n, confidence: face.score, face };
 }
