@@ -87,7 +87,7 @@ fn scan_and_solve_on_the_simulated_robot() {
     assert_eq!(s.list(true)["connected"]["size"], 3);
 
     let mut since = 0;
-    let started = s.scan();
+    let started = s.scan(Some(3));
     assert_eq!(started["ok"], true, "{}", started);
     let run = started["run"].as_str().unwrap().to_string();
     let scan = read_until(&s, &mut since, &["scan-done", "error"], true, Duration::from_secs(60));
@@ -212,7 +212,7 @@ fn rejected_scan_restores_exact_pose_on_firmware_22() {
     let before = pose();
     let timeout = Duration::from_secs(8);
     let mut since = 0;
-    let run = s.scan()["run"].clone();
+    let run = s.scan(Some(3))["run"].clone();
     for index in 0..3 {
         let photo = read_until(&s, &mut since, &["photo"], false, timeout).pop().unwrap();
         assert_eq!(photo["index"], index);
@@ -224,7 +224,7 @@ fn rejected_scan_restores_exact_pose_on_firmware_22() {
     assert_eq!(pose(), before, "failed photo");
     assert_eq!(error["code"], "scan_restored");
 
-    let run = s.scan()["run"].clone();
+    let run = s.scan(Some(3))["run"].clone();
     read_until(&s, &mut since, &["scan-done"], true, timeout);
     assert_ne!(pose(), before);
     assert_eq!(s.reject_scan(&json!({"run": "stale"}))["error"]["code"], "bad_run");
@@ -242,7 +242,7 @@ fn a_stop_ends_the_run_and_switches_the_motors_off() {
     let s = session(0.2, 0);
     assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
     let mut since = 0;
-    let run = s.scan()["run"].as_str().unwrap().to_string();
+    let run = s.scan(Some(3))["run"].as_str().unwrap().to_string();
     // Let it get going, then stop.
     let _ = read_until(&s, &mut since, &["op"], true, Duration::from_secs(10));
     let t = Instant::now();
@@ -254,7 +254,7 @@ fn a_stop_ends_the_run_and_switches_the_motors_off() {
     assert!(s.wait_idle(Duration::from_secs(5)));
     assert_eq!(sim_log(&s).last().unwrap(), "DISABLE");
     // A new scan needs no reconnect: the robot says where it is first.
-    let again = s.scan();
+    let again = s.scan(Some(3));
     assert_eq!(again["ok"], true, "{}", again);
     let done = read_until(&s, &mut since, &["scan-done", "error"], true, Duration::from_secs(60));
     assert_eq!(done.last().unwrap()["type"], "scan-done", "{:?}", done);
@@ -266,7 +266,7 @@ fn a_photo_not_taken_stops_the_scan() {
     let s = session(0.0, 0);
     assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
     let mut since = 0;
-    s.scan();
+    s.scan(Some(3));
     let t = Instant::now();
     let events = read_until(&s, &mut since, &["error"], false, Duration::from_secs(10));
     assert_eq!(events.last().unwrap()["code"], "photo_timeout");
@@ -357,7 +357,7 @@ fn a_robot_pulled_out_while_it_runs_ends_the_run_and_the_connection() {
     assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
     let sim = sim_of(&s);
     let mut since = 0;
-    let run = s.scan()["run"].as_str().unwrap().to_string();
+    let run = s.scan(Some(3))["run"].as_str().unwrap().to_string();
     let _ = read_until(&s, &mut since, &["op"], true, Duration::from_secs(10));
     let t = Instant::now();
     sim.unplug();
@@ -371,7 +371,7 @@ fn a_robot_pulled_out_while_it_runs_ends_the_run_and_the_connection() {
     // By then no robot is connected, and nothing can be started.
     assert_eq!(s.list(false)["connected"], Value::Null);
     assert!(s.wait_idle(Duration::from_secs(5)));
-    assert_eq!(s.scan()["error"]["code"], "not_connected");
+    assert_eq!(s.scan(Some(3))["error"]["code"], "not_connected");
     // Plugged in again (the simulated port is always there): it connects anew.
     assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["ok"], true);
     assert_eq!(s.disconnect()["ok"], true);
@@ -388,7 +388,7 @@ fn a_robot_pulled_out_while_it_rests_is_noticed_too() {
     assert!(t.elapsed() < Duration::from_secs(2), "noticed after {:?}", t.elapsed());
     assert!(of_type(&events, "error").is_empty(), "no run, no error: {:?}", events);
     assert_eq!(s.list(false)["connected"], Value::Null);
-    assert_eq!(s.scan()["error"]["code"], "not_connected");
+    assert_eq!(s.scan(Some(3))["error"]["code"], "not_connected");
 }
 
 /// `GET /api/robots` with boards plugged in: what each port carries, as API.md has it.
@@ -427,4 +427,31 @@ fn the_list_says_what_each_port_carries() {
     let c = s.connect(&json!({"driver": "multicuber"}));
     assert_eq!(c["error"]["code"], "port", "{}", c);
     assert!(c["error"]["message"].as_str().unwrap().contains("/dev/cu.usbmodem1"), "{}", c);
+}
+
+#[test]
+fn each_scan_configures_the_same_22_connection_before_motion() {
+    let s = session(0.0, 0);
+    assert_eq!(s.connect(&json!({"driver": "multicuber", "port": "sim"}))["size"], 3);
+    let mut since = 0;
+    for size in [None, Some(3), Some(4), Some(6), Some(5)] {
+        let before = sim_log(&s).len();
+        assert_eq!(s.scan(size)["ok"], true);
+        let events = read_until(&s, &mut since, &["scan-done", "error"], true, Duration::from_secs(10));
+        assert!(s.wait_idle(Duration::from_secs(1)));
+        let log = sim_log(&s);
+        if size.is_none() || size == Some(6) {
+            assert_eq!(events.last().unwrap()["code"], "bad_size");
+            assert_eq!(log.len(), before);
+            continue;
+        }
+        let size = size.unwrap();
+        assert_eq!(events.last().unwrap()["type"], "scan-done");
+        assert_eq!(log[before..before + 4], [format!("SIZE {size}"), "CAL".into(), "STATE".into(), "ENABLE".into()]);
+        assert_eq!(s.list(false)["connected"]["size"], size);
+        let photos = of_type(&events, "photo");
+        assert_eq!(photos.len(), 6);
+        assert!(photos.iter().all(|photo| photo["sim"].as_str().unwrap().len() == size * size));
+        assert!(sim_facelets(&s).3.is_empty());
+    }
 }

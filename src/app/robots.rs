@@ -5,7 +5,7 @@
 //! GET  /api/robots                          drivers, their sizes and ports, what each port carries, the connected robot
 //! POST /api/robot/connect                   {"driver": "multicuber", "port": "...", "size": 3} (port and size optional)
 //! POST /api/robot/disconnect                {}
-//! POST /api/robot/scan                      {}                                   -> {"ok": true, "run": "..."}
+//! POST /api/robot/scan                      {"size": 3}                                   -> {"ok": true, "run": "..."}
 //! POST /api/robot/photo-taken               {"run": "...", "index": 0..5}
 //! POST /api/robot/reject-scan               {"run": "..."}                         return a rejected host-planned scan
 //! POST /api/robot/solve                     {"run": "...", "size": 3, "facelets": "...", "analysis_ms": 412}
@@ -49,7 +49,11 @@ pub fn route(session: &Session, method: &str, path: &str, url: &str, body: &str,
             let answer = match p {
                 "/api/robot/connect" => session.connect(&body),
                 "/api/robot/disconnect" => session.disconnect(),
-                "/api/robot/scan" => session.scan(),
+                "/api/robot/scan" => match body["size"].as_u64().and_then(|n| usize::try_from(n).ok()) {
+                    Some(n) if n >= 2 => session.scan(Some(n)),
+                    None if body.is_object() && body.get("size").is_none() => session.scan(None),
+                    _ => return err(400, "bad_size", "send the size established before the scan"),
+                },
                 "/api/robot/photo-taken" => session.photo_taken(&body),
                 "/api/robot/reject-scan" => session.reject_scan(&body),
                 "/api/robot/solve" => session.solve(&body),

@@ -143,7 +143,15 @@ switches the connecting by itself off; a robot the server already holds
 is taken up in any case (the page was reloaded).
 
 The size picker belongs to the manual editors. Connecting a robot keeps
-the current editor size. Starting a robot scan uses the robot's size.
+the current editor size and disconnecting restores that selection. The
+standalone camera detects the size from a complete face and keeps it
+through capture. Stop and restart to scan another cube.
+
+With an app camera, Scan & solve reads a fresh preview before requesting
+motion. MultiCuber 2.2 confirms the detected size (3, 4 or 5) and its
+calibration before planning the scan. A fixed-size Solution Link controller
+must advertise the detected size. Controllers supplying PNGs or cube state
+use their handshake size without opening an app camera.
 
 While a robot is connected, the scramble, paint and camera give way to
 the robot's panel, and Solve to Scan & solve (Stop while the robot moves).

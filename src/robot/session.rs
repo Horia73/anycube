@@ -513,7 +513,7 @@ impl Session {
         self.emit_locked(&mut s, kind, Some(run), fields);
     }
 
-    pub fn scan(&self) -> Value {
+    pub fn scan(&self, size: Option<usize>) -> Value {
         let (id, turn) = match self.begin(None, false) {
             Ok(begun) => begun,
             Err(e) => return e,
@@ -521,17 +521,17 @@ impl Session {
         let me = self.clone();
         let run = id.clone();
         std::thread::spawn(move || {
-            me.scan_run(&run, turn);
+            me.scan_run(&run, turn, size);
             me.end(turn);
         });
         json!({"ok": true, "run": id})
     }
 
-    fn scan_run(&self, run: &str, turn: u64) {
+    fn scan_run(&self, run: &str, turn: u64, size: Option<usize>) {
         let mut guard = self.inner.robot.lock().unwrap();
         let result = match guard.as_mut() {
             None => Err(RobotError::new("not_connected", "no robot is connected")),
-            Some(robot) => self.scan_on(run, turn, robot.as_mut()),
+            Some(robot) => self.scan_on(run, turn, size, robot.as_mut()),
         };
         let note = guard.as_mut().and_then(|r| r.after_run_note());
         if let Err(e) = result {
@@ -543,9 +543,20 @@ impl Session {
         }
     }
 
-    fn scan_on(&self, run: &str, turn: u64, robot: &mut dyn Robot) -> Result<(), RobotError> {
+    fn scan_on(&self, run: &str, turn: u64, size: Option<usize>, robot: &mut dyn Robot) -> Result<(), RobotError> {
         let t0 = Instant::now();
+        let size = match size {
+            Some(n) => n,
+            None if matches!(robot.info()["camera"].as_str(), Some("state" | "robot")) => robot.size(),
+            None => return Err(RobotError::new("bad_size", "an app-camera scan requires a detected size")),
+        };
+        if size > self.inner.config.max_size { return Err(RobotError::new("bad_size", "size exceeds solver limit")); }
+        robot.prepare_size(size)?;
         robot.sync()?;
+        if let Some(c) = self.inner.state.lock().unwrap().connected.as_mut() {
+            c["size"] = json!(size);
+            c["info"] = robot.info();
+        }
         let plan = robot.plan_scan();
         let return_plan = robot.scan_return_plan(&plan);
         let eta = (robot.driver_id() != solution_link::ID).then_some(plan.eta_ms);
@@ -753,6 +764,9 @@ impl Session {
         let stopped = || RobotError::new("stopped", "stopped");
         if self.inner.stop.is_set() {
             return Err(stopped());
+        }
+        if robot.size() != cube.size {
+            return Err(RobotError::new("bad_size", "robot size changed before solving"));
         }
         robot.sync()?;
         let logical = robot.controller_planned();

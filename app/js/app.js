@@ -26,7 +26,7 @@ import { ViewCube } from "./view-cube.js";
 // Cubes larger than this are entered as scrambles: nobody paints, or shows
 // a camera, 384 stickers and more.
 const PAINT_MAX = 7;
-const CAMERA_MAX = 7;
+
 const TOP_COLOUR = "anycube.top-colour";
 const SCAN_ORIENTATION = "anycube.scan-orientation";
 // Turning the cube 180° with the front held fixed exchanges both pairs.
@@ -374,8 +374,8 @@ export async function mount(root, options = {}) {
   // The cube as entered: what to send to a solver and what to show, or what is wrong with it.
   function entered() {
     const { model, size } = state;
-    if (state.scan) {
-      return { problem: "Capture all six faces first", start: new Uint8Array(model.count).fill(BLANK), palette: defaultPalette };
+    if (state.scan || scanner.running) {
+      return { problem: state.scan ? "Capture all six faces first" : "Show one complete face to detect the cube size", start: new Uint8Array(model.count).fill(BLANK), palette: defaultPalette };
     }
     if (state.input === "scramble") {
       if (state.scramble.problem) return { problem: state.scramble.problem, start: model.solved(), palette: defaultPalette };
@@ -944,8 +944,13 @@ export async function mount(root, options = {}) {
   let guiding = 0;
   let finishedScan = null;
   const scanner = new CameraScanner($("camera-frame"), $("camera-side"), {
-    // The user sees the captured side come round to their left as the
-    // next face turns towards the camera. Show both moves when needed.
+    onsize(n) {
+      state.scan = null;
+      if (state.size !== n) setSize(n, { keepCamera: true });
+      state.scan = new Array(6 * n * n).fill(null);
+      show();
+    },
+    // Show both moves when the next face takes two turns to reach the camera.
     onstep: (face, via) => {
       clearTimeout(guiding);
       view.setFrame(face);
@@ -990,17 +995,15 @@ export async function mount(root, options = {}) {
   });
 
   $("camera-start").addEventListener("click", async () => {
-    const n = state.size <= CAMERA_MAX ? state.size : 3;
+    ++scrambling;
     try {
-      await scanner.start(n);
+      await scanner.start();
     } catch (error) {
+      if (error.name === "AbortError") return;
       state.detail = CAMERA_PROBLEMS[error.name] ?? "The camera could not be started. Paint the cube instead.";
       restStatus();
       return;
     }
-    if (n !== state.size) setSize(n, { keepCamera: true });
-    // An empty cube that fills in as faces are captured; the painted cube is left alone until all six are.
-    state.scan = new Array(6 * n * n).fill(null);
     placeCube();
     setTouch();
     show();
@@ -1533,6 +1536,7 @@ export async function mount(root, options = {}) {
   // is connected the scramble, paint and camera give way to its Scan button;
   // the cube, its playback and the solution stay as they are.
   function robotHost() {
+    let editorSize = null;
     return {
       root,
       $,
@@ -1546,10 +1550,13 @@ export async function mount(root, options = {}) {
       setMode(on) {
         root.classList.toggle("robot-mode", on);
         if (on) {
+          editorSize ??= state.size;
           scanner.stop();
           setHelp(false);
           if (state.tab === "moves" && !narrow.matches) setTab(state.input);
         } else {
+          if (editorSize !== null && editorSize !== state.size) setSize(editorSize);
+          editorSize = null;
           state.result = null;
           show();
         }
@@ -1559,6 +1566,8 @@ export async function mount(root, options = {}) {
       },
       // A scan begins: the cube on screen empties and fills in as faces are read.
       scanStart() {
+        ++checking;
+        ++scrambling;
         state.solution = null;
         state.result = null;
         state.detail = null;

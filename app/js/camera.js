@@ -24,7 +24,7 @@
 // put a session that follows moves in the place of the six steps.
 
 import { cellColour, guess, learn, similarReading } from "./colour.js";
-import { findFace, FACE_SCORE } from "./detect.js";
+import { detectCubeSize, findFace, FACE_SCORE } from "./detect.js";
 
 // Names from the user's starting position. In facelet order the front is
 // the first face the camera sees, on the far side of the cube for the user.
@@ -175,8 +175,8 @@ function inQuad(corners, u, v) {
   return [(a * u + b * v + c) / w, (d * u + e * v + f) / w];
 }
 
-// The picture is looked at this small to find the face: enough for stickers, quick on a phone.
-const LOOK = 288; // and half as much again for the 6x6x6 and 7x7x7, whose stickers are small
+// Equivalent square pixels for a full-frame size search.
+const LOOK = 432;
 
 /** The six faces, one after another. */
 export class CameraScanner {
@@ -191,7 +191,7 @@ export class CameraScanner {
    */
   constructor(frame, side, hooks) {
     this.hooks = hooks;
-    this.n = 3;
+    this.n = null;
     this.step = 0;
     this.faces = new Array(6).fill(null);
     this.sources = new Array(6).fill(null);
@@ -206,7 +206,7 @@ export class CameraScanner {
     // What is found in the picture is drawn here, over it.
     this.over = el("canvas", { class: "cam-found", "aria-hidden": "true" });
     this.small = document.createElement("canvas");
-    this.found = null; // { corners, cells, at }: the face as last found, corners as shares of the picture shown
+    this.found = null; // { corners, cells }: the face as last found, corners as shares of the picture shown
     this.frame = frame;
     // Whether the cube is found, said on the picture.
     this.note = el("p", { class: "cam-note", role: "status" });
@@ -233,8 +233,8 @@ export class CameraScanner {
       try {
         await this.feed.next();
         this.#opened();
-      } catch {
-        this.stop();
+      } catch (error) {
+        if (error.name !== "AbortError") this.stop();
       }
     });
     this.off.addEventListener("click", () => this.stop());
@@ -245,8 +245,10 @@ export class CameraScanner {
   }
 
   /** Asks for the camera and begins with the first face. Throws what getUserMedia throws. */
-  async start(n) {
-    this.n = n;
+  async start() {
+    clearInterval(this.timer);
+    this.n = null;
+    this.found = this.live = null;
     this.step = 0;
     this.faces.fill(null);
     this.sources.fill(null);
@@ -254,6 +256,7 @@ export class CameraScanner {
     this.jumped = false;
     await this.feed.open();
     this.#opened();
+    this.note.textContent = "Show one complete face to detect the cube size.";
     this.#layout();
     this.#show();
     this.timer = setInterval(() => this.#sample(), 120);
@@ -267,8 +270,9 @@ export class CameraScanner {
 
   /** Switches the camera off. */
   stop() {
+    const was = this.running || !!this.timer;
     clearInterval(this.timer);
-    const was = this.running;
+    this.timer = 0;
     this.feed.close();
     if (was) this.hooks.onstop?.();
   }
@@ -311,7 +315,7 @@ export class CameraScanner {
     this.text.classList.remove("warn");
     this.sign.innerHTML = (again ? ["hold"] : signs).map((name) => `<svg viewBox="0 0 40 38">${SIGNS[name]}</svg>`).join("<i>then</i>");
     this.again = -1;
-    this.capture.disabled = done;
+    this.capture.disabled = done || !this.n;
     this.back.disabled = !this.faces.some(Boolean);
     [...this.shots.children].forEach((li, k) => {
       const colours = this.faces[SCAN_STEPS[k].face];
@@ -326,27 +330,37 @@ export class CameraScanner {
     if (!done) this.hooks.onstep?.(face, again ? undefined : via);
   }
 
-  // Looks for the face in the picture of the moment: the middle square of
-  // the frame (what the page shows), made small.
   #find() {
-    const video = this.video;
-    const [w, h] = [video.videoWidth, video.videoHeight];
-    if (!w || !h || video.readyState < 2) return null;
-    const side = Math.min(w, h);
-    const look = this.n >= 6 ? LOOK * 1.5 : LOOK;
-    this.small.width = this.small.height = look;
+    const { videoWidth: w, videoHeight: h, readyState } = this.video;
+    if (!w || !h || readyState < 2) return null;
+    const scale = Math.min(1, LOOK / Math.sqrt(w * h));
+    const width = this.small.width = Math.round(w * scale);
+    const height = this.small.height = Math.round(h * scale);
     const ctx = this.small.getContext("2d", { willReadFrequently: true });
-    ctx.drawImage(video, (w - side) / 2, (h - side) / 2, side, side, 0, 0, look, look);
-    const began = performance.now();
-    let face = null;
-    try {
-      face = findFace(ctx.getImageData(0, 0, look, look), this.n);
-    } catch {
-      face = null;
+    ctx.drawImage(this.video, 0, 0, width, height);
+    const image = ctx.getImageData(0, 0, width, height);
+    const result = detectCubeSize(image);
+    const locked = this.faces.some(Boolean);
+    if (result.status === "ambiguous" || (locked && result.n && result.n !== this.n)) {
+      this.note.textContent = "Show one face of the same cube, or stop and start a new scan.";
+      return null;
     }
-    this.cost = performance.now() - began;
-    if (!face || face.score < FACE_SCORE) return null;
-    return { corners: face.corners.map(([x, y]) => [x / look, y / look]), cells: face.cells, at: performance.now() };
+    if (result.n && result.n !== this.n) {
+      this.n = result.n;
+      this.hooks.onsize(this.n);
+      this.#layout();
+      this.#show();
+    }
+    // Once a face has been taken, its size also guides harder subsequent reads.
+    const face = result.face ?? (locked ? findFace(image, this.n) : null);
+    if (!face || face.score < FACE_SCORE) {
+      this.note.textContent = locked ? "Hold a face inside the grid." : "Show one complete face to detect the cube size.";
+      if (locked) this.live = sampleGrid(this.video, this.n, this.scratch);
+      return null;
+    }
+    const side = Math.max(width, height);
+    this.note.textContent = `Found ${this.n} × ${this.n}`;
+    return { corners: face.corners.map(([x, y]) => [(x + (side - width) / 2) / side, (y + (side - height) / 2) / side]), cells: face.cells };
   }
 
   // Draw the detected face and the camera's reading over each sticker.
@@ -398,21 +412,22 @@ export class CameraScanner {
   }
 
   #sample() {
-    // The face wherever it is, if it can be found; a little steadier than frame by frame.
-    const face = this.#find();
-    if (face && this.found) {
-      face.corners = face.corners.map(([x, y], k) => [(x + this.found.corners[k][0]) / 2, (y + this.found.corners[k][1]) / 2]);
+    this.live = null;
+    try {
+      this.found = this.#find();
+    } catch {
+      this.found = null;
+      this.note.textContent = "Could not read this frame. Hold the cube steady and try again.";
     }
-    // A face lost for a moment (a blur, a hand in the way) is kept for that moment.
-    this.found = face ?? (this.found && performance.now() - this.found.at < 350 ? this.found : null);
     this.#mark();
+    this.grid.hidden = !!this.found || !this.live;
+    this.capture.disabled = this.step >= 6 || !(this.found || this.live);
     this.frame.classList.toggle("found", !!this.found);
-    const say = this.found ? "Cube found" : "Looking for the cube. Or hold a face inside the grid.";
-    if (this.note.textContent !== say) this.note.textContent = say;
-    const colours = sampleGrid(this.video, this.n, this.scratch);
-    if (!colours) return;
-    this.live = colours;
-    [...this.grid.children].forEach((cell, i) => (cell.style.color = css(colours[i])));
+    if (this.live) {
+      const { videoWidth: w, videoHeight: h } = this.video;
+      this.grid.style.inset = `${50 * (1 - GRID_SHARE * Math.min(w, h) / Math.max(w, h))}%`;
+      [...this.grid.children].forEach((cell, i) => (cell.style.color = css(this.live[i])));
+    }
   }
 
   // What `guess` is to go by: the stickers captured so far and those in the picture now.
@@ -429,7 +444,7 @@ export class CameraScanner {
 
   /** Takes a face as read: n*n colours, row by row. What Capture does with the picture of the moment. */
   take(colours, source = "provided") {
-    if (this.step >= SCAN_STEPS.length) return;
+    if (!this.n || colours.length !== this.n * this.n || this.step >= SCAN_STEPS.length) return;
     this.live = colours;
     // A face that looks like one already shown is said so at once; a second
     // press takes it all the same (two faces of a cube nearly solved can be alike).

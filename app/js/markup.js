@@ -142,7 +142,7 @@ export const APP_HTML = `
 
       <div role="tabpanel" id="panel-camera" aria-labelledby="tab-camera" class="tabpanel" hidden>
         <div id="camera-intro">
-          <p class="note">Show the six faces to the camera, one by one, inside a grid; then correct any colour that came out wrong.</p>
+          <p class="note">Show one complete face so the camera can detect the cube size. Capture all six faces, then check the colours.</p>
           <p class="private"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V5z"/></svg><span>Camera images stay in your browser.<span id="camera-diagnostics" hidden> Completed scans send sticker colours and cube states to help diagnose scan errors.</span></span></p>
           <button type="button" class="button primary" id="camera-start">Start the camera</button>
         </div>

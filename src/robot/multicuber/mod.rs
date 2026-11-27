@@ -2,8 +2,8 @@
 //! line protocol at 115200 baud): the driver.
 //!
 //! Connecting opens the port (which restarts the Mega), waits for its
-//! banner and says HELLO (protocol 1). The cube size is the firmware's,
-//! unless the caller names one (then `SIZE n`). The speed preset is set to
+//! banner and says HELLO (protocol 1). HELLO reports the current configuration.
+//! Each scan confirms its requested size with SIZE, CAL and STATE. The speed preset is set to
 //! MEDIUM, the one the time model was measured with, and the calibration
 //! table (`CAL`) is read for the lift heights the times depend on.
 //!
@@ -208,7 +208,7 @@ impl MultiCuber {
             link.wait_banner(boot_wait);
         }
         let hello = link.handshake(5, PROTOCOL)?;
-        let fw_size: usize = hello.get("size").and_then(|s| s.parse().ok()).unwrap_or(3);
+        let fw_size: usize = hello.get("size").and_then(|s| s.parse().ok()).ok_or_else(|| RobotError::new("protocol", "missing firmware size"))?;
         let n = size.unwrap_or(fw_size);
         if !SIZES.contains(&n) {
             return Err(RobotError::new("bad_size", format!("the firmware is set for a {0}x{0}x{0}, which MultiCuber does not take", n)));
@@ -218,9 +218,9 @@ impl MultiCuber {
             link.command(&format!("SIZE {}", n), t)?;
         }
         link.command("SPEED MEDIUM", t)?;
-        let before = link.info.len();
+        link.info.clear();
         let cal = match link.command("CAL", t) {
-            Ok(_) => link.info[before..].iter().find_map(|l| Cal::parse(l)).filter(|c| c.n == n).unwrap_or_else(|| Cal::default_for(n)),
+            Ok(_) => link.info.iter().find_map(|l| Cal::parse(l)).filter(|c| c.n == n).unwrap_or_else(|| Cal::default_for(n)),
             Err(_) => Cal::default_for(n),
         };
         let mut timing = TimeModel::new(cal.clone());
@@ -378,6 +378,35 @@ impl Robot for MultiCuber {
         self.n
     }
 
+    fn prepare_size(&mut self, n: usize) -> Result<(), RobotError> {
+        if !SIZES.contains(&n) {
+            return Err(RobotError::new("bad_size", "MultiCuber requires size 3, 4 or 5"));
+        }
+        let timeout = Duration::from_secs(2);
+        let cmd = format!("SIZE {n}");
+        if self.link.command(&cmd, timeout)? != cmd {
+            return Err(RobotError::new("protocol", "firmware did not confirm the requested size"));
+        }
+        self.link.info.clear();
+        let reply = self.link.command("CAL", timeout)?;
+        if reply.split_whitespace().take(2).collect::<Vec<_>>() != ["CAL", &n.to_string()] {
+            return Err(RobotError::new("protocol", "firmware did not confirm the calibration size"));
+        }
+        let cal = self.link.info.iter().find_map(|line| Cal::parse(line)).filter(|cal| cal.n == n)
+            .ok_or_else(|| RobotError::new("protocol", "missing calibration for requested size"))?;
+        if cal == self.cal { return Ok(()); }
+        let mut timing = TimeModel::new(cal.clone());
+        if let Some(path) = &self.timing_path {
+            timing.absorb(&timing::load_saved(path)["sizes"][n.to_string()]);
+        }
+        self.n = n;
+        self.hello.insert("size".into(), n.to_string());
+        self.cal = cal;
+        self.timing = timing;
+        self.space_stale = true;
+        Ok(())
+    }
+
     fn info(&self) -> Value {
         let mut info = json!(self.hello);
         info["restore"] = json!(true);
@@ -388,6 +417,9 @@ impl Robot for MultiCuber {
     fn sync(&mut self) -> Result<(), RobotError> {
         let reply = self.link.command("STATE", Duration::from_secs(3))?;
         let f = link::fields(&reply);
+        if f.get("size").and_then(|v| v.parse().ok()) != Some(self.n) {
+            return Err(RobotError::new("bad_size", "firmware state reports a different size"));
+        }
         let height: i32 = f.get("lift").and_then(|v| v.parse().ok()).unwrap_or(-1);
         let lift = self.cal.level_at(height).ok_or_else(|| {
             RobotError::new(

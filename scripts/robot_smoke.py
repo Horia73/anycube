@@ -58,7 +58,7 @@ for k in range(RUNS):
     if k:
         req("/api/robot/disconnect", {})
         connect()
-    started = req("/api/robot/scan", {})
+    started = req("/api/robot/scan", {"size": SIZE})
     if not started.get("ok"):
         print(f"run {k + 1}: scan refused {started}")
         continue

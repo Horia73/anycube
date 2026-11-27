@@ -1,0 +1,118 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Camera and robot size workflows</title>
+<link rel="stylesheet" href="../app.css">
+<div class="app" id="app"></div>
+<pre id="result">Running…</pre>
+<script type="module">
+import { mount } from "../js/app.js";
+import { SCAN_STEPS } from "../js/camera.js";
+import { COLOURS, picture, quad } from "./pictures.mjs";
+import { mockServer, json, PHOTOS } from "./robot-mock.mjs";
+
+const result = document.querySelector("#result");
+const $ = id => document.getElementById(id);
+const check = (value, message) => { if (!value) throw Error(message); };
+async function until(predicate) {
+  const end = performance.now() + 12000;
+  while (!predicate()) {
+    if (performance.now() > end) throw Error("Timed out: " + predicate + "\n" + document.body.innerText.slice(-1500));
+    await new Promise(resolve => setTimeout(resolve, 40));
+  }
+}
+
+try {
+  const mock = mockServer({ identify: true, ports: [], size: 3, settleMs: 80 });
+  const source = document.createElement("canvas");
+  source.width = 480;
+  source.height = 240;
+  const ctx = source.getContext("2d");
+  let pixels;
+  function showFace(n, colour = 1) {
+    const image = picture({ W: 480, H: 240, n, corners: n ? quad(88, 120, 132) : null, stickers: Array(n*n).fill(colour) });
+    pixels = new ImageData(image.data, 480, 240);
+    ctx.putImageData(pixels, 0, 0);
+  }
+  showFace(0);
+  let lastHold = -1;
+  let cube;
+  setInterval(() => {
+    if (mock.holding >= 0 && mock.holding !== lastHold) {
+      showFace(cube, "URFDLB".indexOf(PHOTOS[mock.holding][0]));
+    }
+    lastHold = mock.holding;
+    ctx.putImageData(pixels, 0, 0);
+  }, 20);
+  navigator.mediaDevices.getUserMedia = async () => source.captureStream(30);
+  navigator.mediaDevices.enumerateDevices = async () => [];
+  const network = window.fetch;
+  const requests = [];
+  window.fetch = async (url, init) => {
+    if (url === "/api/config") return json(200, { local:true, robots:true, max_size:7, browser_sizes:[], modes:["normal"], max_scramble_moves:5000 });
+    if (url === "/api/check") return json(200, { ok:true });
+    if (url.startsWith("/api/robot")) {
+      if (url === "/api/robot/scan") requests.push(JSON.parse(init.body).size);
+      return mock.fetch(url, init);
+    }
+    return network(url, init);
+  };
+  const app = await mount($("app"));
+  $("sizes").children[5].click();
+  $("tab-camera").click();
+  for (const n of [3,4,5]) {
+    showFace(0);
+    $("camera-start").click();
+    await until(() => app.scanner.running && app.scanner.capture.disabled);
+    showFace(n, SCAN_STEPS[0].face);
+    await until(() => app.state.size === n && !app.scanner.capture.disabled);
+    app.scanner.capture.click();
+    check(app.scanner.step === 1 && app.state.scan.filter(Boolean).length === n*n, "first face");
+    showFace(n === 3 ? 4 : 3);
+    await until(() => app.scanner.capture.disabled);
+    check(app.state.size === n && app.scanner.step === 1, "mixed sizes");
+    for (const { face } of SCAN_STEPS.slice(1)) {
+      showFace(n, face);
+      await until(() => app.scanner.found?.cells[0].every((v, i) => Math.abs(v - COLOURS[face][i]) < 12));
+      app.scanner.capture.click();
+    }
+    check(!app.scanner.running && app.state.scan === null, "scan completed");
+    check(app.state.painted.get(n).facelets.length === 6*n*n, "completed cube size");
+    $("tab-camera").click();
+  }
+  $("tab-paint").click();
+  $("sizes").children[5].click();
+  mock.plug();
+  await until(() => $("app").classList.contains("robot-mode"));
+  check(app.state.size === 7, "connection changed editor");
+  for (const n of [0, "ambiguous", 6, 3, 4, 5]) {
+    cube = n;
+    if (n === "ambiguous") {
+      showFace(3);
+      const other = picture({ W: 480, H: 240, n: 4, corners: quad(360, 120, 132), stickers: Array(16).fill(1) });
+      for (let y = 0; y < 240; y++) {
+        const offset = (480*y + 240)*4;
+        pixels.data.set(other.data.subarray(offset, offset + 240*4), offset);
+      }
+      ctx.putImageData(pixels, 0, 0);
+    } else showFace(n);
+    const before = requests.length;
+    await until(() => !$("robot-scan").disabled);
+    $("robot-scan").click();
+    if (!n || n === "ambiguous" || n === 6) {
+      await until(() => document.body.innerText.includes(n === 6 ? "cannot scan" : "Show one complete"));
+      await until(() => !$("robot-scan").disabled);
+      check(requests.length === before && app.state.size === 7, "uncertain or unsupported scan");
+    } else {
+      await until(() => requests.length > before);
+      check(requests.at(-1) === n && app.state.size === n, "wrong scan size");
+      await until(() => $("robot-scan").textContent === "Scan & solve");
+      check(mock.calls.some(c => c.path === "/api/robot/solve" && c.body.size === n && c.body.facelets.length === 6*n*n), `solve from captured ${n} faces: ${document.body.innerText.slice(-1500)}`);
+      check(mock.calls.filter(c => c.path === "/api/robot/photo-taken").length === 6*(n-2), "missing photos");
+    }
+  }
+  mock.unplug();
+  await until(() => !$("app").classList.contains("robot-mode"));
+  check(app.state.size === 7, "manual size restored on disconnect");
+  result.textContent = "PASS";
+} catch (error) { result.textContent = error.stack; }
+</script>

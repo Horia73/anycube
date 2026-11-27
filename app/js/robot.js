@@ -18,7 +18,7 @@
 import { CameraFeed } from "./camera.js";
 import { named, oppositeCentres, STICKERS } from "./colour.js";
 import { CubeModel, FACE_LETTERS } from "./cube-model.js";
-import { FACE_SCORE, findFace } from "./detect.js";
+import { detectCubeSize, FACE_SCORE, findFace } from "./detect.js";
 import { Dropdown, place } from "./dropdown.js";
 import { arrange, assembleScan, reviewStickers } from "./scan-fit.js";
 
@@ -218,8 +218,13 @@ function grabFreshFrame(video, rotate, size, canvas) {
 // ------------------------------------------------------------ the faces
 
 /** Read the stickers from the face lattice fitted to this photo. */
-export function readFace(image, n) {
+export function readFace(image, n, checkSize = false) {
   try {
+    if (checkSize) {
+      const detected = detectCubeSize(image);
+      if (detected.n === n) return { cells: detected.face.cells, source: { found: true, score: detected.face.score } };
+      if (detected.status !== "not-found") return { cells: null, source: { found: false } };
+    }
     const found = findFace(image, n);
     if (found && found.score >= FACE_SCORE) {
       return { cells: found.cells, source: { found: true, score: found.score } };
@@ -330,7 +335,7 @@ export class RobotApi {
     return this.#request("POST", "/api/robot/connect", { driver, ...(port ? { port } : {}), ...(Number.isInteger(size) ? { size } : {}) });
   }
   disconnect() { return this.#request("POST", "/api/robot/disconnect", {}); }
-  scan() { return this.#request("POST", "/api/robot/scan", {}); }
+  scan(size) { return this.#request("POST", "/api/robot/scan", { size }); }
   photoTaken(run, index, failed = false) { return this.#request("POST", "/api/robot/photo-taken", failed ? { run, index, failed } : { run, index }); }
   rejectScan(run) { return this.#request("POST", "/api/robot/reject-scan", { run }); }
   solve(run, size, facelets, analysisMs) {
@@ -651,6 +656,7 @@ export class RobotRun {
   /** Stops following (on disconnect). */
   unfollow() {
     this.polling = false;
+    this.phase = "idle";
     this.run = null;
     this.abort?.abort();
   }
@@ -705,10 +711,11 @@ export class RobotRun {
     this.run = null;
     this.#setPhase("starting");
     try {
-      const { run } = await this.api.scan();
+      const { run } = await this.api.scan(this.n);
+      if (this.phase !== "starting") return;
       this.run = run;
     } catch (error) {
-      this.#fail(error);
+      if (this.phase === "starting") this.#fail(error);
       return;
     }
     this.#setPhase("scanning");
@@ -819,7 +826,7 @@ export class RobotRun {
     this.later(() => {
       if (this.run !== run || this.phase !== "scanning") return;
       const began = this.now();
-      const { cells, source } = readFace(image, this.n);
+      const { cells, source } = readFace(image, this.n, typeof event.png === "string");
       const took = this.now() - began;
       this.work += took;
       const readSize = Math.round(Math.sqrt(image.width * image.height));
@@ -1112,6 +1119,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   video.muted = true;
   const feed = new CameraFeed(video);
   let openingCamera = false;
+  let previewing = false;
   const scratch = document.createElement("canvas");
   // The details open right under the "i", as wide as the panel, and stay in
   // the window: what does not fit there scrolls.
@@ -1423,13 +1431,13 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     scanButton.textContent = busy ? "Stop" : SCAN;
     scanButton.classList.toggle("primary", !busy);
     scanButton.classList.toggle("danger", busy);
-    scanButton.disabled = !robot || switching || openingCamera;
+    scanButton.disabled = !robot || switching || openingCamera || previewing;
     scanButton.title = busy ? "Stop the robot at once: its motors are switched off" : scanButton.disabled ? reason : "The robot shows the camera the six faces, then solves the cube";
-    devices.disabled = busy || switching;
+    devices.disabled = busy || switching || previewing;
     $("robot-camera-label").textContent = connected?.info?.camera === "state" ? "Controller state" : controllerCamera() ? "Controller camera" : "Camera";
     $("robot-camera-box").hidden = controllerCamera();
     $("robot-cam").hidden = controllerCamera();
-    cameras.disabled = !!reason || controllerCamera();
+    cameras.disabled = !!reason || previewing || controllerCamera();
     $("robot-camera-start").disabled = openingCamera;
     // Why a picker does not open is said where the pointer is.
     for (const dropdown of [devices, cameras]) dropdown.title = dropdown.disabled ? reason : "";
@@ -1449,6 +1457,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       if (phase === "starting") host.say("busy", "Starting the scan…");
     },
     onscanstart(event) {
+      connected.size = robot.n;
       // The scan's time left: the plan's, counted down, and at the last photo what the robot says is left of it.
       scanEnd = Number.isFinite(event.eta_ms) ? performance.now() + event.eta_ms : null;
       host.wait("Scanning", event.eta_ms ? `About ${duration(event.eta_ms)} for the six photos.` : "");
@@ -1586,7 +1595,32 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     if (!controllerCamera() && !feed.running && !(await openCamera())) return;
     if (robot !== session) return;
     closeInfo();
-    const n = connected.size;
+    let n = connected.size;
+    if (!controllerCamera()) {
+      const generation = feed.generation;
+      let result;
+      previewing = true;
+      setButtons();
+      try {
+        const frame = await grabFreshFrame(video, 0, 432, scratch);
+        if (robot !== session || switching || generation !== feed.generation) return;
+        result = frame && detectCubeSize(frame);
+      } catch {
+        if (robot !== session) return;
+      } finally {
+        if (robot === session) {
+          previewing = false;
+          setButtons();
+        }
+      }
+      if (!result?.n) return say("Show one complete cube face and try Scan & solve again.", true);
+      n = result.n;
+      const supported = drivers.find(d => d.id === connected.driver)?.sizes;
+      if (connected.driver === "multicuber" ? !supported?.includes(n) : n !== connected.size) {
+        return say(`This robot cannot scan the detected ${host.name(n)} cube in its current configuration.`, true);
+      }
+    }
+    if (!Number.isInteger(n) || n < 2) return say("The controller did not report a cube size.", true);
     host.setSize(n);
     robot.n = n;
     raw = host.scanStart();
@@ -1687,7 +1721,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     clearShots();
     const mine = (robot = new RobotRun({
       api,
-      n: info.size ?? 3,
+      n: info.size,
       grab: (rotate, size) => grabFreshFrame(video, rotate, size, scratch),
       hooks,
       pace,
@@ -1729,6 +1763,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     connected = null;
     feed.close();
     openingCamera = false;
+    previewing = false;
     listed = "";
     measures = [];
     planned = [];

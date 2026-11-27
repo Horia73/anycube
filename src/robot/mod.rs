@@ -238,6 +238,10 @@ pub trait Robot: Send {
     fn driver_id(&self) -> &'static str;
     fn port(&self) -> String;
     fn size(&self) -> usize;
+    /// Apply the size established before scanning. Fixed-size controllers advertise it at handshake.
+    fn prepare_size(&mut self, n: usize) -> Result<(), RobotError> {
+        if self.size() == n { Ok(()) } else { Err(RobotError::new("bad_size", "cube differs from controller size")) }
+    }
     /// What the robot said about itself at the handshake.
     fn info(&self) -> serde_json::Value;
     /// Asks the robot where it is, before planning.

@@ -70,7 +70,7 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
         line.trim().to_string()
     };
 
-    let scan = post(&session, "scan", json!({}));
+    let scan = post(&session, "scan", if mode == "app" { json!({"size": 3}) } else { json!({}) });
     assert_eq!(scan["ok"], true, "{scan}");
     let run = &scan["run"];
     let mut since = 0;
@@ -144,7 +144,7 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
     if matches!(mode, "reject" | "stop") {
         event_until(&session, &mut since, |event| event["type"] == "disconnected");
         assert_eq!(post(&session, "solve", request.clone())["error"]["code"], "not_connected");
-        assert_eq!(post(&session, "scan", json!({}))["error"]["code"], "not_connected");
+        assert_eq!(post(&session, "scan", json!({"size": 3}))["error"]["code"], "not_connected");
     }
     assert_eq!(post(&session, "disconnect", json!({}))["ok"], true);
     let expected_moves = match mode {

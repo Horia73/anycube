@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { detectCubeSize } from "../js/detect.js";
 import { CameraFeed } from "../js/camera.js";
 import { STICKERS } from "../js/colour.js";
 import { CubeModel } from "../js/cube-model.js";
@@ -126,6 +127,11 @@ function cubeScanFaces() {
 
 test("the robot's own pictures of a 4x4x4: read in a few tens of ms", { skip: !haveCubeScan && "MultiCuber/CubeScan not found" }, (t) => {
   const faces = cubeScanFaces();
+  for (const face of faces) {
+    const frame = grab(face, 0, 432);
+    assert.equal(detectCubeSize(frame).n, 4);
+    assert.equal(readFace(frame, 3, true).cells, null, "controller size conflicts with PNG");
+  }
   let best = Infinity;
   let result;
   let split;
