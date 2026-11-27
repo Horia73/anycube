@@ -1150,7 +1150,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   let logged = ""; // the last thing the server or the robot had to say
   let linked = true; // the server's events are reaching the page
   let switching = false;
-  let sizing = false; // the robot is being set to another size of cube
   let gone = false; // the cube's line says the robot is no longer connected
   // What reading costs on this machine, kept from one robot and scan to the next.
   const pace = new ReadPace(3);
@@ -1158,8 +1157,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   // ------------------------------------------------------------ dialog
 
   const driverName = (id) => drivers.find((d) => d.id === id)?.name ?? id;
-  // The cube on the page is the cube the robot is connected for, if it takes that size.
-  const sizeFor = (id) => (drivers.find((d) => d.id === id)?.sizes?.includes(host.state.size) ? host.state.size : undefined);
   const portsOf = (id) => (drivers.find((d) => d.id === id)?.ports ?? []).filter((p) => typeof p === "string");
 
   // The ports of the robot chosen and those the server knows to be it, each with what is known of it.
@@ -1209,7 +1206,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const connect = $("robot-connect");
     connect.textContent = on ? "Disconnect" : busy ? "Connecting…" : "Connect";
     connect.classList.toggle("primary", !on);
-    connect.disabled = switching || sizing || (on ? !!robot?.busy : busy || !drivers.length);
+    connect.disabled = switching || (on ? !!robot?.busy : busy || !drivers.length);
     connect.title = connect.disabled ? locked() || (busy ? "Connecting to the robot…" : "This server has no robot drivers.") : "";
     if (on) {
       driverPick.set([{ value: "", text: driverName(connected.driver) }]);
@@ -1239,7 +1236,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   const watch = new RobotWatch({
     api,
     memory,
-    size: sizeFor,
     hooks: {
       onlist(answer, error) {
         if (answer) showList(answer);
@@ -1305,7 +1301,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     trouble = "";
     showDialog();
     try {
-      const answer = await api.connect(driver, port, sizeFor(driver));
+      const answer = await api.connect(driver, port);
       connecting = null;
       memory.last = { driver, port: answer.port ?? port };
       watch.release(driver, answer.port ?? port);
@@ -1399,7 +1395,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   // Why the robot's choices cannot be changed just now ("" when they can).
   const locked = () =>
-    robot?.busy ? "Not while the robot is moving: stop it first." : sizing ? "The robot is being set to the cube's size…" : switching ? "Changing robots…" : openingCamera ? "The camera is being started…" : "";
+    robot?.busy ? "Not while the robot is moving: stop it first." : switching ? "Changing robots…" : openingCamera ? "The camera is being started…" : "";
 
   // The word beside "Robot": how the robot chosen stands, at a glance.
   function showState() {
@@ -1408,17 +1404,15 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       ? ["No connection", "warn"]
       : switching
         ? ["Connecting…", "busy"]
-        : sizing
-          ? ["Setting size…", "busy"]
-          : phase === "starting" || phase === "scanning"
-            ? ["Scanning", "busy"]
-            : phase === "solving"
-              ? ["Solving", "busy"]
-              : openingCamera
-                ? ["Starting camera…", "busy"]
-                : !feed.running && !controllerCamera()
-                  ? ["No camera", "warn"]
-                  : ["Ready", "ok"];
+        : phase === "starting" || phase === "scanning"
+          ? ["Scanning", "busy"]
+          : phase === "solving"
+            ? ["Solving", "busy"]
+            : openingCamera
+              ? ["Starting camera…", "busy"]
+              : !feed.running && !controllerCamera()
+                ? ["No camera", "warn"]
+                : ["Ready", "ok"];
     $("robot-state").textContent = word;
     $("robot-state").dataset.kind = kind;
   }
@@ -1429,9 +1423,9 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     scanButton.textContent = busy ? "Stop" : SCAN;
     scanButton.classList.toggle("primary", !busy);
     scanButton.classList.toggle("danger", busy);
-    scanButton.disabled = !robot || sizing || switching || openingCamera;
+    scanButton.disabled = !robot || switching || openingCamera;
     scanButton.title = busy ? "Stop the robot at once: its motors are switched off" : scanButton.disabled ? reason : "The robot shows the camera the six faces, then solves the cube";
-    devices.disabled = busy || sizing || switching;
+    devices.disabled = busy || switching;
     $("robot-camera-label").textContent = connected?.info?.camera === "state" ? "Controller state" : controllerCamera() ? "Controller camera" : "Camera";
     $("robot-camera-box").hidden = controllerCamera();
     $("robot-cam").hidden = controllerCamera();
@@ -1649,12 +1643,14 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   // The ports are asked for when the picker is come to (the server is not
   // asked by itself while a robot is connected). With the watching switched
   // off the server only says what it knows, and wakes no board.
+  let refreshRequest = 0;
   async function refreshDevices() {
     const was = connected;
     if (!was || switching || robot?.busy) return;
+    const request = ++refreshRequest;
     try {
       const answer = await api.robots(memory.auto);
-      if (connected === was && !switching && !robot?.busy) showList(answer);
+      if (request === refreshRequest && connected === was && !switching && !robot?.busy) showList(answer);
     } catch {
       // The picker keeps what it had; a server that is away says so on its own line.
     }
@@ -1662,7 +1658,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   devices.button.addEventListener("focus", refreshDevices);
   devices.root.addEventListener("pointerenter", refreshDevices);
   devices.on("change", async () => {
-    if (switching || robot?.busy || sizing) return showWhere();
+    if (switching || robot?.busy) return showWhere();
     const chosen = devices.selected;
     const none = !!chosen?.none;
     const [driver, port] = [chosen?.driver, chosen?.port];
@@ -1679,45 +1675,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     }
   });
 
-  // Another size chosen on the page while the robot is at rest: the robot is
-  // connected anew for that cube (its firmware starts as a 3x3x3 and is told).
-  async function resize(n) {
-    const was = connected;
-    const sizes = drivers.find((d) => d.id === was.driver)?.sizes;
-    if (was.driver === "solution-link") {
-      host.setSize(was.size);
-      say(`The controller is set for ${host.name(was.size)}. Change the size on the controller and reconnect.`, true);
-      return;
-    }
-    if (sizes?.length && !sizes.includes(n)) {
-      say(`${driverName(was.driver)} does not take a ${host.name(n)}: it stays at ${host.name(was.size)}.`, true);
-      return;
-    }
-    sizing = true;
-    setButtons();
-    say(`Setting the robot to ${host.name(n)}…`);
-    try {
-      const answer = await api.connect(was.driver, was.port || undefined, n);
-      if (connected !== was) return;
-      connected = { ...was, size: answer.size, info: answer.info ?? was.info };
-      robot.n = answer.size;
-      showWhere();
-      clearShots();
-      if (answer.size !== host.state.size) host.setSize(answer.size);
-      say(HINT);
-    } catch (error) {
-      say(`The robot could not be set to ${host.name(n)}: ${error.message}`, true);
-      // The server let go of the robot to connect it anew: it may be gone.
-      void checkStill(error.message);
-    } finally {
-      sizing = false;
-      setButtons();
-    }
-  }
-  host.onsize((n) => {
-    if (connected && robot && !robot.busy && !switching && !sizing && Number.isInteger(connected.size) && n !== connected.size) void resize(n);
-  });
-
   async function enter(info) {
     watch.stop();
     connected = info;
@@ -1726,7 +1683,6 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     gone = false;
     showDialog();
     showWhere();
-    if (Number.isInteger(info.size)) host.setSize(info.size);
     host.setMode(true);
     clearShots();
     const mine = (robot = new RobotRun({

@@ -289,7 +289,7 @@ export async function mount(root, options = {}) {
     $("panel-lower").classList.toggle("scanning", scanning);
     $("camera-frame").hidden = !scanning;
     $("camera-scan").hidden = !scanning;
-    $("camera-intro").hidden = scanning || state.size > CAMERA_MAX;
+    $("camera-intro").hidden = scanning;
   }
 
   // -------------------------------------------- the line over the cube
@@ -550,9 +550,8 @@ export async function mount(root, options = {}) {
     });
   }
 
-  function setSize(n) {
-    setTimeout(() => robotSized?.(n), 0);
-    scanner.stop();
+  function setSize(n, { keepCamera = false } = {}) {
+    if (!keepCamera) scanner.stop();
     if (state.tab === "moves") setTab(state.input);
     state.size = n;
     state.model = new CubeModel(n);
@@ -589,8 +588,6 @@ export async function mount(root, options = {}) {
     $("paint").hidden = $("paint-note").hidden = $("paint-buttons").hidden = !paintable;
     $("paint-large").hidden = paintable;
     $("paint-large").textContent = `Painting is offered up to ${name(PAINT_MAX)}: a ${name(n)} has ${6 * n * n} stickers. Enter it as a scramble, or turn it by hand.`;
-    $("camera-large").hidden = n <= CAMERA_MAX;
-    $("camera-large").textContent = `The camera reads cubes up to ${name(CAMERA_MAX)}. Enter a ${name(n)} as a scramble.`;
     placeCube();
     if (paintable) {
       const p = painted();
@@ -611,6 +608,7 @@ export async function mount(root, options = {}) {
   // Which tab is in view, and nothing else.
   function showTab(tab) {
     state.tab = tab;
+    root.classList.toggle("camera-mode", tab === "camera");
     for (const t of TABS) {
       const on = t === tab;
       $(`tab-${t}`).setAttribute("aria-selected", String(on));
@@ -992,7 +990,7 @@ export async function mount(root, options = {}) {
   });
 
   $("camera-start").addEventListener("click", async () => {
-    const n = state.size;
+    const n = state.size <= CAMERA_MAX ? state.size : 3;
     try {
       await scanner.start(n);
     } catch (error) {
@@ -1000,6 +998,7 @@ export async function mount(root, options = {}) {
       restStatus();
       return;
     }
+    if (n !== state.size) setSize(n, { keepCamera: true });
     // An empty cube that fills in as faces are captured; the painted cube is left alone until all six are.
     state.scan = new Array(6 * n * n).fill(null);
     placeCube();
@@ -1533,7 +1532,6 @@ export async function mount(root, options = {}) {
   // What the robot extension (robot.js) may do with the page. While a robot
   // is connected the scramble, paint and camera give way to its Scan button;
   // the cube, its playback and the solution stay as they are.
-  let robotSized = null;
   function robotHost() {
     return {
       root,
@@ -1558,10 +1556,6 @@ export async function mount(root, options = {}) {
       },
       setSize(n) {
         if (state.size !== n) setSize(n);
-      },
-      // Told whenever the cube on the page becomes another size.
-      onsize(told) {
-        robotSized = told;
       },
       // A scan begins: the cube on screen empties and fills in as faces are read.
       scanStart() {
