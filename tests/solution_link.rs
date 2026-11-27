@@ -57,7 +57,7 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
     assert_eq!(connect(4)["error"]["code"], "bad_size");
     let connected = connect(3);
     assert_eq!(connected["ok"], true, "{connected}");
-    assert_eq!(connected["info"]["camera"], if mode == "app" { "app" } else { "robot" });
+    assert_eq!(connected["info"]["camera"], if matches!(mode, "app" | "state") { mode } else { "robot" });
 
     let mut vision = Command::new("node").arg("app/tests/solution-link-vision.mjs").arg(root)
         .stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
@@ -75,8 +75,10 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
     let run = &scan["run"];
     let mut since = 0;
     let mut photos = 0;
+    let mut state = None;
     event_until(&session, &mut since, |event| {
         assert_ne!(event["type"], "error", "{event}");
+        if event["type"] == "state" { state = event["facelets"].as_str().map(String::from); }
         if event["type"] == "photo" {
             assert_eq!(event["index"], photos);
             assert_eq!(event["png"].is_string(), mode != "app");
@@ -91,8 +93,8 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
         }
         event["type"] == "scan-done"
     });
-    assert_eq!(photos, 6);
-    let facelets = analyse(&json!({"type": "assemble"}));
+    assert_eq!(photos, if mode == "state" { 0 } else { 6 });
+    let facelets = state.unwrap_or_else(|| analyse(&json!({"type": "assemble"})));
     assert_eq!(facelets.len(), 54);
     drop(input);
     assert!(vision.wait().unwrap().success());
@@ -129,7 +131,7 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
     });
     assert_eq!(plan, mode != "half");
     match mode {
-        "png" | "app" => {
+        "png" | "app" | "state" => {
             assert_eq!(terminal["type"], "done", "{terminal}");
             assert_eq!(completed, 3);
             assert_eq!(post(&session, "solve", request.clone())["error"]["code"], "bad_run");
@@ -146,7 +148,7 @@ fn fixture(root: &Path, mode: &str, flags: &str) {
     }
     assert_eq!(post(&session, "disconnect", json!({}))["ok"], true);
     let expected_moves = match mode {
-        "png" | "app" => 3,
+        "png" | "app" | "state" => 3,
         "stop" => 1,
         _ => 0,
     };
@@ -178,6 +180,7 @@ fn controller_photos_app_camera_and_motion_failures() {
     for (mode, flags) in [
         ("png", "--delay 0"),
         ("app", "--camera app --delay 0"),
+        ("state", "--camera state --delay 0"),
         ("half", "--no-half"),
         ("reject", "--reject"),
         ("stop", "--delay 0.5"),

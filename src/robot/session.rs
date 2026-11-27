@@ -87,6 +87,7 @@ struct State {
     turn: u64,
     acks: HashSet<(String, usize)>,
     pending_frame: Option<usize>,
+    capture_failed: bool,
     count: u64,
     /// Counts the connections: a watcher of an earlier one stops.
     generation: u64,
@@ -195,7 +196,7 @@ impl Session {
     /// background (each once: opening a port restarts an Arduino).
     pub fn list(&self, probe: bool) -> Value {
         let sim = self.inner.config.sim_scale.is_some();
-        let views = self.inner.detector.ports(probe);
+        let views = self.inner.detector.ports(probe && solution_link::serial_endpoint().is_none());
         let solution_port = solution_link::endpoint();
         let drivers: Vec<Value> = drivers()
             .iter()
@@ -289,7 +290,8 @@ impl Session {
             return err("bad_size", "controller cube size exceeds this app’s solver limit");
         }
         detector.identified(&port, driver.id(), info.clone());
-        let connected = json!({"driver": driver.id(), "port": port, "size": size, "info": info});
+        let active_driver = robot.driver_id();
+        let connected = json!({"driver": active_driver, "port": port, "size": size, "info": info});
         let present = robot.presence();
         let camera = robot.camera();
         *self.inner.robot.lock().unwrap() = Some(robot);
@@ -319,7 +321,7 @@ impl Session {
         // The solver's tables for this size (the 3x3x3's were made ready when the program
         // started; a larger cube's are gigabytes and are loaded when its size is chosen, here).
         self.preload(size);
-        json!({"ok": true, "size": size, "info": info, "port": port})
+        json!({"ok": true, "driver": active_driver, "size": size, "info": info, "port": port})
     }
 
     pub fn disconnect(&self) -> Value {
@@ -333,11 +335,7 @@ impl Session {
         }
         let robot = self.inner.robot.lock().unwrap().take();
         if let Some(mut r) = robot {
-            if !self.inner.stop.is_set() {
-                if let Err(e) = r.park() {
-                    self.log(None, format!("could not park the robot: {}", e.message));
-                }
-            }
+            if !r.controller_planned() { r.emergency_stop(); }
             r.close();
             self.log(None, "disconnected");
         }
@@ -554,6 +552,10 @@ impl Session {
     /// What `execute` reports, as events; pictures wait for the page's ack.
     fn progress(&self, run: &str, ops: &[super::PlannedOp], p: Progress) -> Result<(), RobotError> {
         match p {
+            Progress::State(facelets) => {
+                self.emit("state", Some(run), json!({"facelets": facelets}));
+                Ok(())
+            }
             Progress::Started { i } => {
                 if let Some(m) = ops[i].mv {
                     self.emit("move", Some(run), json!({"move": m, "est_ms": ops[i].est_ms}));
@@ -599,6 +601,7 @@ impl Session {
         let mut s = self.inner.state.lock().unwrap();
         if controller {
             s.pending_frame = Some(photo.index);
+            s.capture_failed = false;
         }
         self.emit_locked(&mut s, "photo", Some(run), body);
         let seq = s.seq;
@@ -606,6 +609,7 @@ impl Session {
             if self.inner.stop.is_set() {
                 break Err(RobotError::new("stopped", "stopped"));
             }
+            if controller && s.capture_failed { break Err(RobotError::new("no_frame", "capture failed")); }
             if s.acks.contains(&(run.to_string(), photo.index)) {
                 break Ok(());
             }
@@ -639,7 +643,7 @@ impl Session {
         {
             return err("bad_photo", "no matching controller frame is waiting for ACK");
         }
-        s.acks.insert((run.to_string(), index as usize));
+        if body["failed"] == true { s.capture_failed = true; } else { s.acks.insert((run.to_string(), index as usize)); }
         self.inner.changed.notify_all();
         json!({"ok": true})
     }

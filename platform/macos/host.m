@@ -213,7 +213,7 @@ initiatedByFrame:(WKFrameInfo *)frame type:(WKMediaCaptureType)type
 - (void)applicationWillTerminate:(NSNotification *)notification {
     (void)notification;
     self.stopping = YES;
-    if (self.server.running) [self.server terminate];
+    // The parent watcher allows an active update to finish before exiting.
 }
 
 @end

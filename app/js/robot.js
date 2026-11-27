@@ -332,7 +332,7 @@ export class RobotApi {
   }
   disconnect() { return this.#request("POST", "/api/robot/disconnect", {}); }
   scan() { return this.#request("POST", "/api/robot/scan", {}); }
-  photoTaken(run, index) { return this.#request("POST", "/api/robot/photo-taken", { run, index }); }
+  photoTaken(run, index, failed = false) { return this.#request("POST", "/api/robot/photo-taken", failed ? { run, index, failed } : { run, index }); }
   solve(run, size, facelets, analysisMs) {
     return this.#request("POST", "/api/robot/solve", { run, size, facelets, analysis_ms: analysisMs });
   }
@@ -517,7 +517,7 @@ export class RobotWatch {
       this.memory.last = { driver: robot.driver, port: robot.port };
       // Stopped meanwhile or not, the server holds the robot now: the page is told.
       this.stop();
-      this.#hook("onconnected", { driver: robot.driver, port: got.port ?? robot.port, size: got.size, info: got.info ?? {} }, "plugged");
+      this.#hook("onconnected", { driver: got.driver ?? robot.driver, port: got.port ?? robot.port, size: got.size, info: got.info ?? {} }, "plugged");
       return "connected";
     } catch (error) {
       this.#hook("onfailed", robot, Object.assign(error, { final: this.missed(robot.driver, robot.port) }));
@@ -738,6 +738,9 @@ export class RobotRun {
     switch (event.type) {
       case "scan-start": return this.#hook("onscanstart", event);
       case "photo": return this.#photo(event);
+      case "state":
+        if (this.phase === "scanning") this.result = { kind: "state", ok: true, state: event.facelets, readyAt: this.now() };
+        return;
       case "scan-done":
         this.scanDoneAt = this.now();
         this.scanMs = event.scan_ms;
@@ -795,7 +798,8 @@ export class RobotRun {
     if (!image) {
       // No picture is no photo: the robot is stopped rather than left to wait.
       this.#fail({ code: "no_frame", message: typeof event.png === "string" ? "The controller PNG could not be decoded." : "The camera gave no picture. Check that it is on and pointing at the cube." });
-      void this.stop();
+      if (this.restoreCapture) await this.api.photoTaken(run, index, true).catch(() => this.stop());
+      else void this.stop();
       return;
     }
     // Acknowledge the captured pixels before the detector can occupy the main thread.
@@ -1120,7 +1124,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
   let listed = ""; // the robots and ports the dialog shows
   let asked = false; // the server has answered about its robots
   let connected = null; // {driver, port, size, info}
-  const controllerCamera = () => connected?.info?.camera === "robot";
+  const controllerCamera = () => ["robot", "state"].includes(connected?.info?.camera);
   let connecting = null; // {driver, port} while it is being connected
   let trouble = ""; // why the robot found did not connect
   let robot = null;
@@ -1295,7 +1299,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       memory.last = { driver, port: answer.port ?? port };
       watch.release(driver, answer.port ?? port);
       if (dialog.open) dialog.close();
-      await enter({ driver, port: answer.port ?? port ?? "", size: answer.size, info: answer.info ?? {} });
+      await enter({ driver: answer.driver ?? driver, port: answer.port ?? port ?? "", size: answer.size, info: answer.info ?? {} });
     } catch (error) {
       connecting = null;
       trouble = `${driverName(driver)}${port ? ` on ${portName(port)}` : ""} did not connect: ${error.message}`;
@@ -1418,7 +1422,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     scanButton.disabled = !robot || sizing || switching || openingCamera;
     scanButton.title = busy ? "Stop the robot at once: its motors are switched off" : scanButton.disabled ? reason : "The robot shows the camera the six faces, then solves the cube";
     devices.disabled = busy || sizing || switching;
-    $("robot-camera-label").textContent = controllerCamera() ? "Controller camera" : "Camera";
+    $("robot-camera-label").textContent = connected?.info?.camera === "state" ? "Controller state" : controllerCamera() ? "Controller camera" : "Camera";
     $("robot-camera-box").hidden = controllerCamera();
     $("robot-cam").hidden = controllerCamera();
     cameras.disabled = !!reason || controllerCamera();
@@ -1436,6 +1440,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
 
   const hooks = {
     onphase(phase) {
+      if (["solving", "failed", "idle", "done"].includes(phase) && feed.running) feed.close();
       setButtons();
       if (phase === "starting") host.say("busy", "Starting the scan…");
     },
@@ -1469,7 +1474,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       host.wait(null);
       const { ok, note: said } = host.scanned(result, result.sources, lastFace);
       // How the photos were read is for whoever asks: behind the "i".
-      measures = [...scanMeasures(result), ["Cube", result.ok ? "read whole" : "not made"]];
+      measures = result.kind === "state" ? [["Cube", "Controller state"]] : [...scanMeasures(result), ["Cube", result.ok ? "read whole" : "not made"]];
       showDetails();
       if (ok && result.ok) {
         host.say("busy", "Finding the robot's fastest solution…");
@@ -1721,9 +1726,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       hooks,
       pace,
     }));
+    mine.restoreCapture = info.info?.restore === true;
     linked = true;
     setButtons();
-    say(controllerCamera() ? "Scan the cube using photos from the controller." : HINT);
+    say(info.info?.camera === "state" ? "Read the cube state from the controller." : controllerCamera() ? "Scan the cube using photos from the controller." : HINT);
     void robot.follow();
     $("robot-camera-start").hidden = controllerCamera();
     setTimeout(() => robot === mine && warmUp(mine), 300);

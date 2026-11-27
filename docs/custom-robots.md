@@ -86,3 +86,24 @@ AnyCube waits up to 3 seconds for immediate replies and for the browser's pixel 
 ## Run the integration regression
 
 On Linux with Python 3, Node.js 22+, Rust, and AnyCube's 3×3×3 tables, run `cargo test --test solution_link -- --ignored`. It uses the normal robot session, the app's face detector and colour assembly, and the independent controller process. It exercises PNGs and app-camera acknowledgements with synthetic pixels, size and notation rejection, controller rejection, and stopping mid-run.
+
+### Direct USB
+
+Set `ANYCUBE_SOLUTION_LINK_SERIAL` to the selected serial device and select
+its Solution Link entry. This takes precedence over the subprocess adapter.
+With this setting discovery does not probe devices. The port opens at 115200
+8N1. MultiCuber identification uses the legacy HELLO first. Version 2.2
+uses the legacy driver. Version 2.3 receives HELLO 1 and independent KEEP
+records every 200 ms. During a face hold, a failed or timed-out capture
+requests RESTORE and waits for OK and DONE. Stop and active disconnect send
+STOP. Idle disconnect ends the lease with BYE. A physically unplugged Mega
+can only detect host loss when its firmware lease expires.
+
+For a serial controller implementing Solution Link directly, also set
+`ANYCUBE_SOLUTION_LINK_PROTOCOL=native`. Its first command is HELLO 1.
+Alongside app and png, a controller may advertise state as its source.
+Answer SCAN with OK, one or more `STATE <facelets>` records in URFDLB
+order, then DONE. The concatenated state must contain exactly 6×N×N
+stickers and passes through the solver's state validation before RUN.
+The app requests its camera only when starting a camera scan or when the
+user explicitly starts the camera.

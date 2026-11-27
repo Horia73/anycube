@@ -2,12 +2,13 @@
 
 use super::{ConnectOptions, Driver, PhotoSpec, Plan, PlannedOp, PortId, Probe, Progress, Robot, RobotError, StopFlag, Turn, FACES};
 use serde_json::{json, Value};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use super::multicuber::{self, link::{Link, SerialTransport}};
 use std::time::{Duration, Instant};
 
 pub const ID: &str = "solution-link";
@@ -18,7 +19,12 @@ const IO_TICK: Duration = Duration::from_millis(25);
 const REPLY_TIMEOUT: Duration = Duration::from_secs(3);
 const MOTION_TIMEOUT: Duration = Duration::from_secs(60);
 
+pub fn serial_endpoint() -> Option<String> {
+    std::env::var("ANYCUBE_SOLUTION_LINK_SERIAL").ok().filter(|s| !s.is_empty())
+}
+
 pub fn endpoint() -> Option<String> {
+    if let Some(port) = serial_endpoint() { return Some(port); }
     let executable = std::env::var("ANYCUBE_SOLUTION_LINK_CONTROLLER").ok()?;
     Path::new(&executable).is_absolute().then_some(executable)
 }
@@ -32,9 +38,32 @@ impl Driver for SolutionDriver {
     fn claims(&self, _: &PortId) -> bool { false }
     fn probe(&self, _: &str) -> Probe { Probe::NotThis }
 
-    fn connect(&self, port: &str, size: Option<usize>, _: &ConnectOptions) -> Result<Box<dyn Robot>, RobotError> {
+    fn connect(&self, port: &str, size: Option<usize>, opts: &ConnectOptions) -> Result<Box<dyn Robot>, RobotError> {
         if endpoint().as_deref() != Some(port) {
             return Err(RobotError::new("no_port", "set ANYCUBE_SOLUTION_LINK_CONTROLLER to the absolute path of a local executable"));
+        }
+        if serial_endpoint().as_deref() == Some(port) {
+            let device = serialport::new(port, multicuber::BAUD).timeout(IO_TICK).dtr_on_open(false)
+                .open().map_err(|e| RobotError::new("port", e.to_string()))?;
+            if std::env::var("ANYCUBE_SOLUTION_LINK_PROTOCOL").as_deref() == Ok("native") {
+                return Ok(Box::new(SolutionLink::handshake(Wire::serial(device, false)?, port, size)?));
+            }
+            let clone = device.try_clone().map_err(|e| RobotError::new("port", e.to_string()))?;
+            let mut legacy = Link::new(Box::new(SerialTransport::from_port(clone)));
+            legacy.wait_banner(Duration::from_secs(2));
+            let hello = legacy.handshake(2, 1)?;
+            let fw = hello.get("fw").map(String::as_str).unwrap_or("");
+            if fw.starts_with("2.2.") {
+                let timing = opts.settings_dir.as_ref().map(|d| d.join("robot-multicuber-timing.json"));
+                return Ok(Box::new(multicuber::MultiCuber::start(legacy, port.into(), size, timing, None, Duration::ZERO)?));
+            }
+            if !fw.starts_with("2.3.") { return Err(protocol("unsupported MultiCuber firmware")); }
+            if let Some(n) = size {
+                if !multicuber::SIZES.contains(&n) { return Err(protocol("unsupported MultiCuber size")); }
+                legacy.command(&format!("SIZE {n}"), REPLY_TIMEOUT)?;
+            }
+            drop(legacy);
+            return Ok(Box::new(SolutionLink::handshake(Wire::serial(device, true)?, port, size)?));
         }
         let robot = SolutionLink::handshake(Wire::spawn(port)?, port, size)?;
         Ok(Box::new(robot))
@@ -50,7 +79,8 @@ fn check_stop(stop: &StopFlag) -> Result<(), RobotError> {
 
 struct Wire {
     child: Option<Child>,
-    input: Option<ChildStdin>,
+    input: Option<Arc<Mutex<Box<dyn Write + Send>>>>,
+    mega_lease: bool,
     lines: Option<Receiver<Result<String, RobotError>>>,
     present: Arc<AtomicBool>,
 }
@@ -62,7 +92,7 @@ impl Wire {
             .stdout(Stdio::piped())
             .spawn()
             .map_err(link_error)?;
-        let input = child.stdin.take();
+        let input = child.stdin.take().map(|pipe| Arc::new(Mutex::new(Box::new(pipe) as Box<dyn Write + Send>)));
         let output = child.stdout.take().unwrap();
         let (send, lines) = mpsc::sync_channel(1);
         let present = Arc::new(AtomicBool::new(true));
@@ -85,14 +115,54 @@ impl Wire {
             }
             live.store(false, Ordering::SeqCst);
         });
-        Ok(Self { child: Some(child), input, lines: Some(lines), present })
+        Ok(Self { child: Some(child), mega_lease: false, input, lines: Some(lines), present })
+    }
+
+    fn serial(device: Box<dyn serialport::SerialPort>, mega_lease: bool) -> Result<Self, RobotError> {
+        let mut reader = device.try_clone().map_err(|e| RobotError::new("port", e.to_string()))?;
+        let present = Arc::new(AtomicBool::new(true));
+        let live = present.clone();
+        let (send, lines) = mpsc::sync_channel(8);
+        std::thread::spawn(move || {
+            let mut line = Vec::new();
+            let mut buf = [0; 128];
+            'read: while live.load(Ordering::SeqCst) {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => for &byte in &buf[..n] {
+                        if byte == b'\n' {
+                            let record = String::from_utf8(std::mem::take(&mut line)).unwrap();
+                            if send.send(Ok(record)).is_err() { break 'read; }
+                        } else if line.len() < MAX_LINE && (b' '..=b'~').contains(&byte) {
+                            line.push(byte);
+                        } else { break 'read; }
+                    },
+                    Err(e) if matches!(e.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => continue,
+                    Err(_) => break,
+                }
+            }
+            live.store(false, Ordering::SeqCst);
+        });
+        Ok(Self { child: None, input: Some(Arc::new(Mutex::new(Box::new(device)))), mega_lease,
+            lines: Some(lines), present })
+    }
+
+    fn keep_alive(&self) {
+        let writer = self.input.as_ref().unwrap().clone();
+        let live = self.present.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(200));
+            let mut writer = writer.lock().unwrap();
+            if !live.load(Ordering::SeqCst) { break; }
+            if writer.write_all(b"KEEP\n").is_err() { live.store(false, Ordering::SeqCst); break; }
+        });
     }
 
     fn send(&mut self, line: &str, stop: &StopFlag) -> Result<(), RobotError> {
         check_stop(stop)?;
         let input = self.input.as_mut().ok_or_else(|| RobotError::new("link", "controller input is closed"))?;
         // One short record per reply, plus STOP. A compliant peer never fills this pipe.
-        input.write_all(format!("{line}\n").as_bytes()).map_err(link_error)
+        input.lock().unwrap().write_all(format!("{line}\n").as_bytes()).map_err(link_error)
     }
 
     fn read(&self, stop: &StopFlag, deadline: Instant) -> Result<String, RobotError> {
@@ -180,6 +250,7 @@ struct SolutionLink {
     width: usize,
     half: bool,
     png: bool,
+    full_state: bool,
     ms: u32,
     closed: bool,
 }
@@ -188,10 +259,11 @@ impl SolutionLink {
     fn handshake(mut link: Wire, port: &str, size: Option<usize>) -> Result<Self, RobotError> {
         let stop = StopFlag::default();
         link.send("HELLO 1", &stop)?;
+        if link.mega_lease { link.keep_alive(); }
         let hello = link.read(&stop, Instant::now() + REPLY_TIMEOUT)?;
         let fields: Vec<&str> = hello.split_ascii_whitespace().collect();
-        let ["SOLUTION", "1", source @ ("app" | "png"), n, width, half @ ("0" | "1"), ms] = fields.as_slice() else {
-            return Err(protocol("expected SOLUTION 1 <app|png> <size> <width> <half> <ms>"));
+        let ["SOLUTION", "1", source @ ("app" | "png" | "state"), n, width, half @ ("0" | "1"), ms] = fields.as_slice() else {
+            return Err(protocol("expected SOLUTION 1 <app|png|state> <size> <width> <half> <ms>"));
         };
         let n = n.parse::<usize>().ok().filter(|n| (2..=50).contains(n)).ok_or_else(|| protocol("invalid cube size"))?;
         let width = width.parse::<usize>().ok().filter(|&w| (1..n).contains(&w)).ok_or_else(|| protocol("invalid maximum turn width"))?;
@@ -199,12 +271,27 @@ impl SolutionLink {
         if size.is_some_and(|size| size != n) {
             return Err(RobotError::new("bad_size", format!("controller is set for {n}×{n}×{n}")));
         }
-        Ok(Self { link, port: port.into(), n, width, half: *half == "1", png: *source == "png", ms, closed: false })
+        Ok(Self { link, port: port.into(), n, width, half: *half == "1", png: *source == "png", full_state: *source == "state", ms, closed: false })
     }
 
     fn scan(&mut self, stop: &StopFlag, progress: &mut dyn FnMut(Progress) -> Result<(), RobotError>) -> Result<(), RobotError> {
         self.link.send("SCAN", stop)?;
         self.link.expect("OK", stop, REPLY_TIMEOUT)?;
+        if self.full_state {
+            let deadline = Instant::now() + MOTION_TIMEOUT;
+            let mut state = String::new();
+            loop {
+                let line = self.link.read(stop, deadline)?;
+                if line == "DONE" && state.len() == 6 * self.n * self.n {
+                    return progress(Progress::State(state));
+                }
+                let part = line.strip_prefix("STATE ").ok_or_else(|| protocol("expected STATE or DONE"))?;
+                if part.is_empty() || part.bytes().any(|b| !FACES.contains(&b)) || state.len() + part.len() > 6 * self.n * self.n {
+                    return Err(protocol("invalid controller facelets"));
+                }
+                state.push_str(part);
+            }
+        }
         let mut faces = [false; 6];
         for i in 0..6 {
             let reply = self.link.read(stop, Instant::now() + MOTION_TIMEOUT)?;
@@ -219,7 +306,15 @@ impl SolutionLink {
             faces[f] = true;
             let rotate = rotate.parse::<u16>().ok().filter(|r| [0, 90, 180, 270].contains(r)).ok_or_else(|| protocol("invalid frame rotation"))?;
             let png = if self.png { Some(self.image(stop)?) } else { None };
-            progress(Progress::Frame { i, photo: PhotoSpec { index: i, face: FACES[f] as char, rotate }, png })?;
+            if let Err(error) = progress(Progress::Frame { i, photo: PhotoSpec { index: i, face: FACES[f] as char, rotate }, png }) {
+                if self.link.mega_lease && matches!(error.code, "photo_timeout" | "no_frame") {
+                    self.link.send("RESTORE", stop)?;
+                    self.link.expect("OK", stop, REPLY_TIMEOUT)?;
+                    self.link.expect("DONE", stop, MOTION_TIMEOUT)?;
+                    return Err(RobotError::new("scan_restored", error.message));
+                }
+                return Err(error);
+            }
             self.link.send(&format!("ACK {i}"), stop)?;
         }
         self.link.expect("DONE", stop, MOTION_TIMEOUT)
@@ -267,7 +362,7 @@ impl Robot for SolutionLink {
     fn port(&self) -> String { self.port.clone() }
     fn size(&self) -> usize { self.n }
     fn info(&self) -> Value {
-        json!({"protocol": 1, "camera": if self.png { "robot" } else { "app" }, "max_width": self.width, "half": self.half, "move_ms": self.ms})
+        json!({"protocol": 1, "restore": self.link.mega_lease, "camera": if self.full_state { "state" } else if self.png { "robot" } else { "app" }, "max_width": self.width, "half": self.half, "move_ms": self.ms})
     }
     fn sync(&mut self) -> Result<(), RobotError> {
         if self.closed { Err(RobotError::new("link", "reconnect the controller before starting again")) } else { Ok(()) }
@@ -307,19 +402,26 @@ impl Robot for SolutionLink {
             self.run_solution(plan, stop, progress)
         };
         let result = result.and_then(|()| check_stop(stop));
-        if result.is_err() {
+        if result.as_ref().is_err_and(|e| e.code != "scan_restored") {
             self.emergency_stop();
         }
         result
     }
     fn emergency_stop(&mut self) {
         if !self.closed {
+            self.link.present.store(false, Ordering::SeqCst);
             let _ = self.link.send("STOP", &StopFlag::default());
-            self.close();
+            self.closed = true;
+            self.link.close();
         }
     }
     fn park(&mut self) -> Result<(), RobotError> { Ok(()) }
     fn close(&mut self) {
+        self.link.present.store(false, Ordering::SeqCst);
+        if self.link.child.is_none() && !self.closed {
+            let terminal = if self.link.mega_lease { "BYE" } else { "STOP" };
+            let _ = self.link.send(terminal, &StopFlag::default());
+        }
         self.closed = true;
         self.link.close();
     }

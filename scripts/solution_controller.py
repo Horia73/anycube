@@ -136,6 +136,10 @@ def serve(args, cube):
             command = receive()
             if command == "SCAN":
                 send("OK")
+                if args.camera == "state":
+                    send("STATE " + "".join(cube.stickers[slot] for slot in cube.slots))
+                    send("DONE")
+                    continue
                 for i, face in enumerate("FRUBLD"):
                     rotate = 90 if i % 2 else 0
                     if args.camera == "png" or args.frames_dir:
@@ -183,7 +187,7 @@ def serve(args, cube):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--camera", choices=("png", "app"), default="png")
+    parser.add_argument("--camera", choices=("png", "app", "state"), default="png")
     parser.add_argument("--delay", type=float, default=0.35, help="seconds per logical move")
     parser.add_argument("--no-half", action="store_true", help="advertise quarter turns only")
     parser.add_argument("--reject", action="store_true", help="reject RUN before any motion")

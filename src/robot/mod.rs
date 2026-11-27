@@ -203,6 +203,7 @@ pub struct Plan {
 /// What `execute` reports as it goes.
 #[derive(Clone, Debug)]
 pub enum Progress {
+    State(String),
     /// Command `i` has started moving (as far as the computer can tell).
     Started { i: usize },
     /// Command `i` is done; it took `actual_ms`.

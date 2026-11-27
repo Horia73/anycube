@@ -20,6 +20,8 @@ pub struct SerialTransport {
 }
 
 impl SerialTransport {
+    pub fn from_port(port: Box<dyn serialport::SerialPort>) -> Self { Self { port } }
+
     pub fn open(path: &str, baud: u32) -> Result<SerialTransport, RobotError> {
         let port = serialport::new(path, baud)
             .timeout(Duration::from_millis(20))

@@ -1367,7 +1367,7 @@ export async function mount(root, options = {}) {
   }
 
   function lookAtScan({ capture, palette }, ms = 450) {
-    if (scanOrientation === "capture") {
+    if (scanOrientation === "capture" && capture) {
       view.lookForCapture(capture.face, ms, capture.quarters);
     } else {
       const preferred = palette.indexOf(defaultPalette[0]);
@@ -1583,6 +1583,10 @@ export async function mount(root, options = {}) {
       // camera's scan would be. Returns what to say about it.
       scanned(result, sources, lastFace) {
         view.setRaw(null);
+        if (result.kind === "state") {
+          takeScan({ facelets: state.model.fromText(result.state), palette: defaultPalette }, false);
+          return { ok: true };
+        }
         if (result.kind === "detection") {
           setValid("bad", result.note);
           return { ok: false, note: result.note };
