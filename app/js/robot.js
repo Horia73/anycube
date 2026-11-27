@@ -197,13 +197,23 @@ async function readPng(png, rotate, size) {
 
 // The server asks after its settle delay. Wait for the next presented frame
 // so the captured pixels come from the current hold.
-async function grabFreshFrame(feed, rotate, size, canvas) {
+async function grabFreshFrame(feed, rotate, size, canvas, requireFresh = false) {
   if (feed.nativeSource) {
     const source = await feed.nativeSource.freshFrame();
     return source ? readPixels(source, source.width, source.height, rotate, size, canvas) : null;
   }
   const video = feed.video;
-  if (!video.requestVideoFrameCallback) return grabFrame(video, rotate, size, canvas);
+  if (!video.requestVideoFrameCallback) {
+    if (requireFresh) {
+      const presented = () => video.getVideoPlaybackQuality?.().totalVideoFrames;
+      const before = presented();
+      const deadline = performance.now() + 1000;
+      while (Number.isFinite(before) && before === presented() && performance.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 20));
+      if (!Number.isFinite(before) || before === presented()) return null;
+    }
+    return grabFrame(video, rotate, size, canvas);
+  }
   return new Promise((resolve, reject) => {
     const frame = video.requestVideoFrameCallback(() => {
       clearTimeout(timeout);
@@ -340,7 +350,8 @@ export class RobotApi {
     return this.#request("POST", "/api/robot/connect", { driver, ...(port ? { port } : {}), ...(Number.isInteger(size) ? { size } : {}) });
   }
   disconnect() { return this.#request("POST", "/api/robot/disconnect", {}); }
-  scan(size) { return this.#request("POST", "/api/robot/scan", { size }); }
+  scan(size, detectSize) { return this.#request("POST", "/api/robot/scan", detectSize ? { detect_size: true } : { size }); }
+  measuredSize(run, size) { return this.#request("POST", "/api/robot/measured-size", { run, size }); }
   photoTaken(run, index, failed = false) { return this.#request("POST", "/api/robot/photo-taken", failed ? { run, index, failed } : { run, index }); }
   rejectScan(run) { return this.#request("POST", "/api/robot/reject-scan", { run }); }
   solve(run, size, facelets, analysisMs) {
@@ -697,7 +708,7 @@ export class RobotRun {
   }
 
   /** Starts a scan: the robot shows the camera the six faces. */
-  async scan() {
+  async scan(detectSize = false) {
     if (this.busy) return;
     this.faces = new Array(SIDES).fill(null);
     this.sources = new Array(SIDES).fill(null);
@@ -716,7 +727,7 @@ export class RobotRun {
     this.run = null;
     this.#setPhase("starting");
     try {
-      const { run } = await this.api.scan(this.n);
+      const { run } = await this.api.scan(detectSize ? undefined : this.n, detectSize);
       if (this.phase !== "starting") return;
       this.run = run;
     } catch (error) {
@@ -748,7 +759,13 @@ export class RobotRun {
       if (event.run !== this.run) return;
     }
     switch (event.type) {
-      case "scan-start": return this.#hook("onscanstart", event);
+      case "size-photo": return this.#measureSize(event.run);
+      case "scan-start":
+        if (Number.isInteger(event.size)) {
+          this.n = event.size;
+          this.pace.begin(this.n);
+        }
+        return this.#hook("onscanstart", event);
       case "photo": return this.#photo(event);
       case "state":
         if (this.phase === "scanning") this.result = { kind: "state", ok: true, state: event.facelets, readyAt: this.now() };
@@ -783,6 +800,21 @@ export class RobotRun {
     const wasBusy = this.busy;
     if (wasBusy) this.#setPhase("failed");
     this.#hook("onerror", { code: error.code ?? "error", message: error.message ?? String(error), during: wasBusy });
+  }
+
+  async #measureSize(run) {
+    if (this.phase !== "scanning") return;
+    let size = null;
+    try {
+      const frame = await this.grab(0, 432, true);
+      if (frame) size = detectCubeSize(frame).n ?? null;
+    } catch {
+      // An unreadable frame also releases the hold and restores the pose.
+    }
+    if (this.run === run && this.phase === "scanning") {
+      try { await this.api.measuredSize(run, size); }
+      catch (error) { if (this.run === run && this.busy) this.#hook("onlog", error.message); }
+    }
   }
 
   async #photo(event) {
@@ -1468,9 +1500,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     onphase(phase) {
       if (["solving", "failed", "idle", "done"].includes(phase) && feed.running) feed.close();
       setButtons();
-      if (phase === "starting") host.say("busy", "Starting the scan…");
+      if (phase === "starting") host.say("busy", connected?.info?.size_photo ? "Positioning the cube for the size photo…" : "Starting the scan…");
     },
     onscanstart(event) {
+      if (connected.info?.size_photo) beginDisplay(robot.n);
       connected.size = robot.n;
       // The scan's time left: the plan's, counted down, and at the last photo what the robot says is left of it.
       scanEnd = Number.isFinite(event.eta_ms) ? performance.now() + event.eta_ms : null;
@@ -1609,6 +1642,10 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     if (!controllerCamera() && !feed.running && !(await openCamera())) return;
     if (robot !== session) return;
     closeInfo();
+    if (!controllerCamera() && connected.info?.size_photo) {
+      await robot.scan(true);
+      return;
+    }
     let n = connected.size;
     if (!controllerCamera()) {
       const generation = feed.generation;
@@ -1635,15 +1672,19 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
       }
     }
     if (!Number.isInteger(n) || n < 2) return say("The controller did not report a cube size.", true);
-    host.setSize(n);
+    beginDisplay(n);
     robot.n = n;
+    await robot.scan();
+  });
+
+  function beginDisplay(n) {
+    host.setSize(n);
     raw = host.scanStart();
     lastFace = -1;
     eta = null;
     clearShots();
     say("");
-    await robot.scan();
-  });
+  }
 
   // ------------------------------------------------------------ connected
 
@@ -1736,7 +1777,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     const mine = (robot = new RobotRun({
       api,
       n: info.size,
-      grab: (rotate, size) => grabFreshFrame(feed, rotate, size, scratch),
+      grab: (rotate, size, requireFresh) => grabFreshFrame(feed, rotate, size, scratch, requireFresh),
       hooks,
       pace,
     }));

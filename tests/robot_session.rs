@@ -455,3 +455,64 @@ fn each_scan_configures_the_same_22_connection_before_motion() {
         assert!(sim_facelets(&s).3.is_empty());
     }
 }
+
+#[test]
+fn size_photo_holds_then_restores_before_retry_and_scan() {
+    let s = session(0.02, 60);
+    let connected = s.connect(&json!({"driver":"multicuber","port":"sim"}));
+    assert_eq!(connected["info"]["size_photo"], true);
+    let sim = s.with_robot(|r| r.as_any().downcast_ref::<MultiCuber>().unwrap().sim().unwrap().clone()).unwrap();
+    let pose = || {
+        let state = sim.state.0.lock().unwrap();
+        (state.cube.facelets.clone(), state.cube.lift, state.cube.flip_up, state.enabled)
+    };
+    let before = pose();
+    let mut since = 0;
+    let timeout = Duration::from_secs(8);
+    for reading in [Value::Null, json!(3)] {
+        let run = s.scan_with_size_photo()["run"].clone();
+        let event = read_until(&s, &mut since, &["size-photo", "error"], false, timeout).pop().unwrap();
+        assert_eq!(event["type"], "size-photo", "{event}");
+        assert_eq!(event["run"], run);
+        assert!(event["t_ms"].as_f64().unwrap() >= 60.0);
+        assert!(!pose().2);
+        assert_ne!(pose().0, before.0);
+        assert_eq!(sim.log().last().unwrap(), "FLIP DOWN NORMAL");
+        assert_eq!(s.measured_size(&json!({"run":"old", "size":3}))["ok"], false);
+        assert_eq!(s.measured_size(&json!({"run":run, "size":reading}))["ok"], true);
+        if reading.is_null() {
+            let error = read_until(&s, &mut since, &["error"], false, timeout).pop().unwrap();
+            assert_eq!(error["code"], "no_size");
+            assert!(s.wait_idle(timeout));
+            assert_eq!(pose(), before);
+            assert!(sim.log().iter().all(|l| !l.starts_with("LIFT") && !l.starts_with("ROT")));
+        } else {
+            read_until(&s, &mut since, &["scan-done"], true, timeout);
+            assert_eq!(s.reject_scan(&json!({"run":run}))["ok"], true);
+            assert_eq!(pose(), before);
+        }
+    }
+    assert!(sim.violations().is_empty());
+}
+
+#[test]
+fn size_photo_refuses_a_raised_lift_and_stop_does_not_reverse() {
+    let s = session(0.01, 0);
+    s.connect(&json!({"driver":"multicuber","port":"sim"}));
+    let sim = s.with_robot(|r| r.as_any().downcast_ref::<MultiCuber>().unwrap().sim().unwrap().clone()).unwrap();
+    let timeout = Duration::from_secs(5);
+    let mut since = 0;
+    sim.state.0.lock().unwrap().cube.lift = anycube::robot::multicuber::planner::Lift::Scan;
+    s.scan_with_size_photo();
+    let error = read_until(&s, &mut since, &["error"], false, timeout).pop().unwrap();
+    assert_eq!(error["code"], "position");
+    assert!(s.wait_idle(timeout));
+    assert!(!sim.log().iter().any(|line| line == "ENABLE"));
+    sim.state.0.lock().unwrap().cube.lift = anycube::robot::multicuber::planner::Lift::Level(0);
+    s.scan_with_size_photo();
+    read_until(&s, &mut since, &["size-photo"], false, timeout);
+    s.stop();
+    assert!(s.wait_idle(timeout));
+    assert_eq!(sim.log().last().unwrap(), "DISABLE");
+    assert!(!sim.log().iter().any(|line| line.starts_with("FLIP UP")));
+}

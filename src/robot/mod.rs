@@ -238,6 +238,10 @@ pub trait Robot: Send {
     fn driver_id(&self) -> &'static str;
     fn port(&self) -> String;
     fn size(&self) -> usize;
+    /// Hold a size-independent viewing pose, read one measurement, and undo the hold.
+    fn measure_size(&mut self, _stop: &StopFlag, _read: &mut dyn FnMut() -> Result<usize, RobotError>) -> Result<usize, RobotError> {
+        Err(RobotError::new("unsupported", "this controller has no size-photo pose"))
+    }
     /// Apply the size established before scanning. Fixed-size controllers advertise it at handshake.
     fn prepare_size(&mut self, n: usize) -> Result<(), RobotError> {
         if self.size() == n { Ok(()) } else { Err(RobotError::new("bad_size", "cube differs from controller size")) }

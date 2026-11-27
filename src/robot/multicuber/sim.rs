@@ -73,6 +73,18 @@ impl SimRobot {
         robot
     }
 
+    // The simulated user supplies the detected cube for a scan. Firmware
+    // SIZE merely selects calibration; inspecting tables cannot replace it.
+    pub(super) fn fit_cube(&self, n: usize) {
+        let mut s = self.state.0.lock().unwrap();
+        if s.cube.n() != n {
+            let mut cube = PhysicalCube::new(n);
+            cube.flip_up = s.cube.flip_up;
+            cube.lift = s.cube.lift;
+            s.cube = cube;
+        }
+    }
+
     pub fn transport(&self) -> Box<dyn Transport> {
         Box::new(SimTransport { robot: self.clone() })
     }
@@ -176,10 +188,7 @@ impl SimRobot {
             }
             "SIZE" => match w.get(1).and_then(|v| v.parse::<usize>().ok()) {
                 Some(k @ 3..=5) => {
-                    if k != s.size {
-                        s.size = k;
-                        s.cube = PhysicalCube::new(k);
-                    }
+                    s.size = k;
                     ok(format!("SIZE {}", k))
                 }
                 Some(k @ 6..=7) => (vec![format!("ERR NOCAL no table for {}", k)], 0.0),

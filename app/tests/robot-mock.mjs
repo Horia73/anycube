@@ -113,7 +113,7 @@ export function mockServer(script = {}) {
           return json(200, { ok: false, error: { code: "no_answer", message: "the board does not answer as MultiCuber" } });
         }
         if (refusals-- > 0) return json(200, { ok: false, error: { code: "no_answer", message: "The board did not answer." } });
-        connected = { driver: body.driver, port: path, size: body.size ?? script.size ?? 3, info: { firmware: "2.2" } };
+        connected = { driver: body.driver, port: path, size: body.size ?? script.size ?? 3, info: { firmware: "2.2", size_photo: !!script.sizePhoto } };
         pulled = false;
         return json(200, { ok: true, size: connected.size, info: connected.info, port: connected.port });
       }
@@ -139,11 +139,29 @@ export function mockServer(script = {}) {
         began = Date.now();
         stopped = false;
         times = {};
-        step(() => {
+        if (body.detect_size) {
+          step(() => {
+            script.onSizePose?.();
+            after(script.settleMs ?? 0, () => { script.onSizePhoto?.(); push("size-photo"); });
+          });
+        } else step(() => {
           push("scan-start", { steps: 22, eta_ms: 9000 });
           photo(0);
         });
         return json(200, { ok: true, run });
+      }
+      case "/api/robot/measured-size": {
+        if (body.run !== run) throw Error("stale size photo");
+        step(() => {
+          if (![3,4,5].includes(body.size)) {
+            moving = false;
+            push("error", { code: "bad_size", message: body.size ? "MultiCuber requires size 3, 4 or 5" : "Show one complete cube face and try Scan & solve again." });
+          } else {
+            push("scan-start", { steps: 22, size: body.size, eta_ms: 9000 });
+            photo(0);
+          }
+        });
+        return json(200, { ok: true });
       }
       case "/api/robot/photo-taken": {
         if (body.run !== run) return json(409, { ok: false, error: { code: "stale_run", message: "Not the current run." } });

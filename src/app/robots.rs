@@ -7,6 +7,8 @@
 //! POST /api/robot/disconnect                {}
 //! POST /api/robot/scan                      {"size": 3}                                   -> {"ok": true, "run": "..."}
 //! POST /api/robot/photo-taken               {"run": "...", "index": 0..5}
+//! POST /api/robot/scan                      {"detect_size": true} for a MultiCuber size-photo hold
+//! POST /api/robot/measured-size             {"run": "...", "size": 3} or null when the hold shows no face
 //! POST /api/robot/reject-scan               {"run": "..."}                         return a rejected host-planned scan
 //! POST /api/robot/solve                     {"run": "...", "size": 3, "facelets": "...", "analysis_ms": 412}
 //! POST /api/robot/stop                      {}
@@ -49,6 +51,9 @@ pub fn route(session: &Session, method: &str, path: &str, url: &str, body: &str,
             let answer = match p {
                 "/api/robot/connect" => session.connect(&body),
                 "/api/robot/disconnect" => session.disconnect(),
+                "/api/robot/scan" if body["detect_size"] == true && body.get("size").is_none() => session.scan_with_size_photo(),
+                "/api/robot/scan" if body["detect_size"] == true => return err(400, "bad_size", "a size-photo scan cannot also specify a size"),
+                "/api/robot/measured-size" => session.measured_size(&body),
                 "/api/robot/scan" => match body["size"].as_u64().and_then(|n| usize::try_from(n).ok()) {
                     Some(n) if n >= 2 => session.scan(Some(n)),
                     None if body.is_object() && body.get("size").is_none() => session.scan(None),

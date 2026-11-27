@@ -345,6 +345,44 @@ impl MultiCuber {
         }
     }
 
+    fn select_calibration(&mut self, n: usize) -> Result<Cal, RobotError> {
+        let timeout = Duration::from_secs(2);
+        let cmd = format!("SIZE {n}");
+        if self.link.command(&cmd, timeout)? != cmd {
+            return Err(RobotError::new("protocol", "firmware did not confirm the requested size"));
+        }
+        self.link.info.clear();
+        let reply = self.link.command("CAL", timeout)?;
+        if reply.split_whitespace().take(2).collect::<Vec<_>>() != ["CAL", &n.to_string()] {
+            return Err(RobotError::new("protocol", "firmware did not confirm the calibration size"));
+        }
+        let cal = self.link.info.iter().find_map(|line| Cal::parse(line)).filter(|cal| cal.n == n)
+            .ok_or_else(|| RobotError::new("protocol", "missing calibration for requested size"))?;
+        Ok(cal)
+    }
+
+    fn expect(&mut self, command: &str, expected: &str) -> Result<(), RobotError> {
+        if self.link.command(command, Duration::from_secs(3))? != expected {
+            return Err(RobotError::new("protocol", format!("firmware did not confirm {command}")));
+        }
+        Ok(())
+    }
+
+    // Firmware 2.2 cmdFlip uses only p_.flip and lift_ == 0. SIZE loads
+    // a table without moving an axis. Verify EEPROM overrides, then put
+    // back the configured table before enabling any motor.
+    fn verify_common_flip(&mut self) -> Result<(), RobotError> {
+        let n = self.n;
+        let check = SIZES.iter().copied().filter(|&size| size != n)
+            .map(|size| self.select_calibration(size).map(|cal| cal.flip))
+            .collect::<Result<Vec<_>, _>>();
+        let active = self.select_calibration(n)?;
+        if active.flip <= 0 || check?.iter().any(|&steps| steps != active.flip) {
+            return Err(RobotError::new("calibration", "The flipper travel differs between cube-size calibrations."));
+        }
+        Ok(())
+    }
+
     fn save_timing(&self) {
         if let Some(path) = &self.timing_path {
             let _ = timing::save(path, &self.timing);
@@ -378,22 +416,53 @@ impl Robot for MultiCuber {
         self.n
     }
 
+    fn measure_size(&mut self, stop: &StopFlag, read: &mut dyn FnMut() -> Result<usize, RobotError>) -> Result<usize, RobotError> {
+        let running = || if stop.is_set() { Err(RobotError::new("stopped", "stopped")) } else { Ok(()) };
+        self.sync()?;
+        if self.state.lift != Lift::Level(0) {
+            return Err(RobotError::new("position", "Lower the lift to its rest position before scanning."));
+        }
+        running()?;
+        if !self.state.flip_up {
+            let measurement = read();
+            if stop.is_set() { self.abort(); return Err(RobotError::new("stopped", "stopped")); }
+            return measurement;
+        }
+        self.verify_common_flip()?;
+        // A missing or unexpected acknowledgement leaves the pose unknown:
+        // disable, never attempt a blind inverse. Stop also forbids the undo.
+        let result = (|| {
+            running()?;
+            self.expect("ENABLE", "ENABLE")?;
+            running()?;
+            self.expect("FLIP DOWN NORMAL", "FLIP DOWN CARRY")?;
+            let measurement = read();
+            running()?;
+            // ENABLE is idempotent, including after the firmware idle timer.
+            self.expect("ENABLE", "ENABLE")?;
+            running()?;
+            self.expect("FLIP UP NORMAL", "FLIP UP CARRY")?;
+            self.expect("DISABLE", "DISABLE")?;
+            self.sync()?;
+            if self.state.lift != Lift::Level(0) || !self.state.flip_up || self.enabled {
+                return Err(RobotError::new("position", "Firmware did not confirm the restored size-photo pose."));
+            }
+            Ok(measurement)
+        })();
+        match result {
+            Ok(measurement) => measurement,
+            Err(error) => { self.abort(); Err(error) }
+        }
+    }
+
     fn prepare_size(&mut self, n: usize) -> Result<(), RobotError> {
         if !SIZES.contains(&n) {
             return Err(RobotError::new("bad_size", "MultiCuber requires size 3, 4 or 5"));
         }
-        let timeout = Duration::from_secs(2);
-        let cmd = format!("SIZE {n}");
-        if self.link.command(&cmd, timeout)? != cmd {
-            return Err(RobotError::new("protocol", "firmware did not confirm the requested size"));
+        let cal = self.select_calibration(n)?;
+        if let Some(sim) = &self.sim {
+            sim.fit_cube(n);
         }
-        self.link.info.clear();
-        let reply = self.link.command("CAL", timeout)?;
-        if reply.split_whitespace().take(2).collect::<Vec<_>>() != ["CAL", &n.to_string()] {
-            return Err(RobotError::new("protocol", "firmware did not confirm the calibration size"));
-        }
-        let cal = self.link.info.iter().find_map(|line| Cal::parse(line)).filter(|cal| cal.n == n)
-            .ok_or_else(|| RobotError::new("protocol", "missing calibration for requested size"))?;
         if cal == self.cal { return Ok(()); }
         let mut timing = TimeModel::new(cal.clone());
         if let Some(path) = &self.timing_path {
@@ -409,6 +478,7 @@ impl Robot for MultiCuber {
 
     fn info(&self) -> Value {
         let mut info = json!(self.hello);
+        info["size_photo"] = json!(true);
         info["restore"] = json!(true);
         info["restore_after_scan"] = json!(true);
         info
@@ -427,7 +497,11 @@ impl Robot for MultiCuber {
                 format!("the lift is at height {}, which is no level: bring it down (LIFT 0), or put it down by hand and send ZERO", height),
             )
         })?;
-        self.state = RobotState { lift, flip_up: f.get("flip").is_none_or(|v| v == "UP") };
+        self.state = RobotState { lift, flip_up: match f.get("flip").map(String::as_str) {
+            Some("UP") => true,
+            Some("DOWN") => false,
+            _ => return Err(RobotError::new("position", "firmware did not report the flipper position")),
+        } };
         self.enabled = f.get("enabled").is_some_and(|v| v == "1");
         self.state_known = true;
         if self.space_stale {

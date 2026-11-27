@@ -5,6 +5,7 @@
 <div class="app" id="app"></div>
 <pre id="result">Running…</pre>
 <script type="module">
+import { detectCubeSize } from "../js/detect.js";
 import { mount } from "../js/app.js";
 import { SCAN_STEPS } from "../js/camera.js";
 import { COLOURS, picture, quad } from "./pictures.mjs";
@@ -22,7 +23,12 @@ async function until(predicate) {
 }
 
 try {
-  const mock = mockServer({ identify: true, ports: [], size: 3, settleMs: 80 });
+  let clearPose, poseAt, sizePhotoAt;
+  const pulls = [], sizeTimings = [];
+  const mock = mockServer({ sizePhoto: true, onSizePose() {
+    poseAt = performance.now();
+    clearPose();
+  }, onSizePhoto() { sizePhotoAt = performance.now(); pulls.length = 0; }, identify: true, ports: [], size: 3, settleMs: 80 });
   const source = document.createElement("canvas");
   source.width = 480;
   source.height = 240;
@@ -52,7 +58,16 @@ try {
     if (url === "/api/config") return json(200, { local:true, robots:true, max_size:7, browser_sizes:[], modes:["normal"], max_scramble_moves:5000 });
     if (url === "/api/check") return json(200, { ok:true });
     if (url.startsWith("/api/robot")) {
-      if (url === "/api/robot/scan") requests.push(JSON.parse(init.body).size);
+      if (url === "/api/robot/scan") check(JSON.parse(init.body).detect_size, "guessed a size before positioning");
+      if (url === "/api/robot/measured-size") {
+        const n = JSON.parse(init.body).size;
+        check(sizePhotoAt - poseAt >= 79, "size photo preceded settle");
+        if (native) {
+          check(pulls.length >= 2, "size read reused a buffered frame");
+          sizeTimings.push(Math.round(pulls.at(-1) - sizePhotoAt));
+        }
+        if ([3,4,5].includes(n)) requests.push(n);
+      }
       return mock.fetch(url, init);
     }
     return network(url, init);
@@ -86,6 +101,7 @@ try {
       check(token === nativeSession, "stale bridge request");
       if (op === "stop") { nativeSession = null; return true; }
       check(op === "frame", "unknown bridge request");
+      if (sizePhotoAt) pulls.push(performance.now());
       return source.toDataURL("image/jpeg", 0.94).split(",")[1];
     } } } };
     navigator.mediaDevices.getUserMedia = () => { throw Error("unexpected WebKit capture"); };
@@ -122,24 +138,34 @@ try {
   check(app.state.size === 7, "connection changed editor");
   for (const n of [0, "ambiguous", 6, 3, 4, 5]) {
     cube = n;
-    if (n === "ambiguous") {
-      showFace(3);
-      const other = picture({ W: 480, H: 240, n: 4, corners: quad(360, 120, 132), stickers: Array(16).fill(1) });
-      for (let y = 0; y < 240; y++) {
-        const offset = (480*y + 240)*4;
-        pixels.data.set(other.data.subarray(offset, offset + 240*4), offset);
-      }
-      ctx.putImageData(pixels, 0, 0);
-    } else showFace(n);
+    showFace(Number.isInteger(n) && n >= 3 ? n : 3);
+    ctx.fillStyle = "#414141";
+    ctx.fillRect(44, 44, 126, 154); // The idle flipper leaves only a strip of stickers visible.
+    pixels = ctx.getImageData(0, 0, 480, 240);
+    check(!detectCubeSize(pixels).n, "idle fixture exposes a measurable face");
+    clearPose = () => {
+      if (n === "ambiguous") {
+        showFace(3);
+        const other = picture({ W: 480, H: 240, n: 4, corners: quad(360, 120, 132), stickers: Array(16).fill(1) });
+        for (let y = 0; y < 240; y++) {
+          const offset = (480*y + 240)*4;
+          pixels.data.set(other.data.subarray(offset, offset + 240*4), offset);
+        }
+        ctx.putImageData(pixels, 0, 0);
+      } else showFace(n);
+    };
     const before = requests.length;
+    const count = () => mock.calls.filter(c => c.path === "/api/robot/measured-size").length;
+    const prior = count();
     await until(() => !$("robot-scan").disabled);
     $("robot-scan").click();
     if (!n || n === "ambiguous" || n === 6) {
-      await until(() => document.body.innerText.includes(n === 6 ? "cannot scan" : "Show one complete"));
+      await until(() => count() > prior && $("robot-scan").textContent === "Scan & solve");
+      await until(() => document.body.innerText.includes(n === 6 ? "MultiCuber requires" : "Show one complete"));
       await until(() => !$("robot-scan").disabled);
       check(requests.length === before && app.state.size === 7, "uncertain or unsupported scan");
     } else {
-      await until(() => requests.length > before);
+      await until(() => requests.length > before && app.state.size === n);
       check(requests.at(-1) === n && app.state.size === n, "wrong scan size");
       await until(() => $("robot-scan").textContent === "Scan & solve");
       check(mock.calls.some(c => c.path === "/api/robot/solve" && c.body.size === n && c.body.facelets.length === 6*n*n), `solve from captured ${n} faces: ${document.body.innerText.slice(-1500)}`);
@@ -150,6 +176,7 @@ try {
   await until(() => !$("app").classList.contains("robot-mode"));
   check(app.state.size === 7, "manual size restored on disconnect");
   check(!nativeSession, "robot camera not released");
+  result.dataset.sizeFrameMs = JSON.stringify(sizeTimings);
   result.textContent = "PASS";
 } catch (error) { result.textContent = error.stack; }
 </script>

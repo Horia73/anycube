@@ -68,6 +68,19 @@ impl Config {
     }
 }
 
+enum ScanSize {
+    Requested(Option<usize>),
+    Measure,
+}
+
+#[derive(Default)]
+enum SizePhoto {
+    #[default]
+    Idle,
+    Waiting,
+    Received(Option<usize>),
+}
+
 struct Run {
     id: String,
     started: Instant,
@@ -89,6 +102,7 @@ struct State {
     turn: u64,
     acks: HashSet<(String, usize)>,
     pending_frame: Option<usize>,
+    size_photo: SizePhoto,
     capture_failed: bool,
     count: u64,
     /// Counts the connections: a watcher of an earlier one stops.
@@ -514,6 +528,14 @@ impl Session {
     }
 
     pub fn scan(&self, size: Option<usize>) -> Value {
+        self.start_scan(ScanSize::Requested(size))
+    }
+
+    pub fn scan_with_size_photo(&self) -> Value {
+        self.start_scan(ScanSize::Measure)
+    }
+
+    fn start_scan(&self, size: ScanSize) -> Value {
         let (id, turn) = match self.begin(None, false) {
             Ok(begun) => begun,
             Err(e) => return e,
@@ -527,7 +549,7 @@ impl Session {
         json!({"ok": true, "run": id})
     }
 
-    fn scan_run(&self, run: &str, turn: u64, size: Option<usize>) {
+    fn scan_run(&self, run: &str, turn: u64, size: ScanSize) {
         let mut guard = self.inner.robot.lock().unwrap();
         let result = match guard.as_mut() {
             None => Err(RobotError::new("not_connected", "no robot is connected")),
@@ -543,12 +565,13 @@ impl Session {
         }
     }
 
-    fn scan_on(&self, run: &str, turn: u64, size: Option<usize>, robot: &mut dyn Robot) -> Result<(), RobotError> {
+    fn scan_on(&self, run: &str, turn: u64, size: ScanSize, robot: &mut dyn Robot) -> Result<(), RobotError> {
         let t0 = Instant::now();
         let size = match size {
-            Some(n) => n,
-            None if matches!(robot.info()["camera"].as_str(), Some("state" | "robot")) => robot.size(),
-            None => return Err(RobotError::new("bad_size", "an app-camera scan requires a detected size")),
+            ScanSize::Measure => robot.measure_size(&self.inner.stop, &mut || self.read_size_photo(run))?,
+            ScanSize::Requested(Some(n)) => n,
+            ScanSize::Requested(None) if matches!(robot.info()["camera"].as_str(), Some("state" | "robot")) => robot.size(),
+            ScanSize::Requested(None) => return Err(RobotError::new("bad_size", "an app-camera scan requires a detected size")),
         };
         if size > self.inner.config.max_size { return Err(RobotError::new("bad_size", "size exceeds solver limit")); }
         robot.prepare_size(size)?;
@@ -560,7 +583,7 @@ impl Session {
         let plan = robot.plan_scan();
         let return_plan = robot.scan_return_plan(&plan);
         let eta = (robot.driver_id() != solution_link::ID).then_some(plan.eta_ms);
-        self.emit("scan-start", Some(run), json!({"steps": plan.ops.len(), "eta_ms": eta}));
+        self.emit("scan-start", Some(run), json!({"size": size, "steps": plan.ops.len(), "eta_ms": eta}));
         let ops = plan.ops.clone();
         robot.execute(&plan, &self.inner.stop, &mut |p| self.progress(run, &ops, p))?;
         let scan_ms = (t0.elapsed().as_secs_f64() * 1000.0).round();
@@ -570,6 +593,40 @@ impl Session {
         }
         self.emit_last(turn, "scan-done", run, json!({"scan_ms": scan_ms}));
         Ok(())
+    }
+
+    fn read_size_photo(&self, run: &str) -> Result<usize, RobotError> {
+        let guard = self.inner.state.lock().unwrap();
+        let stopped = || self.inner.stop.is_set();
+        let (mut s, _) = self.inner.changed.wait_timeout_while(guard, self.inner.config.photo_settle, |_| !stopped()).unwrap();
+        if stopped() { return Err(RobotError::new("stopped", "stopped")); }
+        s.size_photo = SizePhoto::Waiting;
+        self.emit_locked(&mut s, "size-photo", Some(run), json!({}));
+        let (mut s, _) = self.inner.changed.wait_timeout_while(s, Duration::from_secs(10),
+            |s| matches!(s.size_photo, SizePhoto::Waiting) && !stopped()).unwrap();
+        let reading = std::mem::take(&mut s.size_photo);
+        if stopped() { return Err(RobotError::new("stopped", "stopped")); }
+        match reading {
+            SizePhoto::Received(Some(n)) => Ok(n),
+            SizePhoto::Received(None) => Err(RobotError::new("no_size", "Show one complete cube face and try Scan & solve again.")),
+            _ => Err(RobotError::new("photo_timeout", "The camera did not answer the size photo in time.")),
+        }
+    }
+
+    pub fn measured_size(&self, body: &Value) -> Value {
+        let size = match body.get("size") {
+            Some(Value::Null) => None,
+            Some(v) if v.as_u64().is_some_and(|n| (2..=255).contains(&n)) => Some(v.as_u64().unwrap() as usize),
+            _ => return err("bad_size", "send a detected size or null"),
+        };
+        let mut s = self.inner.state.lock().unwrap();
+        if self.inner.stop.is_set() || !matches!(s.size_photo, SizePhoto::Waiting)
+            || body["run"].as_str() != s.run.as_ref().map(|r| r.id.as_str()) {
+            return err("bad_run", "no matching size photo");
+        }
+        s.size_photo = SizePhoto::Received(size);
+        self.inner.changed.notify_all();
+        json!({"ok": true})
     }
 
     /// What `execute` reports, as events; pictures wait for the page's ack.
