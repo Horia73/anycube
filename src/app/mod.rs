@@ -115,7 +115,9 @@ pub fn main(args: &[String]) {
                 for p in places {
                     println!("  {}", p.display());
                 }
-                println!("It starts {}; if that program is moved, run this again.", binary.display());
+                if !cfg!(target_os = "macos") {
+                    println!("It starts {}; if that program is moved, run this again.", binary.display());
+                }
                 println!("To take it away: anycube app --uninstall");
             }
             Err(e) => fail(&format!("could not add the application entry: {}", e)),
@@ -123,7 +125,7 @@ pub fn main(args: &[String]) {
         return;
     }
     if has("--window-kind") {
-        // For the entry in Applications: what the window would be here (chromium, webkit or tab).
+        // Report the window the CLI would open.
         println!("{}", window::choice().word());
         return;
     }
@@ -152,6 +154,15 @@ pub fn main(args: &[String]) {
     if desktop && (!has("--no-window") || !has("--with-parent") || has("--browser") || has("--port")) {
         fail("--desktop-session requires --no-window --with-parent and a private port");
     }
+    let started_by = if has("--no-window") && has("--with-parent") {
+        let pid = parent();
+        if pid == 1 {
+            return;
+        }
+        Some(pid)
+    } else {
+        None
+    };
     let port = match args.iter().position(|a| a == "--port") {
         None => 0,
         Some(i) => args.get(i + 1).and_then(|p| p.parse::<u16>().ok()).unwrap_or_else(|| fail("--port takes a number from 1 to 65535")),
@@ -180,13 +191,12 @@ pub fn main(args: &[String]) {
         // says `--with-parent`), this ends when the window's process does:
         // a process whose parent has ended is handed to another. Started
         // by hand, it runs until it is stopped.
-        let started_by = parent();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
             if running.ready_to_exit() {
                 return;
             }
-            if has("--with-parent") && parent() != started_by && !running.installing() {
+            if started_by.is_some_and(|pid| parent() != pid) && !running.installing() {
                 return;
             }
         }

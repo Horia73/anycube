@@ -10,7 +10,7 @@
 //! Nothing is written outside the user's own directories, and `remove`
 //! takes all of it away again.
 
-use super::{assets, window};
+use super::assets;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -34,92 +34,83 @@ pub fn places() -> io::Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-#[cfg(unix)]
-fn executable(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-}
-
-#[cfg(not(unix))]
-fn executable(_: &Path) -> io::Result<()> {
-    Ok(())
-}
-
-/// A string inside single quotes for a shell.
-fn quoted(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
-/// The bundle's launcher, for the program at `binary`.
-fn launcher_script(binary: &str) -> String {
-    format!(
-        "#!/bin/sh\n# Made by `anycube app --install`. Opens the interface in a window of its own.\nhere=$(cd \"$(dirname \"$0\")/../Resources\" && pwd)\nif [ \"$({bin} app --window-kind 2>/dev/null)\" = chromium ]; then\n  exec {bin} app\nfi\nexec /usr/bin/osascript -l JavaScript \"$here/window.js\" --serve {bin} \"$here/icon.png\"\n",
-        bin = quoted(binary)
-    )
-}
-
+#[cfg(target_os = "macos")]
 fn add_macos(binary: &Path, bundle: &Path) -> io::Result<()> {
-    let _ = fs::remove_dir_all(bundle);
-    let (macos, resources) = (bundle.join("Contents/MacOS"), bundle.join("Contents/Resources"));
-    fs::create_dir_all(&macos)?;
-    fs::create_dir_all(&resources)?;
-    fs::write(resources.join("window.js"), window::WINDOW_JS)?;
+    use std::os::unix::fs::PermissionsExt;
 
-    // The icon set: the sizes macOS asks for, each also as the double-density of the size below.
-    let set = resources.join("anycube.iconset");
-    fs::create_dir_all(&set)?;
-    let png = |size: u32| assets::ICONS.iter().find(|i| i.0 == size).map(|i| i.1).expect("an icon of every size");
-    for size in [16u32, 32, 128, 256, 512] {
-        fs::write(set.join(format!("icon_{0}x{0}.png", size)), png(size))?;
-        fs::write(set.join(format!("icon_{0}x{0}@2x.png", size)), png(size * 2))?;
+    fn checked(command: &mut Command) -> io::Result<()> {
+        let status = command.status()?;
+        if !status.success() {
+            return Err(io::Error::other(format!("{command:?} exited with {status}")));
+        }
+        Ok(())
     }
-    let made = Command::new("/usr/bin/iconutil").args(["-c", "icns", "-o"]).arg(resources.join("anycube.icns")).arg(&set).status();
-    let _ = fs::remove_dir_all(&set);
-    if !matches!(made, Ok(s) if s.success()) {
-        // Without the tool the entry still works; it shows the system's plain icon.
-        eprintln!("note: iconutil could not make the icon set; the entry will have a plain icon");
-    }
-    fs::write(resources.join("icon.png"), png(512))?;
 
-    // The launcher asks the installed program what the window is here (as
-    // `anycube app` itself decides: `window::choice`). A browser's window:
-    // the program serves, opens it and ends with it. The system's WebKit: the
-    // system's script host becomes the application (the window is its own)
-    // and starts the server from the installed program.
-    let launcher = macos.join("anycube");
-    fs::write(&launcher, launcher_script(&binary.to_string_lossy()))?;
-    executable(&launcher)?;
-    fs::write(
-        bundle.join("Contents/Info.plist"),
-        format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>CFBundleName</key><string>anycube</string>
-  <key>CFBundleDisplayName</key><string>anycube</string>
-  <key>CFBundleIdentifier</key><string>local.anycube.app</string>
-  <key>CFBundleVersion</key><string>{version}</string>
-  <key>CFBundleShortVersionString</key><string>{version}</string>
-  <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleExecutable</key><string>anycube</string>
-  <key>CFBundleIconFile</key><string>anycube</string>
-  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>LSArchitecturePriority</key><array><string>arm64</string><string>x86_64</string></array>
-  <key>LSApplicationCategoryType</key><string>public.app-category.puzzle-games</string>
-  <key>LSUIElement</key><true/>
-  <key>NSHighResolutionCapable</key><true/>
-  <key>NSCameraUsageDescription</key><string>anycube reads the colours of a cube you hold up to the camera. The picture stays on this computer.</string>
-</dict>
-</plist>
-"#,
-            version = env!("CARGO_PKG_VERSION")
-        ),
-    )?;
-    // The system notices a new bundle sooner when told about it.
-    let _ = Command::new("/usr/bin/touch").arg(bundle).status();
-    Ok(())
+    let parent = bundle.parent().expect("bundle install directory");
+    fs::create_dir_all(parent)?;
+    let temp = Command::new("/usr/bin/mktemp")
+        .arg("-d").arg(parent.join(".anycube.XXXXXXXX")).output()?;
+    if !temp.status.success() {
+        return Err(io::Error::other("could not create app staging directory"));
+    }
+    let staging = PathBuf::from(String::from_utf8(temp.stdout)
+        .map_err(io::Error::other)?.trim_end_matches('\n'));
+    let result = (|| {
+        let staged = staging.join("anycube.app");
+        let macos = staged.join("Contents/MacOS");
+        let resources = staged.join("Contents/Resources");
+        fs::create_dir_all(&macos)?;
+        fs::create_dir_all(&resources)?;
+        let launcher = macos.join("anycube");
+        fs::write(&launcher, include_bytes!(concat!(env!("OUT_DIR"), "/anycube-host")))?;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))?;
+        let server = macos.join("anycube-server");
+        fs::copy(binary, &server)?;
+        checked(Command::new("/usr/bin/codesign").args(["--force", "--sign", "-", "--timestamp=none"])
+            .arg(&server))?;
+
+        fs::write(staged.join("Contents/Info.plist"),
+            include_str!("../../platform/macos/Info.plist")
+                .replace("@VERSION@", env!("CARGO_PKG_VERSION")))?;
+        let set = staging.join("anycube.iconset");
+        fs::create_dir(&set)?;
+        for size in [16u32, 32, 128, 256, 512] {
+            for (scale, suffix) in [(1, ""), (2, "@2x")] {
+                let png = assets::ICONS.iter().find(|i| i.0 == size * scale).unwrap().1;
+                fs::write(set.join(format!("icon_{size}x{size}{suffix}.png")), png)?;
+            }
+        }
+        checked(Command::new("/usr/bin/iconutil").args(["-c", "icns", "-o"])
+            .arg(resources.join("anycube.icns")).arg(&set))?;
+        checked(Command::new("/usr/bin/codesign").args(["--force", "--sign", "-", "--timestamp=none"])
+            .arg(&staged))?;
+        checked(Command::new("/usr/bin/codesign").args(["--verify", "--deep", "--strict"])
+            .arg(&staged))?;
+
+        let backup = staging.join("previous-anycube.app");
+        let had_previous = match fs::rename(bundle, &backup) {
+            Ok(()) => true,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => false,
+            Err(e) => return Err(e),
+        };
+        if let Err(error) = fs::rename(&staged, bundle) {
+            if had_previous {
+                fs::rename(&backup, bundle).map_err(|restore| io::Error::other(
+                    format!("{error}; previous app remains at {} ({restore})", backup.display())
+                ))?;
+            }
+            return Err(error);
+        }
+        if had_previous {
+            eprintln!("Previous app saved at {}", backup.display());
+        }
+        Ok(())
+    })();
+    // Keep the previous bundle available for rollback, including on a failed restore.
+    let _ = fs::remove_dir_all(staging.join("anycube.app"));
+    let _ = fs::remove_dir_all(staging.join("anycube.iconset"));
+    let _ = fs::remove_dir(&staging);
+    result
 }
 
 fn add_linux(binary: &Path, places: &[PathBuf]) -> io::Result<()> {
@@ -148,11 +139,11 @@ fn add_linux(binary: &Path, places: &[PathBuf]) -> io::Result<()> {
 /// Adds the entry, started by the program at `binary`. Returns what was written.
 pub fn add(binary: &Path) -> io::Result<Vec<PathBuf>> {
     let places = places()?;
-    if cfg!(target_os = "macos") {
-        add_macos(binary, &places[0])?;
-    } else if cfg!(target_os = "linux") {
+    #[cfg(target_os = "macos")]
+    add_macos(binary, &places[0])?;
+    if cfg!(target_os = "linux") {
         add_linux(binary, &places)?;
-    } else {
+    } else if !cfg!(target_os = "macos") {
         return Err(io::Error::new(io::ErrorKind::Unsupported, "an application entry is made on macOS and Linux only, for now"));
     }
     Ok(places)
@@ -168,19 +159,4 @@ pub fn remove() -> io::Result<Vec<PathBuf>> {
         }
     }
     Ok(gone)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_launcher_opens_what_anycube_app_would() {
-        let script = launcher_script("/Users/h/it's here/anycube");
-        let bin = r"'/Users/h/it'\''s here/anycube'";
-        assert!(script.starts_with("#!/bin/sh\n"));
-        // A browser's window is the program's own to open; otherwise the WebKit window serves.
-        assert!(script.contains(&format!("if [ \"$({} app --window-kind 2>/dev/null)\" = chromium ]; then\n  exec {} app\nfi\n", bin, bin)));
-        assert!(script.ends_with(&format!("exec /usr/bin/osascript -l JavaScript \"$here/window.js\" --serve {} \"$here/icon.png\"\n", bin)));
-    }
 }

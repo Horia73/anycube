@@ -1725,7 +1725,7 @@ export function mountRobot(host, { api = new RobotApi() } = {}) {
     setButtons();
     say(controllerCamera() ? "Scan the cube using photos from the controller." : HINT);
     void robot.follow();
-    if (!controllerCamera()) await openCamera();
+    $("robot-camera-start").hidden = controllerCamera();
     setTimeout(() => robot === mine && warmUp(mine), 300);
   }
 

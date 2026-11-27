@@ -115,6 +115,25 @@ installed, the installer stops and names the one command that installs it.
 `--uninstall` after the same line (`... | sh -s -- --uninstall`) removes it
 all.
 
+On macOS 12 or later, the Applications entry is a native anycube window
+with the solver, camera scan, and Robot mode. Use the macOS installer or run
+`anycube app --install` with the new release binary to install it in
+`~/Applications`. The install saves the previous canonical bundle in a
+hidden backup directory under `~/Applications` and prints its path.
+The separate `anycube app` and `anycube app --browser` terminal commands
+retain their usual window and browser behavior.
+
+If an older `anycube Robot.app` is installed, quit both apps, then move
+the old Robot bundle out of Applications into a backup folder. Install and
+open `~/Applications/anycube.app`, and replace any old Dock shortcut with
+the canonical app. Keep `~/Library/Application Support/anycube` in place.
+To roll back, quit the new app, move it aside, and restore the old bundle
+and its shortcut from the backup.
+
+On a Continuity Camera-compatible Mac and iPhone, use the camera picker
+inside anycube and approve the camera prompt. Continuity Camera as a
+webcam requires macOS Ventura 13 or later and iOS 16 or later.
+
 On Windows, download the x64 ZIP from [GitHub Releases](https://github.com/Horia73/anycube/releases/latest),
 extract it, and run `.\anycube.exe app` in PowerShell from the extracted
 folder. To build from source, run `cargo build --release` in a clone.
