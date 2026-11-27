@@ -20,9 +20,14 @@
 <dialog class="app-dialog" id="updates" aria-labelledby="updates-title">
   <h2 id="updates-title">Check for updates</h2>
   <p id="update-status" role="status"></p>
+  <progress id="update-progress" aria-label="Update progress" hidden></progress>
+  <details id="update-notes" hidden>
+    <summary>Release notes</summary>
+    <pre></pre>
+  </details>
   <form method="dialog">
-    <button class="button" autofocus>Close</button>
-    <a class="button primary" href="https://github.com/Horia73/anycube/releases/latest" target="_blank" rel="noopener noreferrer">View release</a>
+    <button class="button" id="update-later" type="button" autofocus>Later</button>
+    <button class="button primary" id="update-install" type="button" hidden>Install update and restart</button>
   </form>
 </dialog>
 </body>

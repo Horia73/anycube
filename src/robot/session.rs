@@ -697,6 +697,13 @@ impl Session {
         json!({"ok": true})
     }
 
+    /// A restart must leave the robot disconnected, with no motion in flight.
+    #[cfg(feature = "app")]
+    pub(crate) fn safe_to_restart(&self) -> bool {
+        let state = self.inner.state.lock().unwrap();
+        !state.busy && state.connected.is_none()
+    }
+
     /// Waits until no run is going on (for tests and shutdown).
     pub fn wait_idle(&self, limit: Duration) -> bool {
         let deadline = Instant::now() + limit;

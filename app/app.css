@@ -192,7 +192,9 @@ kbd {
 .app-dialog h2 { margin: 0; font-size: 1.15rem; }
 .app-dialog p { margin: 10px 0 18px; color: var(--ink-2); }
 .app-dialog form { display: flex; justify-content: flex-end; gap: 8px; }
-.app-dialog a { text-decoration: none; }
+#update-progress { width: 100%; margin-bottom: 12px; }
+#update-notes { margin-bottom: 16px; }
+#update-notes pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
 .settings-options { margin: 16px 0; padding: 0; border: 0; }
 .settings-options legend { margin-bottom: 6px; font-size: 0.86rem; color: var(--ink-2); }
 .settings-options label { display: flex; align-items: center; gap: 8px; min-height: 38px; cursor: pointer; }

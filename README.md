@@ -119,9 +119,10 @@ On Windows, download the x64 ZIP from [GitHub Releases](https://github.com/Horia
 extract it, and run `.\anycube.exe app` in PowerShell from the extracted
 folder. To build from source, run `cargo build --release` in a clone.
 
-The local app checks GitHub when it opens and shows **Update available**
-when there is a newer release. Use **Check for updates** to check again.
-To update, rerun the installer or download the newer Windows ZIP.
+The packaged native macOS app checks for compatible releases and asks before
+downloading and restarting. See [desktop update packaging](docs/desktop-updates.md)
+for supported builds. For other installations, rerun the installer or download
+the newer Windows ZIP.
 The installer downloads a prebuilt program when one is available for your
 system and compiles from source otherwise. Compatible lookup tables are reused.
 
