@@ -142,9 +142,8 @@ Connect is pressed. The dialog chooses driver and port by hand and
 switches the connecting by itself off; a robot the server already holds
 is taken up in any case (the page was reloaded).
 
-The robot is connected for the size of cube on the page, if it takes that
-size; another size chosen while it is connected and at rest connects it
-anew for that size.
+The size picker belongs to the manual editors. Connecting a robot keeps
+the current editor size. Starting a robot scan uses the robot's size.
 
 While a robot is connected, the scramble, paint and camera give way to
 the robot's panel, and Solve to Scan & solve (Stop while the robot moves).

@@ -150,7 +150,6 @@ export const APP_HTML = `
           <div id="camera-side" class="cam-side"></div>
           <div id="scan-slot-narrow" class="cube-host scan-slot-narrow"></div>
         </div>
-        <p class="note" id="camera-large" hidden></p>
         <p class="note" id="camera-diagnostics-status" role="status" hidden></p>
       </div>
 

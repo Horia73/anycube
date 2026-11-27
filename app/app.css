@@ -1730,6 +1730,8 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
 #robot-scan {
   display: none;
 }
+.camera-mode .size-row,
+.robot-mode .size-row,
 .robot-mode .tabs,
 .robot-mode .panels,
 .robot-mode #mode-field,
@@ -2035,6 +2037,7 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   background: #000;
   display: grid;
   place-items: center;
+  grid-template-columns: minmax(0, 1fr);
 }
 .robot-cam video {
   position: absolute;
@@ -2044,6 +2047,11 @@ span.busy i:nth-child(3) { background: var(--f); animation-delay: 0.45s; }
   object-fit: contain;
 }
 .robot-cam .button {
+  max-width: calc(100% - 8px);
+  padding-inline: 3px;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
   position: relative;
   z-index: 1;
   color: #fff;
