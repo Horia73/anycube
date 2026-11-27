@@ -24,7 +24,7 @@
 //! minutes a first solve of a size takes are not spent in front of a
 //! silent screen.
 
-use super::assets;
+use super::{assets, update::Update};
 use crate::api::{self, check, solve, Input, Mode};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, VecDeque};
@@ -70,6 +70,7 @@ struct Board {
 
 struct Shared {
     board: Mutex<Board>,
+    update: Option<Arc<Update>>,
     changed: Condvar,
     /// The worker process, where a request to stop a solve can reach it.
     child: Mutex<Option<Child>>,
@@ -311,7 +312,7 @@ pub(super) fn query(url: &str, name: &str) -> Option<u64> {
 }
 
 const CSP: &str = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; \
-                   connect-src 'self' https://api.github.com/repos/Horia73/anycube/releases/latest; \
+                   connect-src 'self'; \
                    worker-src 'self'; media-src 'self' blob:; object-src 'none'; base-uri 'none'; \
                    form-action 'self'; frame-ancestors 'none'";
 
@@ -381,6 +382,42 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
     let url = request.url().to_string();
     let path = url.split('?').next().unwrap_or("").to_string();
     let method = request.method().clone();
+    if let Some(action) = path.strip_prefix("/api/update/") {
+        let Some(update) = &shared.update else {
+            return respond_json(request, 404, json!({"message": "Desktop update session unavailable."}));
+        };
+        if method != Method::Post || host != format!("127.0.0.1:{port}")
+            || !update.authorized(request.headers(), &format!("http://{host}")) {
+            return respond_json(request, 403, json!({"message": "This update request did not come from the desktop session."}));
+        }
+        let mut body = Vec::new();
+        let parsed = request.as_reader().take(1025).read_to_end(&mut body).ok()
+            .filter(|size| *size <= 1024)
+            .and_then(|_| serde_json::from_slice::<Value>(&body).ok());
+        let Some(body) = parsed.filter(Value::is_object) else {
+            return respond_json(request, 400, json!({"message": "Invalid update request."}));
+        };
+        let (status, result) = update.request(action, &body, || {
+            let board = shared.board.lock().unwrap();
+            board.running.is_some() || !board.order.is_empty() || !shared.robots.safe_to_restart()
+        });
+        return respond_json(request, status, result);
+    }
+    let _work = if (path.starts_with("/api/robot") && path != "/api/robot/events")
+        || (path == "/api/solve" && method == Method::Post)
+        || (path == "/api/settings" && method == Method::Post) {
+        if let Some(update) = &shared.update {
+            let guard = update.work.read().unwrap();
+            if update.restarting() {
+                return respond_json(request, 409, error("restarting", "anycube is restarting", false));
+            }
+            Some(guard)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let mut body = String::new();
     if matches!(method, Method::Post) {
         let _ = request.as_reader().take(256 * 1024).read_to_string(&mut body);
@@ -560,10 +597,23 @@ fn handle(shared: &Arc<Shared>, port: u16, mut request: Request) {
 pub struct Running {
     pub url: String,
     pub port: u16,
+    update: Option<Arc<Update>>,
     window: Arc<Mutex<(u64, Option<Instant>)>>,
 }
 
 impl Running {
+    pub(super) fn launch_url(&self) -> String {
+        self.update.as_ref().map_or_else(|| self.url.clone(), |update| update.launch_url(&self.url))
+    }
+
+    pub(super) fn ready_to_exit(&self) -> bool {
+        self.update.as_ref().is_some_and(|update| update.ready_to_exit())
+    }
+
+    pub(super) fn installing(&self) -> bool {
+        self.update.as_ref().is_some_and(|update| update.installing())
+    }
+
     /// Whether the page in the application's window said it was closed at
     /// least `grace` ago and has not been opened again since (a page that is
     /// loaded anew says closed and then open).
@@ -580,6 +630,11 @@ pub fn start(port: u16, max_size: usize) -> Result<Running, String> {
 
 /// `start`, with the robot session set up as given.
 pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Config) -> Result<Running, String> {
+    start_session(port, max_size, robots, None)
+}
+
+pub(super) fn start_session(port: u16, max_size: usize, robots: crate::robot::session::Config, update: Option<Update>) -> Result<Running, String> {
+    let update = update.map(Arc::new);
     let server = Server::http(("127.0.0.1", port)).map_err(|e| format!("cannot listen on 127.0.0.1:{}: {}", port, e))?;
     let port = server.server_addr().to_ip().map(|a| a.port()).ok_or("no port")?;
     let window = Arc::new(Mutex::new((0, None)));
@@ -587,6 +642,7 @@ pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Con
         board: Mutex::default(), changed: Condvar::new(), child: Mutex::new(None),
         settings: Mutex::new(super::data_dir().join("settings.json")), max_size,
         window: window.clone(),
+        update: update.clone(),
         robots: crate::robot::session::Session::new(robots),
     });
     // The 3x3x3's solver tables now, in the background, so that a robot's first solve finds
@@ -601,5 +657,5 @@ pub fn start_with(port: u16, max_size: usize, robots: crate::robot::session::Con
             std::thread::spawn(move || handle(&shared, port, request));
         }
     });
-    Ok(Running { url: format!("http://127.0.0.1:{}/", port), port, window })
+    Ok(Running { url: format!("http://127.0.0.1:{}/", port), port, window, update })
 }

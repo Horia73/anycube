@@ -10,6 +10,7 @@ pub mod install;
 pub mod robots;
 pub mod server;
 pub mod window;
+mod update;
 
 use std::path::PathBuf;
 
@@ -140,12 +141,16 @@ pub fn main(args: &[String]) {
         return;
     }
     if let Some(unknown) = args.iter().enumerate().find(|(i, a)| {
-        !matches!(a.as_str(), "--browser" | "--no-window" | "--with-parent" | "--port" | "--robot-sim")
+        !matches!(a.as_str(), "--browser" | "--no-window" | "--with-parent" | "--desktop-session" | "--port" | "--robot-sim")
             && !a.starts_with("--robot-sim=")
             && !(*i > 0 && args[i - 1] == "--port")
     }) {
         eprintln!("unknown argument '{}'\n\n{}", unknown.1, HELP);
         std::process::exit(2);
+    }
+    let desktop = has("--desktop-session");
+    if desktop && (!has("--no-window") || !has("--with-parent") || has("--browser") || has("--port")) {
+        fail("--desktop-session requires --no-window --with-parent and a private port");
     }
     let port = match args.iter().position(|a| a == "--port") {
         None => 0,
@@ -164,9 +169,10 @@ pub fn main(args: &[String]) {
         let scale = a.strip_prefix("--robot-sim=").map_or(Some(1.0), |s| s.parse::<f64>().ok().filter(|s| *s >= 0.0));
         robots.sim_scale = Some(scale.unwrap_or_else(|| fail("--robot-sim=S takes a time scale such as 1, 0.2 or 0")));
     }
-    let running = server::start_with(port, MAX_SIZE, robots).unwrap_or_else(|e| fail(&e));
+    let update = desktop.then(|| update::Update::desktop().unwrap_or_else(|| fail("desktop session must be started inside anycube.app")));
+    let running = server::start_session(port, MAX_SIZE, robots, update).unwrap_or_else(|e| fail(&e));
     // The address first and alone on its line: whoever started this program reads it there.
-    println!("{}", running.url);
+    println!("{}", running.launch_url());
     eprintln!("anycube is at {} (tables in {}). Ctrl-C stops it.", running.url, tables.display());
 
     if has("--no-window") {
@@ -177,7 +183,10 @@ pub fn main(args: &[String]) {
         let started_by = parent();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(1));
-            if has("--with-parent") && parent() != started_by {
+            if running.ready_to_exit() {
+                return;
+            }
+            if has("--with-parent") && parent() != started_by && !running.installing() {
                 return;
             }
         }
